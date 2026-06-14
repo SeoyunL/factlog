@@ -307,6 +307,18 @@ path(S, O) :- edge(S, M), path(M, O).
 
 
 def decode_wirelog_value(session: EasySession, value: object) -> object:
+    """Resolve a wirelog integer ID back to its interned symbol string.
+
+    Uses the private ``session._intern`` table exposed by pyrewire's EasySession.
+    This is a private API (underscore-prefixed), intentionally pinned to
+    ``pyrewire>=1.0.1,<2.0`` in pyproject.toml to guard against breakage if the
+    internals change in a future major release.  The <2.0 upper bound in
+    requirements.txt mirrors this constraint.
+
+    Python 3.10+ is required (see ``requires-python`` in pyproject.toml); the
+    ``tuple[...]`` return annotations and structural-pattern constructs elsewhere
+    in this file rely on the 3.10 type-union syntax.
+    """
     if isinstance(value, int) and session._intern.contains_id(value):
         return session._intern.lookup(value)
     return value
