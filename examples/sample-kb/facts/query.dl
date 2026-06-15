@@ -1,0 +1,20 @@
+// query drafts derived from policy/questions.md per
+// skills/factlog/references/text-to-datalog.md
+// Only facts/accepted.dl entities/relations are used; multi-word
+// entities are quoted. At least one query resolves against the
+// accepted facts so the logic_report.txt "Query evaluation" section
+// is populated (this is the AC3 demonstration).
+
+// q1: What is Claude Code and who developed it?
+relation("Claude Code", "developed_by", "Anthropic")?
+
+// q2: What tools or capabilities does Claude Code use?
+relation("Claude Code", "uses", "Claude model family")?
+
+// q3: What is the factlog plugin and what does it do?
+relation("factlog", "is_a", "Claude Code plugin")?
+
+// q4: Which factlog steps are performed by Claude vs deterministic scripts?
+// The split (Claude vs scripts) is not an accepted relation in this KB,
+// so the question is routed to human review rather than a Datalog query.
+review_required("Which steps in factlog are performed by Claude and which by deterministic scripts?")?
