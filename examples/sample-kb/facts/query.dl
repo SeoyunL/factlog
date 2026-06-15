@@ -14,7 +14,15 @@ relation("Claude Code", "uses", "Claude model family")?
 // q3: What is the factlog plugin and what does it do?
 relation("factlog", "is_a", "Claude Code plugin")?
 
-// q4: Which factlog steps are performed by Claude vs deterministic scripts?
+// q4: Who developed factlog? (negative example: schema-valid but unsatisfied)
+// All three constants exist as engine input (entity "factlog", entity
+// "Anthropic", relation "developed_by"), but the triple itself is NOT an
+// accepted fact — only ("Claude Code", "developed_by", "Anthropic") is. The
+// engine therefore resolves this to 0 rows, demonstrating that a well-formed
+// query distinguishes a hit (q1-q3) from a miss.
+relation("factlog", "developed_by", "Anthropic")?
+
+// q5: Which factlog steps are performed by Claude vs deterministic scripts?
 // The split (Claude vs scripts) is not an accepted relation in this KB,
 // so the question is routed to human review rather than a Datalog query.
 review_required("Which steps in factlog are performed by Claude and which by deterministic scripts?")?

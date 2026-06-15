@@ -19,4 +19,5 @@ Query evaluation:
 - relation results: 1 rows; Claude Code, developed_by, Anthropic
 - relation results: 1 rows; Claude Code, uses, Claude model family
 - relation results: 1 rows; factlog, is_a, Claude Code plugin
+- relation results: 0 rows
 - review_required: Which steps in factlog are performed by Claude and which by deterministic scripts?

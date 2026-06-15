@@ -11,9 +11,11 @@
 #   - Only deterministic outputs are asserted here:
 #       facts/accepted.dl       — from compile_facts.py
 #       facts/logic_report.txt  — from run_logic_check.py
-#     facts/query.dl and decisions/correction_trace.md are produced by the
-#     LLM (Claude in-session) steps and are NOT checked here; the smoke
-#     exercises only the engine scripts callable without a live Claude session.
+#     The full facts/query.dl and decisions/correction_trace.md are produced by
+#     the LLM (Claude in-session) steps. Step 7 stands in for the /factlog query
+#     step with a minimal hand-written query.dl so the question→query→evaluation
+#     path (AC3) is exercised end-to-end against the deterministic engine; the
+#     smoke still does not depend on a live Claude session.
 #   - Local marketplace path is used for plugin references; no remote
 #     operations.  See .claude-plugin/marketplace.json for the install path.
 #
@@ -73,6 +75,17 @@ assert_exit0() {
     ok "$label exit 0"
   else
     fail_msg "$label exited non-zero"
+  fi
+}
+
+assert_grep() {
+  local pattern="$1"
+  local path="$2"
+  local label="${3:-grep '$pattern' in $path}"
+  if grep -qE "$pattern" "$path"; then
+    ok "$label"
+  else
+    fail_msg "$label (pattern '$pattern' not found in $path)"
   fi
 }
 
@@ -144,13 +157,46 @@ assert_exit0 "validate.py" \
   "$PYTHON" "$PLUGIN_ROOT/tools/validate.py" "$SMOKE_KB"
 
 # ---------------------------------------------------------------------------
-# Note on LLM-step outputs
+# Step 7: question→query→evaluation path (AC3 end-to-end)
 # ---------------------------------------------------------------------------
-# facts/query.dl and decisions/correction_trace.md are produced by the Claude
-# in-session LLM steps (/factlog check and /factlog repair respectively).
-# They are not produced by any deterministic script and therefore cannot be
-# asserted in this harness without a live Claude session.  Full AC3 coverage
-# requires a live /factlog invocation; AC5 covers the deterministic engine.
+# The LLM `/factlog query` step normally writes facts/query.dl. Here we stand
+# in for it with a small, schema-valid query.dl (one query that resolves
+# against the seeded accepted facts) so the deterministic check→evaluation flow
+# is exercised end-to-end and the report's "Query evaluation" section is
+# populated with a resolved row — rather than the "no facts/query.dl found"
+# placeholder. The seeded triple ("Claude Code", "developed_by", "Anthropic")
+# is present in the sample-kb-derived accepted.dl, so it resolves to >=1 row.
+echo ""
+echo "=== Step 7: query.dl → populated Query evaluation (AC3) ==="
+cat > "$SMOKE_KB/facts/query.dl" <<'QUERY_DL'
+// smoke: stand-in for the LLM /factlog query step (one resolved query)
+relation("Claude Code", "developed_by", "Anthropic")?
+QUERY_DL
+ok "wrote stand-in facts/query.dl"
+
+assert_exit0 "run_logic_check.py (with query.dl)" \
+  "$PYTHON" "$PLUGIN_ROOT/tools/run_logic_check.py"
+
+# The report must now contain a resolved query row, not the empty placeholder.
+assert_grep '^- relation results: [1-9][0-9]* rows' \
+  "$SMOKE_KB/facts/logic_report.txt" \
+  "Query evaluation populated with a resolved (>=1 row) result"
+if grep -qF "no facts/query.dl found" "$SMOKE_KB/facts/logic_report.txt"; then
+  fail_msg "Query evaluation still shows the empty 'no facts/query.dl found' placeholder"
+else
+  ok "Query evaluation no longer shows the empty placeholder"
+fi
+
+# ---------------------------------------------------------------------------
+# Note on remaining LLM-step outputs
+# ---------------------------------------------------------------------------
+# The full facts/query.dl (translated from policy/questions.md) and
+# decisions/correction_trace.md are produced by the Claude in-session LLM steps
+# (/factlog query and /factlog repair respectively). Step 7 stands in for
+# /factlog query with a minimal hand-written draft so the deterministic
+# check→evaluation path is covered here; full question→query translation
+# fidelity still requires a live /factlog invocation. AC5 covers the
+# deterministic engine.
 
 # ---------------------------------------------------------------------------
 # Summary
