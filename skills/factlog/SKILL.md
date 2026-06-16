@@ -124,11 +124,21 @@ python3 "${CLAUDE_PLUGIN_ROOT}/tools/finalize.py" --target "$FACTLOG_ROOT"
 ```
 
 `finalize.py` chains the deterministic engine steps — `merge_candidates` →
-ensure `policy/logic-policy.dl` → `compile_facts` → `run_logic_check` — and
-prints a summary (candidates merged, engine facts, the logic report). It is
-idempotent and read-only with respect to hand-edited inputs (only the engine
-scripts touch their outputs). If `pyrewire` is unavailable the logic check is
-skipped with a note; facts are still merged and compiled.
+ensure `policy/logic-policy.dl` → `compile_facts` → **contradiction check** →
+`run_logic_check` — and prints a summary (candidates merged, engine facts,
+conflicts, the logic report). It is idempotent and read-only with respect to
+hand-edited inputs (only the engine scripts touch their outputs). If `pyrewire`
+is unavailable the logic check is skipped with a note; facts are still merged
+and compiled.
+
+**Contradiction detection.** Relations you list in `policy/single-valued.md`
+(one relation name per line) are treated as *functional* — at most one object
+per subject. If two distinct objects are asserted for the same
+(subject, single-valued relation), `finalize` reports a `CONFLICT` and exits
+non-zero. Resolve non-destructively by marking the outdated row's status as
+`superseded` in `facts/candidates.csv` (it stays for audit, drops out of
+`accepted.dl`, and the conflict clears), then re-run. This keeps the KB free of
+the silently-accumulated contradictions a plain notes wiki cannot prevent.
 
 Use `/factlog add` for quick capture; use the explicit `sync → query → check →
 repair` sequence when you need the full question→query workflow.

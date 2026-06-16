@@ -45,5 +45,6 @@ jobs:
           bash tests/test_ask_router.sh
           bash tests/test_validate_sources.sh
           bash tests/test_finalize.sh
+          bash tests/test_conflicts.sh
       - name: clean-env plugin smoke (pipeline end-to-end)
         run: bash tests/smoke.sh
