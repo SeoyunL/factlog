@@ -159,12 +159,16 @@ explanation of its purpose.
 }
 
 
-def cmd_init(args: argparse.Namespace) -> int:
-    from pathlib import Path
+def _init_kb(target) -> bool:
+    """Scaffold the KB layout under ``target``, printing what it did.
 
-    target = Path(args.target).expanduser().resolve()
-    dirs = ["sources", "pages", "facts", "decisions", "policy", "policy/prompts", "runs"]
+    Returns True iff something was actually created (dirs or files), False if
+    the layout already existed and nothing was changed. The printed output and
+    semantics are identical to the original ``cmd_init`` body; only the
+    created-vs-existing signal is surfaced for callers (e.g. ``cmd_setup``).
+    """
     created_dirs: list[str] = []
+    dirs = ["sources", "pages", "facts", "decisions", "policy", "policy/prompts", "runs"]
     for dirname in dirs:
         d = target / dirname
         if not d.exists():
@@ -184,8 +188,17 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(f"  {name}")
         for name in created_files:
             print(f"  {name}")
-    else:
-        print(f"factlog init: {target} already exists, nothing to do")
+        return True
+
+    print(f"factlog init: {target} already exists, nothing to do")
+    return False
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    target = Path(args.target).expanduser().resolve()
+    _init_kb(target)
     return 0
 
 
@@ -272,12 +285,16 @@ def cmd_setup(args: argparse.Namespace) -> int:
     Idempotent and safe to re-run: deps are only installed when pyrewire is
     missing/too old, and `cmd_init` skips files/dirs that already exist.
     """
+    from pathlib import Path
+
     actions: list[str] = []
 
     print("=== factlog setup: initial environment check ===")
     _run_doctor_checks()
 
-    if _pyrewire_ok():
+    deps_already_ok = _pyrewire_ok()
+    install_attempted = False
+    if deps_already_ok:
         print("\nfactlog setup: pyrewire already satisfied, skipping install")
     else:
         print("\n=== factlog setup: installing engine dependency ===")
@@ -293,16 +310,29 @@ def cmd_setup(args: argparse.Namespace) -> int:
         rc = _install_requirements(requirements)
         if rc != 0:
             return rc
-        actions.append("installed engine dependency (pyrewire)")
+        install_attempted = True
 
     print("\n=== factlog setup: initialise knowledge base ===")
-    init_rc = cmd_init(args)
-    if init_rc != 0:
-        return init_rc
-    actions.append(f"initialised KB layout at {args.target}")
+    target = Path(args.target).expanduser().resolve()
+    kb_created = _init_kb(target)
+    if kb_created:
+        actions.append(f"created KB layout at {target}")
+    else:
+        actions.append(f"KB already present at {target}")
 
     print("\n=== factlog setup: final environment check ===")
     final_ok = _run_doctor_checks()
+
+    # Only claim the dependency was installed/satisfied when the FINAL doctor
+    # confirms it. If pip returned 0 but pyrewire is still unusable (a "lying
+    # pip"), word it as an attempt, not a success. The exit code below stays
+    # non-zero in that case via final_ok.
+    if deps_already_ok:
+        actions.insert(0, "engine dependency (pyrewire) already satisfied")
+    elif install_attempted and final_ok:
+        actions.insert(0, "installed engine dependency (pyrewire)")
+    elif install_attempted:
+        actions.insert(0, "attempted dependency install (pyrewire) — still not satisfied")
 
     print("\n=== factlog setup: summary ===")
     if actions:
