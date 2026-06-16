@@ -47,6 +47,50 @@ by `merge_candidates.py`. Always include the `sources/` prefix.
 
 ---
 
+## `/factlog setup` — one-shot post-install bootstrap (run this FIRST)
+
+**Purpose:** Collapse the post-`/plugin install` steps (dependency install,
+environment check, KB init) into a single command. Run this **before** any of
+the four operating commands below — it is the first thing to do after
+`/plugin install factlog@semantic-reasoning`.
+
+**How it runs:** in-session, by Claude executing the bundled CLI — NOT in a
+separate terminal:
+
+```bash
+python3 -m factlog setup --target <kb>
+```
+
+In order, `setup`:
+
+1. Runs the `doctor` checks and reports Python / pyrewire status.
+2. If pyrewire is missing or `< 1.0.1`, installs it via
+   `python3 -m pip install -r <requirements.txt>` (located via
+   `$CLAUDE_PLUGIN_ROOT` if set, else the package root). If pyrewire already
+   satisfies the floor, the install is skipped.
+3. Runs the KB `init` for `--target` (scaffolds `sources/`, `facts/`,
+   `policy/`, etc.).
+4. Re-runs `doctor` and prints a concise summary of what was done and what (if
+   anything) the user must do next.
+
+`setup` is idempotent and safe to re-run.
+
+**venv fallback (PEP 668):** if the active Python is externally managed, pip
+will refuse to install into it. `setup` does **not** override this with
+`--break-system-packages`; instead it prints venv guidance and exits non-zero.
+Create and activate a virtual environment, then re-run:
+
+```bash
+python3 -m venv ~/.factlog-venv
+source ~/.factlog-venv/bin/activate
+python3 -m factlog setup --target <kb>
+```
+
+After `setup` succeeds, use the four operating commands — `/factlog sync`,
+`/factlog query`, `/factlog check`, `/factlog repair` — in that order.
+
+---
+
 ## `/factlog sync` — extract candidates and merge into KB
 
 **Purpose:** Read every file under `sources/`, extract candidate facts in

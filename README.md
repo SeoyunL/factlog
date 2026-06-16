@@ -47,12 +47,13 @@ Assuming the repo is already at `~/git/semantic-reasoning/factlog`, register it 
 /plugin marketplace add ~/git/semantic-reasoning/factlog
 ```
 
-Install the engine dependency and verify the environment:
+Then run the one-shot bootstrap from inside a Claude Code session:
 
-```bash
-pip install -r ~/git/semantic-reasoning/factlog/requirements.txt   # pyrewire>=1.0.1,<2.0
-python3 -m factlog doctor          # checks Python 3.10+ and pyrewire
 ```
+/factlog setup
+```
+
+`setup` runs `doctor`, installs the engine dependency, scaffolds the KB, and re-checks the environment — in one command.
 
 ### Marketplace install (future)
 
@@ -61,6 +62,24 @@ Once published to the Claude Code marketplace:
 ```
 /plugin marketplace add semantic-reasoning/factlog
 /plugin install factlog@semantic-reasoning
+/factlog setup                     # one-shot: deps + doctor + init, in-session
+```
+
+### What `/factlog setup` does
+
+`setup` collapses the previously-separate post-install steps into a single command. Equivalently, by hand:
+
+```bash
+pip install -r ~/git/semantic-reasoning/factlog/requirements.txt   # pyrewire>=1.0.1,<2.0
+python3 -m factlog doctor          # checks Python 3.10+ and pyrewire
+python3 -m factlog init --target ~/wiki   # scaffold the KB layout
+```
+
+If your Python is externally managed (PEP 668), pip will refuse to install into it; `setup` prints venv guidance instead of forcing the install. Create and activate a venv, then re-run `setup`:
+
+```bash
+python3 -m venv ~/.factlog-venv && source ~/.factlog-venv/bin/activate
+python3 -m factlog setup --target ~/wiki
 ```
 
 ## Usage
