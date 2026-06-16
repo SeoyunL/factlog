@@ -32,7 +32,7 @@ csv \
   'Acme API,uses,FastAPI,sources/a.md,confirmed,0.9,' \
   'Acme API,uses,FastAPI,sources/b.md,confirmed,0.9,' \
   'Acme API,depends_on,Postgres,sources/a.md,confirmed,0.9,'
-out="$("$PYTHON" "$CORR" --wiki "$KB" 2>&1)"; rc=$?
+set +e; out="$("$PYTHON" "$CORR" --wiki "$KB" 2>&1)"; rc=$?; set -e  # capture before errexit
 [ "$rc" -eq 0 ] && ok "corroboration.py exits 0 (informational)" || bad "corroboration.py exit $rc"
 printf '%s' "$out" | grep -qF "2 source(s): Acme API, uses, FastAPI" && ok "fact backed by 2 sources reports 2" || bad "2-source fact not reported"
 printf '%s' "$out" | grep -qF "1 source(s): Acme API, depends_on, Postgres" && ok "single-source fact reports 1" || bad "1-source fact not reported"

@@ -46,6 +46,8 @@ from common import (  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report multi-source corroboration of facts.")
+    # --wiki is resolved by the import-time prepass (it must set FACTLOG_ROOT
+    # before common is imported); this declaration is only for --help/validation.
     parser.add_argument("--wiki", default=os.environ.get("FACTLOG_ROOT", "."), help="KB root")
     parser.parse_args(argv)
 

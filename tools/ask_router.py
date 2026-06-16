@@ -517,8 +517,14 @@ def cmd_render(args: argparse.Namespace) -> int:
             return 0
         # Positive engine answer: relation, path, and policy predicates are all
         # evaluated by the engine and rendered (0 rows -> a verified-empty result,
-        # never a wiki fallback). Annotate rows with multi-source corroboration.
-        corrob = corroboration_counts(load_facts()) if CANDIDATES_CSV.is_file() else None
+        # never a wiki fallback). Corroboration annotates relation rows only (the
+        # (s,r,o) key is a relation triple); gate on the predicate so path/policy
+        # rows are never annotated by a coincidental 3-element shape.
+        corrob = (
+            corroboration_counts(load_facts())
+            if decision["predicate"] == "relation" and CANDIDATES_CSV.is_file()
+            else None
+        )
         print(render_engine_answer(args.draft, evaluate(args.draft, facts)["rows"], corrob))
         return 0
     # route == wiki
