@@ -58,6 +58,21 @@ FACTLOG_ROOT="$KB" "$PYTHON" "$PLUGIN_ROOT/tools/compile_facts.py" >/dev/null 2>
 if grep -q '"값가"' "$KB/facts/accepted.dl"; then bad "superseded fact leaked into accepted.dl"; else ok "superseded fact excluded from accepted.dl"; fi
 if grep -q '"Claude"' "$KB/facts/accepted.dl"; then ok "current fact compiled to accepted.dl"; else bad "current fact missing from accepted.dl"; fi
 
+# H1: a human-marked superseded row is PRESERVED across a re-merge even when the
+# originating run JSON re-asserts it as confirmed (resolution is durable).
+csv '을서비스,주_속성,값가,sources/x.md,superseded,0.9,old' '을서비스,주_속성,Claude,sources/x.md,confirmed,0.9,current'
+printf '[{"subject":"을서비스","relation":"주_속성","object":"값가","source":"sources/x.md","status":"confirmed","confidence":0.9,"note":"re-asserted"}]' > "$KB/runs/r.json"
+"$PYTHON" "$PLUGIN_ROOT/tools/merge_candidates.py" --wiki "$KB" >/dev/null 2>&1 || true
+if grep -q '을서비스,주_속성,값가,.*,superseded,' "$KB/facts/candidates.csv"; then ok "re-merge preserves human-marked superseded (durable resolution)"; else bad "re-merge reverted the superseded row"; fi
+if run_conflicts; then ok "conflict stays resolved after re-merge"; else bad "conflict reappeared after re-merge"; fi
+rm -f "$KB/runs/r.json"
+
+# M1: single-valued name parses from a backtick token with a trailing description
+printf '# single-valued\n\n- `주_속성` (the base LLM)\n' > "$KB/policy/single-valued.md"
+got="$("$PYTHON" -c "import sys; sys.path.insert(0,'$PLUGIN_ROOT/tools'); import os; os.environ['FACTLOG_ROOT']='$KB'; import common; print('주_속성' in common.single_valued_relations())")"
+[ "$got" = "True" ] && ok "single-valued name parsed from backtick+description line" || bad "backtick+description line mis-parsed (false negative)"
+printf '# single-valued\n\n- 주_속성\n' > "$KB/policy/single-valued.md"
+
 # validate.py accepts the superseded status (no invalid-status error)
 if "$PYTHON" "$PLUGIN_ROOT/tools/validate.py" "$KB" 2>&1 | grep -q "invalid status"; then bad "validate rejected superseded status"; else ok "validate accepts superseded status"; fi
 

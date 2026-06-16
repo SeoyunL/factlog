@@ -341,6 +341,10 @@ def write_pages(root: Path, rows: list[dict[str, str]]) -> list[str]:
         if GENERATED_PAGE_MARKER in text:
             page.unlink()
 
+    # Superseded rows are retired: keep them in candidates.csv (audit) but do not
+    # render them on concept pages, where they would read as the current value.
+    rows = [row for row in rows if row.get("status") not in SUPERSEDED_STATUSES]
+
     by_entity: dict[str, list[dict[str, str]]] = {}
     for row in rows:
         by_entity.setdefault(row["subject"], []).append(row)
@@ -515,6 +519,28 @@ def validate_outputs(root: Path) -> int:
 # CLI
 # ---------------------------------------------------------------------------
 
+def existing_superseded_keys(root: Path) -> set[tuple[str, str, str, str]]:
+    """(subject, relation, object, source) of rows currently marked 'superseded'
+    in candidates.csv. Preserved across re-merge so a human's conflict resolution
+    sticks even when a run re-asserts the retired fact."""
+    csv_path = root / "facts" / "candidates.csv"
+    if not csv_path.is_file():
+        return set()
+    keys: set[tuple[str, str, str, str]] = set()
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if (row.get("status") or "").strip() in SUPERSEDED_STATUSES:
+                keys.add(
+                    (
+                        (row.get("subject") or "").strip(),
+                        (row.get("relation") or "").strip(),
+                        (row.get("object") or "").strip(),
+                        (row.get("source") or "").strip(),
+                    )
+                )
+    return keys
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -598,6 +624,20 @@ def main() -> int:
     # ------------------------------------------------------------------
     rows = normalize_rows(root, raw_rows, strict=args.strict)
     print(f"  rows after normalise/dedup: {len(rows)}")
+
+    # Preserve human-marked supersessions across re-merge: a row previously set
+    # to 'superseded' in candidates.csv stays superseded even if a run re-asserts
+    # it — so a conflict resolution (see check_conflicts.py) is durable.
+    superseded_keys = existing_superseded_keys(root)
+    if superseded_keys:
+        preserved = 0
+        for row in rows:
+            key = (row["subject"], row["relation"], row["object"], row["source"])
+            if key in superseded_keys and row["status"] not in SUPERSEDED_STATUSES:
+                row["status"] = "superseded"
+                preserved += 1
+        if preserved:
+            print(f"  preserved {preserved} superseded row(s) from candidates.csv")
 
     # Warn prominently when rows were loaded but all were dropped — this
     # distinguishes a silent contract violation from a genuinely empty run.

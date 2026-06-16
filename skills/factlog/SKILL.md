@@ -137,8 +137,10 @@ per subject. If two distinct objects are asserted for the same
 (subject, single-valued relation), `finalize` reports a `CONFLICT` and exits
 non-zero. Resolve non-destructively by marking the outdated row's status as
 `superseded` in `facts/candidates.csv` (it stays for audit, drops out of
-`accepted.dl`, and the conflict clears), then re-run. This keeps the KB free of
-the silently-accumulated contradictions a plain notes wiki cannot prevent.
+`accepted.dl`, and the conflict clears). This resolution is **durable**: a
+re-`merge` preserves rows you marked `superseded` in `candidates.csv` even when
+a run re-asserts the retired fact. This keeps the KB free of the silently-
+accumulated contradictions a plain notes wiki cannot prevent.
 
 Use `/factlog add` for quick capture; use the explicit `sync → query → check →
 repair` sequence when you need the full question→query workflow.

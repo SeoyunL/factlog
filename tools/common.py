@@ -160,20 +160,23 @@ def single_valued_relations() -> set[str]:
 
     Such a relation may hold at most one object per subject; two distinct objects
     are a contradiction (see tools/check_conflicts.py). The file is optional —
-    one relation name per line (bullets and `backticks` allowed); '#' lines and
-    blanks are ignored. Absent file → no single-valued relations → no conflicts.
+    one relation name per line (bullets and '#' comments allowed). The relation
+    name is the first `backtick`-quoted token if present, else the first
+    whitespace token; quote a name that contains spaces. Absent file → no
+    single-valued relations → no conflicts.
     """
     path = POLICY_DIR / "single-valued.md"
     if not path.is_file():
         return set()
     names: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
+        stripped = re.sub(r"^\s*[-*]\s+", "", line.strip()).strip()
         if not stripped or stripped.startswith("#"):
             continue
-        stripped = re.sub(r"^[-*]\s+", "", stripped).strip().strip("`").strip()
-        if stripped:
-            names.add(stripped)
+        match = re.search(r"`([^`]+)`", stripped)
+        name = match.group(1).strip() if match else stripped.split()[0]
+        if name:
+            names.add(name)
     return names
 
 
