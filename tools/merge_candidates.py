@@ -89,8 +89,10 @@ from common import (  # noqa: E402
     SUPERSEDED_STATUSES,
     RUNS_DIR,
     ensure_dirs,
+    is_text_source,
     normalize_confidence,
     slugify,
+    source_file_refs,
 )
 
 # ---------------------------------------------------------------------------
@@ -118,51 +120,9 @@ GENERATED_PAGE_MARKER = "<!-- generated-by-factlog -->"
 
 # A KB has two source roots: sources/ (the user's originals) and runs/sources/
 # (text conversions of binary originals produced by `factlog ingest`). Both are
-# valid `source` locations for extracted facts.
-SOURCE_ROOTS = ("sources", "runs/sources")
-
-
-def source_files(root: Path) -> list[Path]:
-    files: list[Path] = []
-    for rel in SOURCE_ROOTS:
-        base = root / rel
-        if base.is_dir():
-            files.extend(path for path in base.rglob("*") if path.is_file())
-    return sorted(files)
-
-
-def source_file_refs(root: Path) -> set[str]:
-    """Return source paths relative to the KB root (sources/- or runs/sources/-prefixed).
-
-    Example: <root>/sources/my-doc.md -> 'sources/my-doc.md';
-             <root>/runs/sources/report.md -> 'runs/sources/report.md'.
-    These paths match the canonical source value that candidate rows must use.
-    """
-    return {path.relative_to(root).as_posix() for path in source_files(root)}
-
-
-def is_text_source(path: Path, *, sniff: int = 8192) -> bool:
-    """Return True iff *path*'s leading bytes look like readable UTF-8 text.
-
-    The in-session fact extraction reads each sources/ file as text, so a file is
-    only ingestible if it decodes as text. A file is treated as non-text when its
-    first *sniff* bytes contain a NUL byte or do not decode as UTF-8 (tolerating a
-    multi-byte sequence truncated at the sniff boundary). Detection is
-    content-based, so binary formats (.docx, .pdf, images, ...) are flagged
-    regardless of their extension.
-    """
-    try:
-        chunk = path.read_bytes()[:sniff]
-    except OSError:
-        return False
-    if b"\x00" in chunk:
-        return False
-    try:
-        chunk.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        # A multi-byte UTF-8 char may be cut at the sniff boundary; tolerate it.
-        return exc.start >= len(chunk) - 3
-    return True
+# valid `source` locations for extracted facts. Source discovery + text sniffing
+# (source_file_refs, is_text_source) are imported from common above, shared with
+# coverage.py.
 
 
 def unconverted_binary_sources(root: Path) -> list[str]:

@@ -79,6 +79,54 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+# --- Source file discovery (shared by merge_candidates / coverage) -----------
+SOURCE_ROOTS = ("sources", "runs/sources")
+
+
+def source_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for rel in SOURCE_ROOTS:
+        base = root / rel
+        if base.is_dir():
+            files.extend(path for path in base.rglob("*") if path.is_file())
+    return sorted(files)
+
+
+def source_file_refs(root: Path) -> set[str]:
+    """Source paths relative to the KB root (sources/- or runs/sources/-prefixed).
+
+    Example: <root>/sources/my-doc.md -> 'sources/my-doc.md';
+             <root>/runs/sources/report.md -> 'runs/sources/report.md'.
+    These match the canonical source value that candidate rows must use.
+    """
+    return {path.relative_to(root).as_posix() for path in source_files(root)}
+
+
+def is_text_source(path: Path, *, sniff: int = 8192) -> bool:
+    """Return True iff *path*'s leading bytes look like readable UTF-8 text.
+
+    The in-session fact extraction reads each sources/ file as text, so a file is
+    only ingestible if it decodes as text. A file is treated as non-text when its
+    first *sniff* bytes contain a NUL byte or do not decode as UTF-8. A multi-byte
+    UTF-8 sequence truncated at the sniff boundary is tolerated *only* when the
+    file actually extends past the boundary; for a fully-read short file an
+    invalid trailing byte means binary. Detection is content-based, so binary
+    formats (.docx, .pdf, images, ...) are flagged regardless of their extension.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    chunk = raw[:sniff]
+    if b"\x00" in chunk:
+        return False
+    try:
+        chunk.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return len(raw) > sniff and exc.start >= len(chunk) - 3
+    return True
+
+
 def load_facts() -> list[dict[str, str]]:
     rows = read_csv(CANDIDATES_CSV)
     normalized: list[dict[str, str]] = []

@@ -341,6 +341,39 @@ Surface any `Policy Findings`, `Errors`, and `Warnings` sections under a
 repair` without explicit human instruction. Do not state any conclusion about
 the KB until errors reach 0.
 
+### Step 4 — Coverage critic (silent-omission guard)
+
+A free-text wiki cannot tell you what it *failed* to capture. Run the coverage
+critic to surface sources the KB has not extracted any facts from:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/tools/coverage.py" --wiki "$FACTLOG_ROOT"
+```
+
+It reports, per source file under `sources/` and `runs/sources/`, how many
+**engine-input** facts (status `confirmed`/`accepted`) cite it, and flags the
+gaps deterministically. Counting uses engine facts only — a source backed solely
+by `superseded` or `needs_review` rows contributes nothing to `accepted.dl`, so
+it is correctly reported as a gap, not "covered":
+
+- **text gap** — a text source with 0 facts: an extraction gap; re-run
+  `/factlog sync` (or investigate why nothing was extracted).
+- **binary gap** — a binary source under `sources/` with 0 facts: it needs
+  conversion first via `factlog ingest`. A binary under `runs/sources/` is
+  instead flagged as an anomaly (that directory holds ingest *output*, which
+  should already be text).
+- **orphan citation** — a fact cites a source path with no file on disk (a
+  stale or typo'd reference); surfaced on stderr.
+
+The script is the **deterministic half** (per-source fact counts, unreferenced
+sources, orphan citations); it always exits 0 so it never blocks the pipeline —
+including on a brand-new KB with no `candidates.csv` yet. Pass `--strict` to exit
+non-zero when any *text* source is uncovered (useful in automation).
+Judging **semantic** gaps — an entity mentioned in a source but with no relation
+extracted — is the **in-session critic's** job: read the flagged sources and
+decide whether the missing facts are real omissions worth a follow-up
+`/factlog add`.
+
 ---
 
 ## `/factlog repair` — gated self-correction of `review_required` queries
