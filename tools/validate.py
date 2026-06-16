@@ -171,8 +171,10 @@ def validate(root: Path) -> list[str]:
             if confidence_error:
                 errors.append(f"facts/candidates.csv line {idx} {confidence_error}")
             source = row.get("source", "")
-            if not source.startswith("sources/"):
-                errors.append(f"facts/candidates.csv line {idx} source must start with sources/")
+            if not (source.startswith("sources/") or source.startswith("runs/sources/")):
+                errors.append(
+                    f"facts/candidates.csv line {idx} source must start with sources/ or runs/sources/"
+                )
             else:
                 source_error = validate_source_ref(root, source)
                 if source_error:
@@ -210,7 +212,7 @@ def validate(root: Path) -> list[str]:
 
     for page in pages:
         text = read(page)
-        for source_ref in re.findall(r"sources/[^\s`)>,]+?\.md(?:#[^\s`)>,]+)?", text):
+        for source_ref in re.findall(r"(?:runs/)?sources/[^\s`)>,]+?\.md(?:#[^\s`)>,]+)?", text):
             source_error = validate_source_ref(root, source_ref)
             stale_record = f"stale_source: {page.relative_to(root).as_posix()} references removed source {source_ref}"
             if source_error and stale_record not in decision_text:
