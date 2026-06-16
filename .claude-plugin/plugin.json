@@ -6,6 +6,6 @@
   "author": { "name": "Justin Kim" },
   "homepage": "https://github.com/semantic-reasoning/factlog",
   "repository": "https://github.com/semantic-reasoning/factlog",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["knowledge-base", "datalog", "wirelog", "fact-extraction", "neurosymbolic", "verification", "claude-code"]
 }

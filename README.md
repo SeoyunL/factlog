@@ -114,4 +114,4 @@ These two levels are complementary: the hook closes the deterministic gap; the S
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
