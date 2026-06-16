@@ -300,7 +300,10 @@ def _keyword_patterns(question: str) -> list[re.Pattern[str]]:
     """
     seen: set[str] = set()
     patterns: list[re.Pattern[str]] = []
-    for word in re.findall(r"\w+", question.lower(), flags=re.UNICODE):
+    # Tokenizer captures programming-term punctuation: internal '.'/'-' (node.js,
+    # 도구가) and trailing '+'/'#' (c++, c#, f#), while excluding trailing
+    # sentence punctuation. Plain \w runs (incl. CJK) still tokenize as before.
+    for word in re.findall(r"\w+(?:[.+#-]+\w+)*[+#]*", question.lower(), flags=re.UNICODE):
         if word in seen:
             continue
         if _is_cjk(word):
@@ -309,7 +312,10 @@ def _keyword_patterns(question: str) -> list[re.Pattern[str]]:
                 patterns.append(re.compile(re.escape(word)))
         elif len(word) > 2:
             seen.add(word)
-            patterns.append(re.compile(rf"\b{re.escape(word)}\b"))
+            # Lookaround boundaries (not \b) so punctuation-edged tokens like
+            # 'c++' / 'c#' match while 'api' still does not match inside
+            # 'therapist'.
+            patterns.append(re.compile(rf"(?<!\w){re.escape(word)}(?!\w)"))
     return patterns
 
 
@@ -410,12 +416,14 @@ def search(question: str, root: Path, *, limit: int = 10) -> list[dict[str, obje
 
 
 def _entity_mentioned(entity: str, question_low: str) -> bool:
-    """Whether an accepted entity name appears in the question (bilingual:
-    CJK substring; ASCII word-boundary, matching the keyword matcher)."""
+    """Whether an accepted entity name appears in the question (bilingual,
+    matching the keyword matcher's contract): CJK substring (length >= 2);
+    ASCII lookaround boundaries so punctuation-edged names like 'C++'/'.NET'
+    match while short names don't match inside unrelated words."""
     name = entity.lower()
     if _is_cjk(entity):
-        return name in question_low
-    return re.search(rf"\b{re.escape(name)}\b", question_low) is not None
+        return len(entity) >= 2 and name in question_low
+    return re.search(rf"(?<!\w){re.escape(name)}(?!\w)", question_low) is not None
 
 
 def grounding_facts(question: str, accepted: list[dict[str, str]]) -> list[dict[str, str]]:

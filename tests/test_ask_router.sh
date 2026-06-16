@@ -225,6 +225,20 @@ check_field "count unknown entity -> wiki" validate 'count("Nope", "uses")?' rou
 check_field "count of zero stays engine" validate 'count("FastAPI", "uses")?' route engine
 if router render 'count("FastAPI", "uses")?' | grep -qE '^  - 0$'; then ok "count returns verified zero (not a fallback)"; else bad "count zero not rendered as 0"; fi
 
+# --- #41: punctuation-edge tokens (C++/.NET/node.js) + single-CJK floor ---
+if "$PYTHON" -c "
+import sys, os
+sys.path.insert(0, '$PLUGIN_ROOT/tools'); os.environ['FACTLOG_ROOT'] = '$KB'
+import ask_router as a
+assert any(p.search('we use c++ here') for p in a._keyword_patterns('C++ tooling')), 'c++ keyword'
+assert any(p.search('built on node.js') for p in a._keyword_patterns('node.js runtime')), 'node.js keyword'
+assert not any(p.search('the therapist') for p in a._keyword_patterns('api docs')), 'api must not match therapist'
+assert a._entity_mentioned('C++', 'migrating to c++ now'), 'C++ entity'
+assert a._entity_mentioned('.NET', 'uses .net here'), '.NET entity'
+assert not a._entity_mentioned('물', '물고기 이야기'), 'single CJK char must not match a compound'
+assert a._entity_mentioned('갑봇', '갑봇 질문'), 'multi-char CJK entity matches'
+" 2>/dev/null; then ok "matcher: C++/.NET/node.js tokens + single-CJK floor (no api/therapist regression)"; else bad "matcher boundary/tokenizer test failed"; fi
+
 # --- read-only invariant (engine inputs untouched by any subcommand) ---
 if [ -f "$KB/facts/query.dl" ]; then bad "ask_router wrote facts/query.dl (must be read-only)"; else ok "facts/query.dl never written"; fi
 if [ "$(cat "$KB/facts/accepted.dl")" = "$ACCEPTED_BEFORE" ]; then ok "facts/accepted.dl unchanged"; else bad "facts/accepted.dl was mutated"; fi
