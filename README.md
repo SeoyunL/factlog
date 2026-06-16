@@ -60,32 +60,23 @@ textutil -convert txt report.docx -output report.txt # macOS built-in
 
 ## Install
 
-factlog is a **Claude Code plugin**.
-
-### Local install (supported)
-
-Assuming the repo is already at `~/git/semantic-reasoning/factlog`, register it as a local plugin in a Claude Code session:
-
-```
-/plugin marketplace add ~/git/semantic-reasoning/factlog
-```
-
-Then run the one-shot bootstrap from inside a Claude Code session:
-
-```
-/factlog setup
-```
-
-`setup` runs `doctor`, installs the engine dependency, scaffolds the KB, and re-checks the environment — in one command.
-
-### Marketplace install (future)
-
-Once published to the Claude Code marketplace:
+factlog is a **Claude Code plugin**. Install it from this repo's marketplace in a Claude Code session:
 
 ```
 /plugin marketplace add semantic-reasoning/factlog
 /plugin install factlog@semantic-reasoning
 /factlog setup                     # one-shot: deps + doctor + init, in-session
+```
+
+`setup` runs `doctor`, installs the engine dependency (`pyrewire`), scaffolds the KB, and re-checks the environment — in one command.
+
+### Local install (development)
+
+To develop against a local clone, register the working tree as the marketplace instead:
+
+```
+/plugin marketplace add ~/git/semantic-reasoning/factlog
+/plugin install factlog@semantic-reasoning
 ```
 
 ### What `/factlog setup` does
