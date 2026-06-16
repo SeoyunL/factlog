@@ -67,10 +67,15 @@ from common import (  # noqa: E402
     QUERY_FACT_ABSENT,
     QUERY_OK,
     _arg_value,
+    _is_quoted_string,
     _is_variable,
     _query_args,
     classify_query,
+    dependency_graph,
+    dependency_path,
     load_accepted_facts,
+    policy_predicates,
+    run_wirelog,
 )
 
 
@@ -139,21 +144,67 @@ def evaluate_relation(draft: str, facts: list[dict[str, str]]) -> list[list[str]
     return rows
 
 
-def evaluate(draft: str, facts: list[dict[str, str]]) -> dict[str, object]:
-    """Evaluate a validated engine query. Phase 1 supports ``relation`` only.
+def _reachable_pairs(facts: list[dict[str, str]]) -> set[tuple[str, str]]:
+    """Transitive closure of edge(S,O) :- relation(S, _, O), pure-python.
 
-    ``path`` and policy predicates are deferred to a later phase; this raises a
-    NotImplementedError rather than returning 0 rows, so the caller never
-    mistakes a deferred predicate for a verified negative.
+    Mirrors the wirelog `path` semantics (WIRELOG_PROGRAM) without needing the
+    engine, so variable `path` queries resolve even before `/factlog check`.
+    """
+    graph = dependency_graph(facts)
+    pairs: set[tuple[str, str]] = set()
+    for start in list(graph):
+        seen: set[str] = set()
+        stack = list(graph.get(start, []))
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            pairs.add((start, node))
+            stack.extend(graph.get(node, []))
+    return pairs
+
+
+def evaluate(draft: str, facts: list[dict[str, str]]) -> dict[str, object]:
+    """Evaluate a validated engine query: relation, path, or a policy predicate.
+
+    - relation: match against accepted facts.
+    - path: a fully-quoted query returns the dependency path (or none); a query
+      with a variable returns the reachable (start, target) pairs.
+    - policy predicate: the inferred (entity, reason) rows from the engine,
+      optionally filtered by a quoted entity argument.
+
+    A truly unknown predicate raises NotImplementedError rather than returning 0
+    rows, so a caller never mistakes an unsupported predicate for a verified
+    negative.
     """
     predicate = _predicate_of(draft)
+    args = _query_args(draft)
     if predicate == "relation":
         rows = evaluate_relation(draft, facts)
         return {"rows": rows, "count": len(rows)}
-    raise NotImplementedError(
-        f"engine evaluation of predicate '{predicate}' is not implemented in this "
-        "version (path/policy evaluation is tracked separately)"
-    )
+    if predicate == "path":
+        if len(args) == 2 and all(_is_quoted_string(a) for a in args):
+            path = dependency_path(facts, _arg_value(args[0]), _arg_value(args[1]))
+            rows = [path] if path else []
+        else:
+            rows = [
+                [start, target]
+                for (start, target) in sorted(_reachable_pairs(facts))
+                if (len(args) == 2
+                    and (_is_variable(args[0]) or _arg_value(args[0]) == start)
+                    and (_is_variable(args[1]) or _arg_value(args[1]) == target))
+            ]
+        return {"rows": rows, "count": len(rows)}
+    if predicate in policy_predicates(_policy_program_optional()):
+        inferred = run_wirelog()
+        rows = []
+        for row in sorted(inferred.get(predicate, set())):
+            if args and _is_quoted_string(args[0]) and (not row or _arg_value(args[0]) != row[0]):
+                continue
+            rows.append(list(row))
+        return {"rows": rows, "count": len(rows)}
+    raise NotImplementedError(f"engine evaluation of predicate '{predicate}' is not supported")
 
 
 def render_engine_answer(draft: str, rows: list[list[str]]) -> str:
@@ -178,7 +229,18 @@ def render_engine_answer(draft: str, rows: list[list[str]]) -> str:
 # candidate rows), so grepping it would re-surface facts the engine never
 # accepted, leaking candidate vocabulary into an answer as if it were knowledge.
 WIKI_SOURCE_DIRS = ("sources", "runs/sources")
+# decisions/ (human review notes / open questions) is searched as clearly-labeled
+# SUPPLEMENTARY context — useful for an unanswered question, but tagged so it is
+# never conflated with source ground truth. pages/ stays excluded entirely.
+WIKI_SUPPLEMENTARY_DIRS = ("decisions",)
 _EXCERPT_WINDOW = 3
+
+
+def _wiki_corpus() -> list[tuple[str, str]]:
+    """(relative dir, display label) pairs for the wiki search, primary first."""
+    corpus = [(rel, rel) for rel in WIKI_SOURCE_DIRS]
+    corpus += [(rel, f"{rel} (supplementary)") for rel in WIKI_SUPPLEMENTARY_DIRS]
+    return corpus
 
 
 def _keyword_patterns(question: str) -> list[re.Pattern[str]]:
@@ -212,7 +274,7 @@ def search(question: str, root: Path, *, limit: int = 10) -> list[dict[str, obje
     if not patterns:
         return []
     results: list[dict[str, object]] = []
-    for rel in WIKI_SOURCE_DIRS:
+    for rel, label in _wiki_corpus():
         base = root / rel
         if not base.is_dir():
             continue
@@ -244,7 +306,7 @@ def search(question: str, root: Path, *, limit: int = 10) -> list[dict[str, obje
                         "file": path.relative_to(root).as_posix(),
                         "line": i + 1,
                         "excerpt": excerpt,
-                        "dir": rel,
+                        "dir": label,
                     }
                 )
     return results[:limit]
@@ -261,7 +323,7 @@ def render_wiki_answer(question: str, reason: str, results: list[dict[str, objec
         "UNVERIFIED — wiki exploration",
         f"question: {question}",
         f"reason: {reason}",
-        f"sources searched: {', '.join(WIKI_SOURCE_DIRS)}",
+        f"sources searched: {', '.join(label for _rel, label in _wiki_corpus())}",
     ]
     if results:
         for r in results:
@@ -330,18 +392,10 @@ def cmd_render(args: argparse.Namespace) -> int:
         if decision["negative"]:
             print(render_engine_answer(args.draft, []))
             return 0
-        # Positive engine answer: relation is evaluated now; non-relation
-        # positives (path/policy) are deferred — emit a directive, never a
-        # fabricated result.
-        if decision["predicate"] == "relation":
-            print(render_engine_answer(args.draft, evaluate(args.draft, facts)["rows"]))
-            return 0
-        print(
-            json.dumps(
-                {"route": "engine", "deferred": decision["predicate"], "reason": decision["reason"]},
-                ensure_ascii=False,
-            )
-        )
+        # Positive engine answer: relation, path, and policy predicates are all
+        # evaluated by the engine and rendered (0 rows -> a verified-empty result,
+        # never a wiki fallback).
+        print(render_engine_answer(args.draft, evaluate(args.draft, facts)["rows"]))
         return 0
     # route == wiki
     print(json.dumps({"route": "wiki", "reason": decision["reason"]}, ensure_ascii=False))
