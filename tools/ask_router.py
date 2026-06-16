@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -79,10 +80,23 @@ def _policy_program_optional() -> str:
     """
     return LOGIC_POLICY_DL.read_text(encoding="utf-8") if LOGIC_POLICY_DL.is_file() else ""
 
-# The distinctive phrase both fact-absence reasons share (relation + path).
-# See common.validate_candidate_query: "relation query does not match accepted
-# facts" and "path query does not match accepted facts".
-_FACT_ABSENCE_MARKER = "does not match accepted facts"
+# The EXACT validator reasons that denote a fact-absence (a verified negative):
+# accepted vocabulary, but the specific fact/path is simply not present. Matched
+# exactly — never as a substring — so an unaccepted entity/relation name that
+# happens to contain this phrase cannot masquerade as a verified negative.
+_FACT_ABSENCE_REASONS = frozenset(
+    {
+        "relation query does not match accepted facts",
+        "path query does not match accepted facts",
+    }
+)
+
+
+def _predicate_of(draft: str) -> str:
+    """Parse the predicate name the way the validator does (regex), so the router
+    and the validator never disagree about what predicate a draft calls."""
+    match = re.match(r"^([A-Za-z_]\w*)\(", draft.strip())
+    return match.group(1) if match else ""
 
 
 def classify(draft: str, facts: list[dict[str, str]]) -> dict[str, object]:
@@ -92,14 +106,14 @@ def classify(draft: str, facts: list[dict[str, str]]) -> dict[str, object]:
     validator, which only reads the accepted facts already loaded by the caller.
     """
     ok, reason = validate_candidate_query(draft, facts, policy_program=_policy_program_optional())
-    predicate = draft.split("(", 1)[0].strip()
+    predicate = _predicate_of(draft)
 
     if ok:
         if predicate == "review_required":
             route, negative = "wiki", False
         else:
             route, negative = "engine", False
-    elif _FACT_ABSENCE_MARKER in reason:
+    elif reason in _FACT_ABSENCE_REASONS:
         # Vocabulary is accepted; the specific fact/path is simply absent.
         # This is a verified negative — an engine answer, not a wiki fallback.
         route, negative = "engine", True
@@ -142,7 +156,7 @@ def evaluate(draft: str, facts: list[dict[str, str]]) -> dict[str, object]:
     NotImplementedError rather than returning 0 rows, so the caller never
     mistakes a deferred predicate for a verified negative.
     """
-    predicate = draft.split("(", 1)[0].strip()
+    predicate = _predicate_of(draft)
     if predicate == "relation":
         rows = evaluate_relation(draft, facts)
         return {"rows": rows, "count": len(rows)}
@@ -189,17 +203,23 @@ def cmd_render(args: argparse.Namespace) -> int:
     facts = load_accepted_facts()
     decision = classify(args.draft, facts)
     if decision["route"] == "engine":
-        rows = evaluate_relation(args.draft, facts) if decision["predicate"] == "relation" else []
-        if decision["predicate"] != "relation":
-            # Defer non-relation engine evaluation; do not fabricate a result.
-            print(
-                json.dumps(
-                    {"route": "engine", "deferred": decision["predicate"], "reason": decision["reason"]},
-                    ensure_ascii=False,
-                )
-            )
+        # A verified negative is proven by the validator regardless of predicate,
+        # so it is always renderable as an engine answer — never demoted.
+        if decision["negative"]:
+            print(render_engine_answer(args.draft, []))
             return 0
-        print(render_engine_answer(args.draft, rows))
+        # Positive engine answer: relation is evaluated now; non-relation
+        # positives (path/policy) are deferred — emit a directive, never a
+        # fabricated result.
+        if decision["predicate"] == "relation":
+            print(render_engine_answer(args.draft, evaluate(args.draft, facts)["rows"]))
+            return 0
+        print(
+            json.dumps(
+                {"route": "engine", "deferred": decision["predicate"], "reason": decision["reason"]},
+                ensure_ascii=False,
+            )
+        )
         return 0
     # route == wiki
     print(json.dumps({"route": "wiki", "reason": decision["reason"]}, ensure_ascii=False))

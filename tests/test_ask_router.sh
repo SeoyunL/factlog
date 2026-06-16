@@ -76,6 +76,18 @@ if router render 'relation("Acme API", "uses", V)?' | grep -qF "Acme API, uses, 
 neg="$(router render 'relation("Acme API", "uses", "Postgres")?')"
 if printf '%s' "$neg" | grep -qF "VERIFIED — engine" && printf '%s' "$neg" | grep -qF "verified negative"; then ok "render verified-negative is engine-marked"; else bad "render verified-negative not engine-marked"; fi
 
+# --- path routing & verified-negative (renderable for any predicate) ---
+check_field "reachable path routes engine" validate 'path("Acme API", "FastAPI")?' route engine
+check_field "unreachable path = verified negative (engine)" validate 'path("Postgres", "FastAPI")?' route engine
+check_field "unreachable path flagged negative" validate 'path("Postgres", "FastAPI")?' negative True
+pneg="$(router render 'path("Postgres", "FastAPI")?')"
+if printf '%s' "$pneg" | grep -qF "VERIFIED — engine" && printf '%s' "$pneg" | grep -qF "verified negative"; then ok "path verified-negative renders as an engine answer (not deferred/wiki)"; else bad "path verified-negative not rendered as engine answer"; fi
+
+# --- regression: an unaccepted relation name containing the fact-absence
+# phrase must route to wiki, NOT masquerade as a verified negative (exact-match) ---
+check_field "marker-collision relation name routes wiki" validate 'relation("Acme API", "does not match accepted facts", "X")?' route wiki
+check_field "marker-collision not flagged negative" validate 'relation("Acme API", "does not match accepted facts", "X")?' negative False
+
 # --- read-only invariant ---
 if [ -f "$KB/facts/query.dl" ]; then bad "ask_router wrote facts/query.dl (must be read-only)"; else ok "facts/query.dl never written"; fi
 if [ "$(cat "$KB/facts/accepted.dl")" = "$ACCEPTED_BEFORE" ]; then ok "facts/accepted.dl unchanged"; else bad "facts/accepted.dl was mutated"; fi
