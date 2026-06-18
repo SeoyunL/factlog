@@ -548,6 +548,12 @@ def _apply_review_status(args: argparse.Namespace, new_status: str, verb: str) -
         print(f"factlog {verb}: compile_facts failed: {(proc.stderr or proc.stdout).strip()}", file=sys.stderr)
     recompiled = "accepted.dl NOT recompiled" if recompile_failed else "accepted.dl recompiled"
     print(f"factlog {verb}: {changed} row(s) → {new_status}; {recompiled}")
+    if recompile_failed:
+        print(
+            f"factlog {verb}: the status change WAS saved to candidates.csv; "
+            "re-run `/factlog check` (or compile_facts.py) to refresh accepted.dl.",
+            file=sys.stderr,
+        )
     print("factlog review: note — pages/ may be stale; run /factlog sync to regenerate them.")
     return 1 if recompile_failed else 0
 

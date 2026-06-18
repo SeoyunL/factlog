@@ -83,6 +83,14 @@ set +e
 "$PYTHON" -m factlog review --target "$(mktemp -d)" >/dev/null 2>&1; [ $? -ne 0 ] && ok "review on a non-KB path errors" || bad "non-KB review should error"
 set -e
 
+# --- recompile failure: status saved, rc 1, clear message --------------------
+KB="$(mktemp -d)/wiki"; seed "$KB"
+rm -f "$KB/facts/accepted.dl"; mkdir "$KB/facts/accepted.dl"   # make compile_facts fail to write
+set +e; out="$("$PYTHON" -m factlog accept X rel Y --target "$KB" 2>&1)"; rc=$?; set -e
+[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF "NOT recompiled" && ok "recompile failure exits rc 1 with 'NOT recompiled'" || bad "compile-failure path wrong (rc=$rc)"
+grep -q "X,rel,Y,sources/a.md,accepted," "$KB/facts/candidates.csv" && ok "status change saved even when recompile fails" || bad "status not saved on recompile failure"
+rmdir "$KB/facts/accepted.dl"
+
 # --- empty queue is graceful -------------------------------------------------
 KB="$(mktemp -d)/wiki"
 "$PYTHON" -m factlog init --target "$KB" >/dev/null
