@@ -106,6 +106,16 @@ printf '[{"subject":"X","relation":"rel","object":"Y","source":"sources/a.md","s
 grep -q "X,rel,Y,sources/a.md,accepted," "$KB/facts/candidates.csv" && ok "accept survives a re-merge (preserved)" || bad "accept reverted after re-merge"
 grep -q "Z,rel,W,sources/a.md,superseded," "$KB/facts/candidates.csv" && ok "reject still durable after re-merge" || bad "reject reverted after re-merge"
 
+# a human-'confirmed' row is restored as confirmed, not coerced to accepted
+KB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$KB" >/dev/null
+printf 'a\n' > "$KB/sources/a.md"
+printf '[{"subject":"P","relation":"rel","object":"Q","source":"sources/a.md","status":"candidate","confidence":0.8,"note":""}]\n' \
+  > "$KB/runs/r.json"
+printf '%s\nP,rel,Q,sources/a.md,confirmed,0.8,\n' "$H" > "$KB/facts/candidates.csv"   # human-confirmed
+"$PYTHON" "$PLUGIN_ROOT/tools/merge_candidates.py" --wiki "$KB" >/dev/null 2>&1
+grep -q "P,rel,Q,sources/a.md,confirmed," "$KB/facts/candidates.csv" && ok "confirmed preserved as confirmed (exact status, not coerced)" || bad "confirmed not preserved / coerced: $(grep '^P,' "$KB/facts/candidates.csv")"
+
 # --- empty queue is graceful -------------------------------------------------
 KB="$(mktemp -d)/wiki"
 "$PYTHON" -m factlog init --target "$KB" >/dev/null
