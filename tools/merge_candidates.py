@@ -546,7 +546,13 @@ def validate_outputs(root: Path) -> int:
 def existing_superseded_keys(root: Path) -> set[tuple[str, str, str, str]]:
     """(subject, relation, object, source) of rows currently marked 'superseded'
     in candidates.csv. Preserved across re-merge so a human's conflict resolution
-    sticks even when a run re-asserts the retired fact."""
+    (or `factlog eject --fact`) sticks even when a run re-asserts the retired fact.
+
+    The source is keyed WITHOUT its '#anchor' (partitioned on '#', same as
+    normalize_rows' source-existence check), so a supersession survives a later
+    sync that re-asserts the same triple from the same file with a drifted
+    section anchor (sources/a.md#sec3 -> sources/a.md). Different files stay
+    distinct, so a supersession is still scoped to the source file it came from."""
     csv_path = root / "facts" / "candidates.csv"
     if not csv_path.is_file():
         return set()
@@ -559,7 +565,7 @@ def existing_superseded_keys(root: Path) -> set[tuple[str, str, str, str]]:
                         (row.get("subject") or "").strip(),
                         (row.get("relation") or "").strip(),
                         (row.get("object") or "").strip(),
-                        (row.get("source") or "").strip(),
+                        (row.get("source") or "").strip().partition("#")[0],
                     )
                 )
     return keys
@@ -656,7 +662,9 @@ def main() -> int:
     if superseded_keys:
         preserved = 0
         for row in rows:
-            key = (row["subject"], row["relation"], row["object"], row["source"])
+            # Anchor-insensitive key (see existing_superseded_keys): a drifted
+            # section anchor must not let a retired fact slip back in.
+            key = (row["subject"], row["relation"], row["object"], row["source"].partition("#")[0])
             if key in superseded_keys and row["status"] not in SUPERSEDED_STATUSES:
                 row["status"] = "superseded"
                 preserved += 1

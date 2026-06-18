@@ -150,6 +150,20 @@ grep -q '"X", "goodrel", "Z"' "$KB/facts/accepted.dl" && ! grep -q '"X", "wrongr
 "$PYTHON" tools/merge_candidates.py --wiki "$KB" >/dev/null 2>&1
 grep -q "X,wrongrel,Y,sources/a.md,superseded," "$KB/facts/candidates.csv" && ok "fact mode: supersede survives re-merge" || bad "supersede lost after re-merge"
 
+# --- supersede survives re-merge even when the section anchor drifts -----------
+# candidate cites sources/a.md#sec3; a later run re-asserts the bare path. The
+# supersede preservation key is anchor-insensitive, so the fact stays retired.
+KB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$KB" >/dev/null
+printf 'plain\n' > "$KB/sources/a.md"
+printf '%s\n%s\n' "$H" 'X,wrongrel,Y,sources/a.md#sec3,confirmed,0.9,' > "$KB/facts/candidates.csv"
+"$PYTHON" -m factlog eject --fact X wrongrel Y --target "$KB" >/dev/null 2>&1
+# next sync re-asserts the same triple from the same file, anchor dropped
+printf '[{"subject":"X","relation":"wrongrel","object":"Y","source":"sources/a.md","status":"confirmed","confidence":0.9,"note":""}]\n' > "$KB/runs/drift.json"
+"$PYTHON" tools/merge_candidates.py --wiki "$KB" >/dev/null 2>&1
+grep -q ",superseded," "$KB/facts/candidates.csv" && ! grep -q "wrongrel,Y,sources/a.md,confirmed" "$KB/facts/candidates.csv" \
+  && ok "fact mode: supersede survives anchor drift across re-merge" || bad "supersede lost on anchor drift: $(grep wrongrel "$KB/facts/candidates.csv")"
+
 # --- --purge: delete the row and strip runs -----------------------------------
 KB="$(mktemp -d)/wiki"; seed_facts "$KB"
 "$PYTHON" -m factlog eject --fact X wrongrel Y --target "$KB" --purge >/dev/null 2>&1
