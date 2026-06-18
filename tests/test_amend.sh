@@ -70,6 +70,14 @@ set +e
 "$PYTHON" -m factlog amend Widget codename Draft --set-object X --target "$(mktemp -d)" >/dev/null 2>&1; [ $? -ne 0 ] && ok "amend on a non-KB path errors" || bad "non-KB path should error"
 set -e
 
+# --- recompile failure: edit saved, rc 1, clear message ----------------------
+KB="$(mktemp -d)/wiki"; seed "$KB"
+rm -f "$KB/facts/accepted.dl"; mkdir "$KB/facts/accepted.dl"   # make compile_facts fail to write
+set +e; out="$("$PYTHON" -m factlog amend Widget codename Draft --set-object Falcon --target "$KB" 2>&1)"; rc=$?; set -e
+[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF "NOT recompiled" && ok "recompile failure exits rc 1 with 'NOT recompiled'" || bad "compile-failure path wrong (rc=$rc)"
+grep -q "Widget,codename,Falcon," "$KB/facts/candidates.csv" && ok "edit saved even when recompile fails" || bad "edit not saved on recompile failure"
+rmdir "$KB/facts/accepted.dl"
+
 # --- candidates-only fact (no runs backing) warns about durability -----------
 KB="$(mktemp -d)/wiki"
 "$PYTHON" -m factlog init --target "$KB" >/dev/null

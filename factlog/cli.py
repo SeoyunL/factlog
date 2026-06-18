@@ -709,6 +709,12 @@ def cmd_amend(args: argparse.Namespace) -> int:
         f"factlog amend: {changed} candidate row(s) updated, {runs_changed} runs/*.json row(s) updated; "
         f"{recompiled}"
     )
+    if recompile_failed:
+        print(
+            "factlog amend: the edit WAS saved to candidates.csv/runs; "
+            "re-run `/factlog check` (or compile_facts.py) to refresh accepted.dl.",
+            file=sys.stderr,
+        )
     if changed and not runs_changed:
         print(
             "factlog amend: note — no runs/*.json backing was found; the edit will NOT survive a "
