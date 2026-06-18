@@ -40,9 +40,9 @@ def _resolve_wiki_prepass() -> str:
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--wiki", default=None)
     known, _ = pre.parse_known_args()
-    if known.wiki:
-        return str(Path(known.wiki).expanduser().resolve())
-    return str(Path(os.environ.get("FACTLOG_ROOT", ".")).expanduser().resolve())
+    import factlog_config
+    # Precedence: --wiki flag > $FACTLOG_ROOT > active-KB config > cwd.
+    return factlog_config.resolve_root(known.wiki)[0]
 
 
 # Must precede `import common`: common binds ROOT/POLICY_DIR/CANDIDATES_CSV from

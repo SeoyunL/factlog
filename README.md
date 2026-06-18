@@ -57,6 +57,22 @@ factlog ingest report.docx --target ~/wiki   # → ~/wiki/runs/sources/report.md
 factlog ingest --scan --target ~/wiki        # auto-convert every binary under sources/
 ```
 
+### Active KB (target the set-up KB from anywhere)
+
+After `factlog init`/`setup` (or `factlog use <kb>`), the chosen KB is recorded
+as the **active KB**, so `ingest`/`ask`/`sync` and the tools target it from any
+working directory — no `--target`/`--wiki` needed:
+
+```bash
+factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
+factlog where             # show the active KB and how it was resolved
+cd /anywhere && factlog ingest report.pdf   # → ~/wiki/runs/sources/report.txt
+```
+
+Resolution precedence: `--target`/`--wiki` flag > `$FACTLOG_ROOT` > active-KB
+config (`${XDG_CONFIG_HOME:-~/.config}/factlog/config.json`) > current directory.
+With no config set, behavior is unchanged (uses the current directory).
+
 `/factlog sync` runs `factlog ingest --scan` as its first step, so binaries you
 drop in `sources/` are converted automatically (idempotently — unchanged files
 are skipped). If a binary has no `runs/sources/` conversion, `merge_candidates.py`

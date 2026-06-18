@@ -16,8 +16,15 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path as _Path
 
 from factlog import __version__
+
+# Share the active-KB config resolver with the tools/ scripts (same module).
+_TOOLS_DIR = _Path(__file__).resolve().parent.parent / "tools"
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+import factlog_config  # noqa: E402
 
 MIN_PYTHON = (3, 11)
 MIN_PYREWIRE = (1, 0, 1)
@@ -239,6 +246,31 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     target = Path(args.target).expanduser().resolve()
     _init_kb(target)
+    factlog_config.write_root(target)
+    print(f"factlog init: active KB set to {target} (ingest/ask/sync default here from any directory)")
+    return 0
+
+
+def cmd_use(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    target = Path(args.target).expanduser().resolve()
+    if not target.is_dir():
+        print(f"factlog use: {target} does not exist. Run 'factlog init --target {args.target}' first.", file=sys.stderr)
+        return 1
+    factlog_config.write_root(target)
+    note = "" if (target / "sources").is_dir() else "  (warning: no sources/ — not a factlog KB yet; run 'factlog init')"
+    print(f"factlog use: active KB set to {target}{note}")
+    print(f"  config: {factlog_config.config_path()}")
+    return 0
+
+
+def cmd_where(args: argparse.Namespace) -> int:
+    root, source = factlog_config.resolve_root()
+    label = {"env": "env ($FACTLOG_ROOT)", "config": "config file", "cwd": "current directory"}.get(source, source)
+    print(f"active KB: {root}")
+    print(f"resolved from: {label} (precedence: --flag > $FACTLOG_ROOT > config > cwd)")
+    print(f"config file: {factlog_config.config_path()}")
     return 0
 
 
@@ -355,10 +387,12 @@ def cmd_setup(args: argparse.Namespace) -> int:
     print("\n=== factlog setup: initialise knowledge base ===")
     target = Path(args.target).expanduser().resolve()
     kb_created = _init_kb(target)
+    factlog_config.write_root(target)
     if kb_created:
         actions.append(f"created KB layout at {target}")
     else:
         actions.append(f"KB already present at {target}")
+    actions.append(f"set active KB to {target} (ingest/ask/sync default here from any directory)")
 
     print("\n=== factlog setup: final environment check ===")
     final_ok = _run_doctor_checks()
@@ -577,13 +611,17 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
     from pathlib import Path
 
-    target = Path(args.target).expanduser().resolve()
+    target_str, source = factlog_config.resolve_root(args.target)
+    target = Path(target_str)
+    if source in ("config", "cwd"):
+        print(f"factlog ingest: target KB {target} (from {source})")
     if not (target / "sources").is_dir():
-        print(
-            f"factlog ingest: {target} is not a factlog KB (no sources/). "
-            f"Run 'factlog init --target {args.target}' first.",
-            file=sys.stderr,
+        hint = (
+            "Run 'factlog init --target <kb>' (or 'factlog use <kb>') first."
+            if source in ("config", "cwd")
+            else f"Run 'factlog init --target {args.target}' first."
         )
+        print(f"factlog ingest: {target} is not a factlog KB (no sources/). {hint}", file=sys.stderr)
         return 1
     # Converted files are *derived* artifacts, so they collect with the other
     # generated run outputs under runs/sources/ — never in sources/, which holds
@@ -726,8 +764,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument(
         "--target",
-        default="~/wiki",
-        help="knowledge base root whose runs/sources/ receives the converted file(s)",
+        default=None,
+        help="KB root whose runs/sources/ receives the conversions "
+        "(default: the active KB set by `factlog init`/`use`, else cwd)",
     )
     ingest.add_argument(
         "--force",
@@ -735,6 +774,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-convert even when an up-to-date conversion already exists",
     )
     ingest.set_defaults(func=cmd_ingest)
+
+    use = sub.add_parser("use", help="set the active KB targeted by ingest/ask/sync from any directory")
+    use.add_argument("target", help="knowledge base root to make active")
+    use.set_defaults(func=cmd_use)
+
+    where = sub.add_parser("where", help="print the active KB and where it was resolved from")
+    where.set_defaults(func=cmd_where)
 
     return parser
 

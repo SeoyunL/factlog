@@ -15,6 +15,8 @@
 
 set -euo pipefail
 
+export XDG_CONFIG_HOME="$(mktemp -d)/factlog-test-cfg"  # isolate active-KB config (#62) from the dev machine
+
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERGE="$PLUGIN_ROOT/tools/merge_candidates.py"
 PYTHON="${PYTHON:-python3}"

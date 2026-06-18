@@ -31,6 +31,8 @@
 
 set -euo pipefail
 
+export XDG_CONFIG_HOME="$(mktemp -d)/factlog-test-cfg"  # isolate active-KB config (#62) from the dev machine
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------

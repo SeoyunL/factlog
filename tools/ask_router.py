@@ -57,9 +57,9 @@ def _resolve_target_prepass() -> str:
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--target", default=None)
     known, _ = pre.parse_known_args()
-    if known.target:
-        return str(Path(known.target).expanduser().resolve())
-    return str(Path(os.environ.get("FACTLOG_ROOT", ".")).expanduser().resolve())
+    import factlog_config
+    # Precedence: --target flag > $FACTLOG_ROOT > active-KB config > cwd.
+    return factlog_config.resolve_root(known.target)[0]
 
 
 os.environ["FACTLOG_ROOT"] = _resolve_target_prepass()

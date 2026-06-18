@@ -13,6 +13,8 @@
 
 set -euo pipefail
 
+export XDG_CONFIG_HOME="$(mktemp -d)/factlog-test-cfg"  # isolate active-KB config (#62) from the dev machine
+
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PYTHONPATH="$PLUGIN_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 PYTHON="${PYTHON:-python3}"

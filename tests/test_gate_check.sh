@@ -10,6 +10,8 @@
 
 set -euo pipefail
 
+export XDG_CONFIG_HOME="$(mktemp -d)/factlog-test-cfg"  # isolate active-KB config (#62) from the dev machine
+
 GATE="$(cd "$(dirname "$0")/.." && pwd)/hooks/gate_check.sh"
 
 pass=0
