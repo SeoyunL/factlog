@@ -48,12 +48,25 @@ slide1 = (
     '</p:sld>'
 )
 slide2 = '<?xml version="1.0"?><p:sld><a:p><a:t>둘째 슬라이드</a:t></a:p></p:sld>'
+# slide3: a foreign namespace prefix (not a:) and a 1x2 table — exercises the
+# prefix-agnostic match and one-line-per-cell flattening.
+slide3 = (
+    '<?xml version="1.0"?><p:sld xmlns:x="z">'
+    '<x:p><x:t>외부 네임스페이스</x:t></x:p>'
+    '<a:tbl><a:tr><a:tc><a:txBody><a:p><a:t>셀하나</a:t></a:p></a:txBody></a:tc>'
+    '<a:tc><a:txBody><a:p><a:t>셀둘</a:t></a:p></a:txBody></a:tc></a:tr></a:tbl>'
+    '</p:sld>'
+)
 slide10 = '<?xml version="1.0"?><p:sld><a:p><a:t>열번째 슬라이드</a:t></a:p></p:sld>'
 with zipfile.ZipFile(dst, "w") as z:
     z.writestr("[Content_Types].xml", "<Types/>")
     z.writestr("ppt/slides/slide1.xml", slide1)
     z.writestr("ppt/slides/slide2.xml", slide2)
+    z.writestr("ppt/slides/slide3.xml", slide3)
     z.writestr("ppt/slides/slide10.xml", slide10)
+    # speaker notes must NOT be extracted (on-slide text only)
+    z.writestr("ppt/notesSlides/notesSlide1.xml",
+               '<?xml version="1.0"?><p:notes><a:p><a:t>발표자 노트 비밀</a:t></a:p></p:notes>')
 PY
 }
 
@@ -69,6 +82,9 @@ grep -qx "A & B" "$md" && ok "entities unescaped" || bad "entity not unescaped"
 grep -qx "스타일런" "$md" && ok "attributed <a:t lang=..> run extracted" || bad "attributed run silently dropped"
 grep -qx "둘째 슬라이드" "$md" && ok "text from a second slide included" || bad "slide2 text missing"
 grep -qx "열번째 슬라이드" "$md" && ok "text from slide10 included" || bad "slide10 text missing"
+grep -qx "외부 네임스페이스" "$md" && ok "foreign namespace prefix (<x:t>) extracted" || bad "non-a: prefix dropped"
+grep -qx "셀하나" "$md" && grep -qx "셀둘" "$md" && ok "table cells flattened to one line per cell" || bad "table cell text missing"
+! grep -qF "발표자 노트 비밀" "$md" && ok "speaker notes excluded (on-slide text only)" || bad "speaker notes leaked into output"
 ! grep -qx "   " "$md" && ok "empty/whitespace paragraphs dropped" || bad "empty paragraph leaked"
 # numeric slide ordering: slide2 line must precede slide10 line in the output.
 awk '/^둘째 슬라이드$/{s2=NR} /^열번째 슬라이드$/{s10=NR} END{exit !(s2 && s10 && s2 < s10)}' "$md" \

@@ -663,6 +663,13 @@ def _conv_pptx(src, dst) -> bool:
     separated by a blank line. Writes *dst* and returns True on success; a
     corrupt zip or empty extraction returns False (the caller reports a
     failure). Standard library only.
+
+    Scope (deliberate, like the hwpx built-in): only *on-slide* text body is
+    read — speaker notes (ppt/notesSlides/) are excluded. Table cells are each
+    their own <a:p>, so a table flattens to one line per cell (row/column
+    grouping is not preserved). The DrawingML element prefix is matched
+    prefix-agnostically (<*:p>/<*:t>) so non-PowerPoint exporters that alias the
+    namespace differently still extract.
     """
     import html
     import re
@@ -673,17 +680,19 @@ def _conv_pptx(src, dst) -> bool:
             slides = [n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]
             # slideN.xml: order by the embedded number so slide10 follows slide9
             # (plain sort would place slide10 before slide2).
-            slides.sort(key=lambda n: int(re.search(r"(\d+)", n).group(1)))
+            slides.sort(key=lambda n: int(re.search(r"slide(\d+)", n).group(1)))
             if not slides:
                 return False
             blocks: list[str] = []
             for name in slides:
                 xml = z.read(name).decode("utf-8", "ignore")
                 lines: list[str] = []
-                for para in re.split(r"<a:p\b", xml):
-                    # tolerate attributes on the run element (<a:t ...>); strip
+                # Split on the paragraph tag with any namespace prefix; \b after
+                # ":p" keeps <*:pPr>/<*:prstGeom> from being treated as paragraphs.
+                for para in re.split(r"<\w+:p\b", xml):
+                    # tolerate attributes on the run element (<*:t ...>); strip
                     # inline tags inside the run, then unescape XML entities.
-                    runs = re.findall(r"<a:t\b[^>]*>(.*?)</a:t>", para, flags=re.S)
+                    runs = re.findall(r"<\w+:t\b[^>]*>(.*?)</\w+:t>", para, flags=re.S)
                     if not runs:
                         continue
                     line = html.unescape("".join(re.sub(r"<[^>]+>", "", r) for r in runs)).strip()

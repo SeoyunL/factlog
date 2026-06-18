@@ -44,7 +44,7 @@ no facts on its own.
 | `.docx`, binary `.pdf`, `.odt`, `.epub`, `.html`, `.rtf` | **Auto-converted** | `factlog ingest` converts these to text via pandoc / textutil / pdftotext. |
 | `.hwpx` (Hancom OWPML) | **Auto-converted** | Built-in extractor (no external tool) — reads the zip's `Contents/section*.xml` text. |
 | `.hwp` (legacy Hancom, HWP 5.x) | **Auto-converted** | Via `hwp5html` (pyhwp) → pandoc → markdown, tables preserved. Needs `pip install pyhwp` + pandoc; if absent, reported with a hint. |
-| `.pptx` (PowerPoint) | **Auto-converted** | Built-in extractor (no external tool) — reads slide text from the zip's `ppt/slides/slideN.xml`, slides in order, one block per slide. |
+| `.pptx` (PowerPoint) | **Auto-converted** | Built-in extractor (no external tool) — reads on-slide text from the zip's `ppt/slides/slideN.xml`, slides in order, one block per slide. Speaker notes are excluded; table cells flatten to one line per cell (row/column grouping not preserved). |
 | `.xlsx`, images | **Not converted** | No bundled converter — reported with a hint; convert by hand. |
 
 `factlog ingest` writes the converted text into the KB's **`runs/sources/`**
