@@ -109,14 +109,22 @@ printf '%s\n%s\n' "$HEADER" \
   '갑봇,통합,을서비스,runs/sources/report.txt,accepted,0.9,' > "$PAIRKB/facts/candidates.csv"
 pout="$("$PYTHON" "$COV" --wiki "$PAIRKB" 2>&1)"
 printf '%s' "$pout" | grep -qF "covered via runs/sources/report.txt: 1 fact(s)" && ok "binary original covered via its conversion" || bad "pairing not shown: $pout"
-printf '%s' "$pout" | grep -qE "GAP .*report.pdf" && bad "paired binary still flagged as a gap" || ok "paired binary is not a binary gap"
+printf '%s' "$pout" | grep -qE 'GAP .*report\.pdf' && bad "paired binary still flagged as a gap" || ok "paired binary is not a binary gap"
 printf '%s' "$pout" | grep -qF "GAP (binary, run factlog ingest): sources/lonely.pdf" && ok "unconverted binary is still a gap" || bad "unconverted binary not flagged"
 printf '%s' "$pout" | grep -qF "(1 via conversion)" && ok "summary notes the 'via conversion' count" || bad "via-conversion summary note missing"
 # a binary whose conversion exists but has 0 facts is not a binary gap; the empty
 # conversion surfaces as its own text gap instead.
 printf '%s' "$pout" | grep -qF "converted → runs/sources/empty.txt (0 facts" && ok "empty conversion: binary shown converted, not a binary gap" || bad "empty-conversion binary mishandled"
-printf '%s' "$pout" | grep -qE "GAP .*empty.pdf" && bad "converted-but-empty binary wrongly a binary gap" || ok "converted-but-empty binary not a binary gap"
+printf '%s' "$pout" | grep -qE 'GAP .*empty\.pdf' && bad "converted-but-empty binary wrongly a binary gap" || ok "converted-but-empty binary not a binary gap"
 printf '%s' "$pout" | grep -qF "GAP (text, run /factlog sync): runs/sources/empty.txt" && ok "empty conversion surfaces as a text gap" || bad "empty conversion not a text gap"
+
+# a stray BINARY under runs/sources/ is an anomaly, not a usable conversion: it
+# must not pair with (and thus mask the gap on) a same-stem binary original.
+printf '\x00\x01bin\x00' > "$PAIRKB/sources/doc.pdf"
+printf '\x00\x01bin\x00' > "$PAIRKB/runs/sources/doc.bin"
+aout="$("$PYTHON" "$COV" --wiki "$PAIRKB" 2>&1)"
+printf '%s' "$aout" | grep -qF "GAP (binary, run factlog ingest): sources/doc.pdf" && ok "binary original not masked by a same-stem binary in runs/sources" || bad "anomalous binary masked a real gap"
+printf '%s' "$aout" | grep -qF "GAP (binary under runs/sources — ingest output should be text): runs/sources/doc.bin" && ok "stray binary under runs/sources still flagged as anomaly" || bad "runs/sources binary anomaly missing"
 
 # --- NFC/NFD: an NFD-named source cited NFC is covered, not orphan (#64) ------
 NFCKB="$(mktemp -d)/wiki"

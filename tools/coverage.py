@@ -108,9 +108,14 @@ def coverage_rows(root: Path, facts: list[dict[str, str]]) -> tuple[list[dict[st
 
     # Pair a binary original under sources/ with its runs/sources/<stem>
     # conversion (ingest names conversions by stem; matches `factlog sources`).
+    # Only *text* conversions count — a stray binary under runs/sources/ is an
+    # anomaly, not a usable conversion, so it must not mask a real "needs
+    # conversion" gap on the original. Matching is stem-only (subdirectory-
+    # agnostic, like `factlog sources`): a same-stem conversion in another
+    # subtree will pair, which is acceptable for this informational report.
     conv_by_stem: dict[str, dict[str, object]] = {}
     for r in rows:
-        if r["dir"] == "runs/sources":
+        if r["dir"] == "runs/sources" and r["text"]:
             conv_by_stem.setdefault(Path(str(r["file"])).stem, r)
     for r in rows:
         if r["dir"] == "sources" and not r["text"]:
