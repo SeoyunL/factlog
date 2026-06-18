@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 740" width="820" height="740" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#cbd5e1"/>
+    </marker>
+  </defs>
+
+  <style>
+    .bg     { fill:#ffffff; stroke:#e2e8f0; stroke-width:1; }
+    .title  { font-size:20px; font-weight:700; fill:#0f172a; }
+    .tsub   { font-size:12px; fill:#64748b; }
+    .box    { fill:#f1f5f9; stroke:#94a3b8; stroke-width:1.5; }
+    .lc     { fill:#dcfce7; stroke:#16a34a; stroke-width:2; }
+    .rpt    { fill:#fffbeb; stroke:#f59e0b; stroke-width:3; }
+    .lbl    { font-size:13px; font-weight:600; fill:#0f172a; text-anchor:middle; }
+    .sub    { font-size:10.5px; fill:#64748b; text-anchor:middle; }
+    .rsub   { font-size:11px; font-weight:700; fill:#b45309; text-anchor:middle; }
+    .edge   { stroke:#94a3b8; stroke-width:1.6; fill:none; }
+    .dash   { stroke:#cbd5e1; stroke-width:1.6; fill:none; stroke-dasharray:5 4; }
+    .eC     { font-size:11px; font-weight:600; fill:#7c3aed; }
+    .eH     { font-size:11px; font-weight:600; fill:#d97706; }
+    .eE     { font-size:11px; font-weight:600; fill:#16a34a; }
+    .eP     { font-size:10.5px; fill:#64748b; }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="820" height="740" rx="12"/>
+
+  <!-- header -->
+  <text class="title" x="32" y="34">How factlog works</text>
+  <text class="tsub"  x="32" y="54">Claude proposes &#183; the engine verifies &#183; a human confirms</text>
+
+  <!-- legend -->
+  <rect x="600" y="22" width="14" height="14" rx="3" fill="#7c3aed"/>
+  <text class="eP" x="620" y="33">Claude (LLM) step</text>
+  <rect x="600" y="42" width="14" height="14" rx="3" fill="#d97706"/>
+  <text class="eP" x="620" y="53">human step</text>
+  <rect x="600" y="62" width="14" height="14" rx="3" fill="#16a34a"/>
+  <text class="eP" x="620" y="73">deterministic engine</text>
+
+  <!-- ===================== edges (drawn under boxes) ===================== -->
+  <!-- facts lane (left, cx=210) -->
+  <line class="edge" x1="210" y1="120" x2="210" y2="184" marker-end="url(#arrow)"/>
+  <line class="edge" x1="210" y1="240" x2="210" y2="304" marker-end="url(#arrow)"/>
+  <line class="edge" x1="210" y1="360" x2="210" y2="424" marker-end="url(#arrow)"/>
+  <!-- query lane (right, cx=610) -->
+  <line class="edge" x1="610" y1="240" x2="610" y2="304" marker-end="url(#arrow)"/>
+  <!-- converge into logic check -->
+  <path class="edge" d="M210,480 C210,515 290,540 356,540" marker-end="url(#arrow)"/>
+  <path class="edge" d="M610,360 C610,470 540,540 472,540" marker-end="url(#arrow)"/>
+  <!-- logic check -> report -->
+  <line class="edge" x1="410" y1="596" x2="410" y2="648" marker-end="url(#arrow)"/>
+  <!-- logic check -> review_required -->
+  <line class="edge" x1="310" y1="568" x2="222" y2="568" marker-end="url(#arrow)"/>
+  <!-- review_required -> correction_trace -->
+  <line class="edge" x1="120" y1="596" x2="120" y2="648" marker-end="url(#arrow)"/>
+  <!-- gated self-correction loop back to the check -->
+  <path class="dash" d="M220,676 C272,676 300,636 308,602" marker-end="url(#arrowd)"/>
+
+  <!-- edge labels -->
+  <text class="eC" x="222" y="156">Claude extracts</text>
+  <text class="eH" x="222" y="276">human review</text>
+  <text class="eE" x="222" y="396">compile (deterministic)</text>
+  <text class="eC" x="598" y="276" text-anchor="end">Claude drafts query</text>
+  <text class="eP" x="250" y="503" text-anchor="middle">accepted.dl</text>
+  <text class="eP" x="560" y="470" text-anchor="middle">query.dl</text>
+  <text class="eE" x="420" y="626">produces</text>
+  <text class="eP" x="262" y="560" text-anchor="middle">flags</text>
+  <text class="eC" x="132" y="626">Claude repairs (gated)</text>
+  <text class="eP" x="250" y="654" text-anchor="middle">re-check (gated)</text>
+
+  <!-- ===================== boxes ===================== -->
+  <!-- facts lane -->
+  <rect class="box" x="110" y="64"  width="200" height="56" rx="10"/>
+  <text class="lbl" x="210" y="88">sources/</text>
+  <text class="sub" x="210" y="106">your markdown originals</text>
+
+  <rect class="box" x="110" y="184" width="200" height="56" rx="10"/>
+  <text class="lbl" x="210" y="208">facts/candidates.csv</text>
+  <text class="sub" x="210" y="226">pages/ &#183; decisions/</text>
+
+  <rect class="box" x="110" y="304" width="200" height="56" rx="10"/>
+  <text class="lbl" x="210" y="337">confirmed facts</text>
+
+  <rect class="box" x="110" y="424" width="200" height="56" rx="10"/>
+  <text class="lbl" x="210" y="457">facts/accepted.dl</text>
+
+  <!-- query lane -->
+  <rect class="box" x="510" y="184" width="200" height="56" rx="10"/>
+  <text class="lbl" x="610" y="217">policy/questions.md</text>
+
+  <rect class="box" x="510" y="304" width="200" height="56" rx="10"/>
+  <text class="lbl" x="610" y="337">facts/query.dl</text>
+
+  <!-- logic check -->
+  <rect class="lc" x="310" y="540" width="200" height="56" rx="10"/>
+  <text class="lbl" x="410" y="564">wirelog logic check</text>
+  <text class="sub" x="410" y="582">deterministic engine</text>
+
+  <!-- the verifiable report -->
+  <rect class="rpt" x="310" y="648" width="200" height="56" rx="10"/>
+  <text class="lbl"  x="410" y="672">facts/logic_report.txt</text>
+  <text class="rsub" x="410" y="690">&#10003; the verifiable report</text>
+
+  <!-- repair branch -->
+  <rect class="box" x="20" y="540" width="200" height="56" rx="10"/>
+  <text class="lbl" x="120" y="573">review_required</text>
+
+  <rect class="box" x="20" y="648" width="200" height="56" rx="10"/>
+  <text class="lbl" x="120" y="681">decisions/correction_trace.md</text>
+</svg>

@@ -18,6 +18,11 @@ Anything the model produces is a *candidate* until the engine and a human confir
 
 ## How it works
 
+![How factlog works: Claude proposes, the engine verifies, a human confirms](docs/how-it-works.svg)
+
+<details>
+<summary>Text version</summary>
+
 ```
 sources/        →  Claude extracts        →  facts/candidates.csv, pages/, decisions/
 candidates       →  human review           →  confirmed facts
@@ -26,6 +31,8 @@ questions        →  Claude drafts query     →  facts/query.dl
 accepted + query →  wirelog logic check     →  facts/logic_report.txt   ← the verifiable report
 review_required  →  Claude repairs (gated)  →  decisions/correction_trace.md
 ```
+
+</details>
 
 ## Source file formats
 
