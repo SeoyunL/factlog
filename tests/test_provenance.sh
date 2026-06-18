@@ -78,6 +78,23 @@ set +e; "$PYTHON" -m factlog provenance nope nope nope --target "$KB" >/dev/null
 set +e; "$PYTHON" -m factlog provenance - - - --target "$KB" >/dev/null 2>&1; rc=$?; set -e
 [ "$rc" -eq 2 ] && ok "all-wildcard query errors rc 2" || bad "all-wildcard rc wrong ($rc)"
 
+# --- more than 3 terms is an error (likely an unquoted multi-word value) -------
+set +e; "$PYTHON" -m factlog provenance X rel Y extra --target "$KB" >/dev/null 2>&1; rc=$?; set -e
+[ "$rc" -eq 2 ] && ok ">3 terms errors rc 2 (not silently truncated)" || bad ">3 terms rc wrong ($rc)"
+
+# --- confidence is normalized to .2f (consistent with /factlog ask) + blank src
+NKB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$NKB" >/dev/null
+printf 'a\n' > "$NKB/sources/a.md"
+printf '%s\n%s\n%s\n%s\n' "subject,relation,object,source,status,confidence,note" \
+  'P,rel,Q,sources/a.md,confirmed,.9,raw nine' \
+  'P,rel,R,sources/a.md,confirmed,1,raw one' \
+  'P,rel,S,,confirmed,0.5,no source cell' > "$NKB/facts/candidates.csv"
+nout="$("$PYTHON" -m factlog provenance P --target "$NKB" 2>&1)"
+printf '%s' "$nout" | grep -qF "conf 0.90" && ok "confidence '.9' normalized to 0.90" || bad "confidence not normalized: $nout"
+printf '%s' "$nout" | grep -qF "conf 1.00" && ok "confidence '1' normalized to 1.00" || bad "confidence '1' not normalized"
+printf '%s' "$nout" | grep -qF "← (no source)" && ok "blank source cell shown as (no source)" || bad "blank source not handled"
+
 # --- the `trace` alias works --------------------------------------------------
 "$PYTHON" -m factlog trace X rel Y --target "$KB" >/dev/null 2>&1 && ok "trace alias works" || bad "trace alias failed"
 

@@ -388,7 +388,7 @@ def cmd_provenance(args: argparse.Namespace) -> int:
     import unicodedata
     from pathlib import Path
 
-    from common import source_file_refs
+    from common import normalize_confidence, source_file_refs
 
     def nfc(s: str) -> str:
         return unicodedata.normalize("NFC", s)
@@ -399,8 +399,16 @@ def cmd_provenance(args: argparse.Namespace) -> int:
         print(f"factlog provenance: {target} is not a factlog KB (no sources/).", file=sys.stderr)
         return 1
 
+    if len(args.terms) > 3:
+        print(
+            "factlog provenance: too many terms — give at most SUBJECT RELATION OBJECT "
+            "(quote a value that contains spaces)",
+            file=sys.stderr,
+        )
+        return 2
+
     fields = ("subject", "relation", "object")
-    filt = {fields[i]: nfc(t) for i, t in enumerate(args.terms[:3]) if t != "-"}
+    filt = {fields[i]: nfc(t) for i, t in enumerate(args.terms) if t != "-"}
     if not filt:
         print(
             "factlog provenance: give at least one of SUBJECT RELATION OBJECT "
@@ -443,7 +451,7 @@ def cmd_provenance(args: argparse.Namespace) -> int:
             if src_file:
                 distinct_sources.add(src_file)
             status = (r.get("status") or "").strip()
-            conf = (r.get("confidence") or "").strip()
+            conf = normalize_confidence((r.get("confidence") or "").strip())  # match ask's .2f format
             note = (r.get("note") or "").strip()
             staletag = "  [stale: source missing]" if stale else ""
             print(f"    ← {src or '(no source)'}  [{status}, conf {conf}]{staletag}")
