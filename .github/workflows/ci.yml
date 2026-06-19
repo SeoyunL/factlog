@@ -37,34 +37,35 @@ jobs:
       # pandoc gives tests/test_ingest.sh a real docx converter; without it that
       # test self-skips its conversion assertions rather than failing.
       - run: sudo apt-get update && sudo apt-get install -y pandoc
-      - name: gate / nontext / ingest / ask-router harnesses
+      # Discover every tests/test_*.sh so a new harness is picked up automatically
+      # (no hardcoded list to forget). pipefail+errexit (the default Actions bash
+      # flags) make the step fail on the first failing harness.
+      - name: deterministic shell harnesses
         run: |
-          bash tests/test_gate_check.sh
-          bash tests/test_nontext_sources.sh
-          bash tests/test_nfc_sources.sh
-          bash tests/test_ingest.sh
-          bash tests/test_hwpx_ingest.sh
-          bash tests/test_hwp_ingest.sh
-          bash tests/test_pptx_ingest.sh
-          bash tests/test_ask_router.sh
-          bash tests/test_validate_sources.sh
-          bash tests/test_finalize.sh
-          bash tests/test_conflicts.sh
-          bash tests/test_corroboration.sh
-          bash tests/test_coverage.sh
-          bash tests/test_page_template.sh
-          bash tests/test_entity_typing.sh
-          bash tests/test_entity_audit.sh
-          bash tests/test_count_check.sh
-          bash tests/test_active_kb_config.sh
-          bash tests/test_sources_cmd.sh
-          bash tests/test_status_cmd.sh
-          bash tests/test_eject_cmd.sh
-          bash tests/test_sync_ignore.sh
-          bash tests/test_provenance.sh
-          bash tests/test_review.sh
-          bash tests/test_vocab.sh
-          bash tests/test_search.sh
-          bash tests/test_amend.sh
+          for t in tests/test_*.sh; do
+            echo "::group::$t"
+            bash "$t"
+            echo "::endgroup::"
+          done
       - name: clean-env plugin smoke (pipeline end-to-end)
         run: bash tests/smoke.sh
+
+  unit:
+    name: Unit tests (pytest) + golden
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[test]"
+      - name: pytest (pure-function unit layer)
+        run: pytest
+      # The golden engine regression needs pyrewire (pulled in by the install
+      # above); run it on a throwaway copy so the checkout stays clean.
+      - name: golden engine regression
+        run: |
+          cp -r examples/sample-kb "${RUNNER_TEMP}/golden-kb"
+          FACTLOG_ROOT="${RUNNER_TEMP}/golden-kb" bash tests/golden.sh
