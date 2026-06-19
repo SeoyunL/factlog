@@ -58,18 +58,11 @@ if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
 
-def _resolve_wiki_prepass() -> str:
-    """Parse --wiki from argv without consuming it (for env setup only)."""
-    pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--wiki", default=None)
-    known, _ = pre.parse_known_args()
-    import factlog_config
-    # Precedence: --wiki flag > $FACTLOG_ROOT > active-KB config > cwd.
-    return factlog_config.resolve_root(known.wiki)[0]
+# Resolve the KB root and export it before importing common, which binds
+# its module-level paths from FACTLOG_ROOT at import time.
+import factlog_config  # noqa: E402
 
-
-# Set FACTLOG_ROOT *before* importing common so the module-level ROOT is correct.
-os.environ["FACTLOG_ROOT"] = _resolve_wiki_prepass()
+os.environ["FACTLOG_ROOT"] = factlog_config.resolve_root_from_argv("--wiki")
 
 # ---------------------------------------------------------------------------
 # Now it is safe to import common (ROOT is already set correctly above).

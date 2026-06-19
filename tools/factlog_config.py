@@ -68,3 +68,21 @@ def resolve_root(cli_value: str | None = None) -> tuple[str, str]:
     if cfg:
         return str(Path(cfg).resolve()), "config"
     return str(Path(".").resolve()), "cwd"
+
+
+def resolve_root_from_argv(flag: str = "--wiki") -> str:
+    """Resolve the KB root from *flag* in argv (peeking past unrelated args),
+    falling back to $FACTLOG_ROOT, the active-KB config, then cwd.
+
+    Every engine tool must export ``FACTLOG_ROOT`` to this value *before* importing
+    common, whose module-level paths capture it at import time. This centralises
+    the prepass each tool used to duplicate. *flag* is the tool's KB-root option
+    ("--wiki" or "--target").
+    """
+    import argparse
+
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument(flag, default=None)
+    known, _ = pre.parse_known_args()
+    dest = flag.lstrip("-").replace("-", "_")
+    return resolve_root(getattr(known, dest))[0]

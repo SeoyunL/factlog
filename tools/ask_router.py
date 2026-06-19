@@ -53,16 +53,11 @@ if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
 
-def _resolve_target_prepass() -> str:
-    pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--target", default=None)
-    known, _ = pre.parse_known_args()
-    import factlog_config
-    # Precedence: --target flag > $FACTLOG_ROOT > active-KB config > cwd.
-    return factlog_config.resolve_root(known.target)[0]
+# Resolve the KB root and export it before importing common, which binds
+# its module-level paths from FACTLOG_ROOT at import time.
+import factlog_config  # noqa: E402
 
-
-os.environ["FACTLOG_ROOT"] = _resolve_target_prepass()
+os.environ["FACTLOG_ROOT"] = factlog_config.resolve_root_from_argv("--target")
 
 from common import (  # noqa: E402
     ACCEPTED_DL,
