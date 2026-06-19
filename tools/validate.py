@@ -22,7 +22,36 @@ def read(path: Path) -> str:
 
 
 def slugify_heading(heading: str) -> str:
-    return re.sub(r"\s+", "-", heading.strip().lower())
+    """GitHub-style anchor for a markdown heading: lowercase, drop punctuation
+    (keep Unicode word chars, spaces, hyphens), then spaces -> hyphens. Unicode
+    letters are kept so non-ASCII headings (e.g. Korean) still anchor.
+
+    The previous slug only did spaces -> hyphens, so a heading like '## Plan (v2)'
+    yielded 'plan-(v2)' and a legitimate '#plan-v2' citation was flagged absent.
+    """
+    text = re.sub(r"[^\w\s-]", "", heading.strip().lower())
+    return re.sub(r"\s+", "-", text).strip("-")
+
+
+def heading_slugs(text: str) -> set[str]:
+    """Every anchor a markdown body exposes.
+
+    Headings that slugify identically are GitHub duplicate-suffixed (foo, foo-1,
+    foo-2, ...). The legacy naive slug (spaces -> hyphens only) is also included
+    so refs authored against the pre-fix convention keep validating.
+    """
+    seen: dict[str, int] = {}
+    slugs: set[str] = set()
+    for line in text.splitlines():
+        if not line.startswith("#"):
+            continue
+        title = line.lstrip("#").strip()
+        base = slugify_heading(title)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        slugs.add(base if n == 0 else f"{base}-{n}")
+        slugs.add(re.sub(r"\s+", "-", title.lower()))  # legacy naive slug
+    return slugs
 
 
 def validate_source_ref(root: Path, source_ref: str) -> str | None:
@@ -31,12 +60,7 @@ def validate_source_ref(root: Path, source_ref: str) -> str | None:
     if not path.is_file():
         return f"source file does not exist: {source_ref}"
     if section:
-        slugs = {
-            slugify_heading(line.lstrip("#").strip())
-            for line in read(path).splitlines()
-            if line.startswith("#")
-        }
-        if section.lower() not in slugs:
+        if section.lower() not in heading_slugs(read(path)):
             return f"source section does not exist: {source_ref}"
     return None
 
