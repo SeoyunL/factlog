@@ -1712,6 +1712,10 @@ def cmd_eject(args: argparse.Namespace) -> int:
     in sources/ in one pass. A hand-placed runs/sources/ file (no provenance
     header) has no original to track and is never treated as an orphan. Honours
     --purge / --delete-original / --dry-run like an explicit source list.
+    Detection compares originals by basename (the header records only the
+    original's name), so it errs toward keeping: a deletion is missed only when a
+    same-basename original survives elsewhere, and renaming an original on disk
+    without re-ingesting counts as orphaning its old conversion.
 
     Fact mode (`eject --fact SUBJECT RELATION OBJECT`, repeatable) — retires
     candidate rows matching the given (subject, relation, object) triple(s)
@@ -1837,9 +1841,17 @@ def cmd_eject(args: argparse.Namespace) -> int:
                 head = p.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
             except OSError:
                 head = ""
-            m = re.search(r"source:\s*(.+?)\s*(?:\||-->|$)", head)
+            # Exclude the field delimiters from the capture so an empty/malformed
+            # `source:` value (e.g. `... | source:  | converter: ...`) can't let
+            # the lazy group swallow the `|`/`-->` and capture a garbage origin.
+            # Also drop a whitespace-only capture (strips to "") — an empty origin
+            # is "no reliable origin", not "an original named ''"; in --orphans
+            # mode either misread would become an autonomous false deletion.
+            m = re.search(r"source:\s*([^|>]+?)\s*(?:\||-->|$)", head)
             if m:
-                conv_origin[ref] = nfc(m.group(1).strip())
+                origin = nfc(m.group(1).strip())
+                if origin:
+                    conv_origin[ref] = origin
 
         def matches(ref: str, name: str) -> bool:
             name = nfc(name)

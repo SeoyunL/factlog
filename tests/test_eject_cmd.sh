@@ -260,6 +260,46 @@ set +e
 "$PYTHON" -m factlog eject --orphans --fact G rel H --target "$KB" >/dev/null 2>&1; [ $? -eq 2 ] && ok "rejects --orphans + --fact" || bad "--orphans + --fact not rejected"
 set -e
 
+# --- edge cases: subdir original, NFC Korean name, empty/malformed header, ----
+# --- fragment citation, malformed-not-under-root, uncited orphan conversion ---
+KB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$KB" >/dev/null
+mkdir -p "$KB/sources/sub"
+# (a) original in a subdirectory, header records basename only -> kept
+printf 'PK\003\004\000' > "$KB/sources/sub/deep.pdf"
+printf '<!-- ingested-by-factlog | source: deep.pdf | converter: pdftotext | date: 2026-01-01T00:00:00Z -->\nx\n' \
+  > "$KB/runs/sources/deep.md"
+# (b) Korean-named original present -> its conversion kept (NFC compare)
+printf 'PK\003\004\000' > "$KB/sources/한글문서.pdf"
+printf '<!-- ingested-by-factlog | source: 한글문서.pdf | converter: pdftotext | date: 2026-01-01T00:00:00Z -->\nx\n' \
+  > "$KB/runs/sources/한글문서.md"
+# (c) empty source value in header -> no reliable origin -> kept (not an orphan)
+printf '<!-- ingested-by-factlog | source:  | converter: pandoc | date: 2026-01-01T00:00:00Z -->\nx\n' \
+  > "$KB/runs/sources/empty.md"
+# (d) uncited orphan conversion (header original absent, no candidates row) -> deleted
+printf '<!-- ingested-by-factlog | source: lonely.docx | converter: pandoc | date: 2026-01-01T00:00:00Z -->\nx\n' \
+  > "$KB/runs/sources/lonely.md"
+printf '%s\n%s\n%s\n%s\n%s\n' "$H" \
+  'P,rel,Q,runs/sources/deep.md,confirmed,0.9,' \
+  'R,rel,S,runs/sources/한글문서.md,confirmed,0.9,' \
+  'T,rel,U,runs/sources/empty.md,confirmed,0.9,' \
+  'V,rel,W,/etc/passwd,confirmed,0.9,' > "$KB/facts/candidates.csv"  # (e) malformed, not under a source root
+out="$("$PYTHON" -m factlog eject --orphans --target "$KB" 2>&1)"
+[ -f "$KB/runs/sources/deep.md" ] && ok "subdir original (basename header) keeps its conversion" || bad "subdir original wrongly orphaned"
+[ -f "$KB/runs/sources/한글문서.md" ] && ok "NFC Korean original keeps its conversion" || bad "Korean original wrongly orphaned"
+[ -f "$KB/runs/sources/empty.md" ] && ok "empty source: header is not parsed as an orphan" || bad "empty-header conversion wrongly ejected"
+[ ! -f "$KB/runs/sources/lonely.md" ] && ok "uncited orphan conversion is cleaned up" || bad "uncited orphan conversion kept"
+printf '%s' "$out" | grep -qF "/etc/passwd" && bad "malformed citation not under a source root was auto-ejected" || ok "malformed citation (not under sources/) never auto-ejected"
+
+# --- fragment-cited orphan is still retired (anchor-insensitive match) ---------
+KB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$KB" >/dev/null
+printf '<!-- ingested-by-factlog | source: frag.docx | converter: pandoc | date: 2026-01-01T00:00:00Z -->\nx\n' \
+  > "$KB/runs/sources/frag.md"  # original frag.docx absent -> orphan
+printf '%s\n%s\n' "$H" 'A,rel,B,runs/sources/frag.md#sec2,confirmed,0.9,' > "$KB/facts/candidates.csv"
+"$PYTHON" -m factlog eject --orphans --target "$KB" >/dev/null 2>&1
+grep -q ",superseded," "$KB/facts/candidates.csv" && ok "orphan fact cited with a #fragment is still retired" || bad "fragment-cited orphan not retired"
+
 # --- non-KB path errors -------------------------------------------------------
 set +e; "$PYTHON" -m factlog eject anything --target "$(mktemp -d)" >/dev/null 2>&1; rc=$?; set -e
 [ "$rc" -ne 0 ] && ok "eject on a non-KB path errors" || bad "non-KB path should error"
