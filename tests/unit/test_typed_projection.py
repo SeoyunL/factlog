@@ -122,3 +122,110 @@ def test_end_to_end_threshold_inference(tmp_path: Path):
     # 병 ("미정") does not parse -> skipped (graceful degrade).
     assert result == ["갑서비스"]
     assert "does not parse" in proc.stderr  # 병서비스 warned
+
+
+# --- #120: hand-authored comparison predicates surface in the report -----------
+
+_CANDIDATES_HEADER = "subject,relation,object,source,status,confidence,note\n"
+
+# Minimal valid generated policy (one decl, like the sample-kb requires_review).
+_MINIMAL_POLICY_DL = (
+    "// generated from policy/logic-policy.md\n"
+    ".decl requires_review(entity: symbol, reason: symbol)\n"
+)
+
+
+def _build_comparison_kb(root: Path, *, threshold: int = 20300101) -> None:
+    """A `date` KB whose comparison rule lives in logic-policy.extra.dl (#120).
+
+    을서비스 launches 2030.1 (-> 20300101), 갑서비스 2025.12 (-> 20251201).
+    """
+    for name in ("sources", "pages", "facts", "decisions", "policy"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+    (root / "facts" / "candidates.csv").write_text(
+        _CANDIDATES_HEADER
+        + '을서비스,정식_운영,2030.1,sources/a.md,accepted,0.9,\n'
+        + '갑서비스,정식_운영,2025.12,sources/a.md,accepted,0.9,\n',
+        encoding="utf-8",
+    )
+    (root / "facts" / "accepted.dl").write_text(
+        'relation("을서비스", "정식_운영", "2030.1").\n'
+        'relation("갑서비스", "정식_운영", "2025.12").\n',
+        encoding="utf-8",
+    )
+    (root / "policy" / "typed-relations.md").write_text(
+        "- `정식_운영` : date as launch_date\n", encoding="utf-8"
+    )
+    (root / "policy" / "logic-policy.dl").write_text(_MINIMAL_POLICY_DL, encoding="utf-8")
+    # Arity-2 (entity, reason) head with a quoted reason string; the scalar D
+    # stays in the body (the reconciled #120 shape — NOT an arity-1 head).
+    (root / "policy" / "logic-policy.extra.dl").write_text(
+        ".decl after2030(entity: symbol, reason: symbol)\n"
+        f'after2030(S, "launch_after_2030") :- launch_date(S, D), D >= {threshold}.\n',
+        encoding="utf-8",
+    )
+
+
+def _run_logic_check(root: Path) -> str:
+    """Run run_logic_check.py against a temp KB and return logic_report.txt."""
+    env = dict(os.environ)
+    env["FACTLOG_ROOT"] = str(root)
+    tools_dir = Path(common.__file__).resolve().parent
+    proc = subprocess.run(
+        [sys.executable, str(tools_dir / "run_logic_check.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    return (root / "facts" / "logic_report.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
+def test_comparison_predicate_surfaces_in_report(tmp_path: Path):
+    _build_comparison_kb(tmp_path, threshold=20300101)
+    report = _run_logic_check(tmp_path)
+    # 을 (20300101) clears the threshold; 갑 (20251201) is below -> excluded.
+    assert "after2030: 을서비스 (launch_after_2030)" in report
+    assert "갑서비스" not in report.split("Policy Findings:", 1)[-1]
+
+
+@pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
+def test_threshold_is_not_hardcoded(tmp_path: Path):
+    # Raise the threshold past both subjects -> no findings.
+    high = tmp_path / "high"
+    _build_comparison_kb(high, threshold=20310101)
+    high_report = _run_logic_check(high)
+    # No subject clears the bar, so the predicate infers no rows.
+    assert "- after2030: 0 rows" in high_report  # evaluation summary
+    assert "Policy Findings:" not in high_report  # nothing surfaced
+    assert "launch_after_2030" not in high_report
+
+    # Lower the threshold below both subjects -> both inferred.
+    low = tmp_path / "low"
+    _build_comparison_kb(low, threshold=20250101)
+    report = _run_logic_check(low)
+    assert "after2030: 을서비스 (launch_after_2030)" in report
+    assert "after2030: 갑서비스 (launch_after_2030)" in report
+
+
+@pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
+def test_no_typed_file_no_extra_is_byte_identical(tmp_path: Path):
+    # A KB with neither typed-relations.md nor logic-policy.extra.dl must produce
+    # a report byte-identical to the same KB run again — the feature is inert when
+    # unused (#116 invariant 1). We build it WITHOUT the typed/extra files.
+    for name in ("sources", "pages", "facts", "decisions", "policy"):
+        (tmp_path / name).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "facts" / "candidates.csv").write_text(
+        _CANDIDATES_HEADER + '을서비스,develops,갑서비스,sources/a.md,accepted,0.9,\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "facts" / "accepted.dl").write_text(
+        'relation("을서비스", "develops", "갑서비스").\n', encoding="utf-8"
+    )
+    (tmp_path / "policy" / "logic-policy.dl").write_text(_MINIMAL_POLICY_DL, encoding="utf-8")
+    report = _run_logic_check(tmp_path)
+    assert "after2030" not in report
+    assert "launch_date" not in report
+    # Re-run is byte-identical (determinism + no hidden typed state).
+    assert _run_logic_check(tmp_path) == report
