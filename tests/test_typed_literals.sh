@@ -96,13 +96,17 @@ if "$PYTHON" -c 'import pyrewire' 2>/dev/null; then
     findings="$(sed -n '/Policy Findings:/,$p' "$REPORT")"
     if printf '%s' "$findings" | grep -q 'after2030: 을서비스 (launch_after_2030)'; then
       ok "engine finding lists 을서비스 (launch_after_2030)"
+      # Absence check is only non-vacuous when the positive finding is present:
+      # if Policy Findings: were missing entirely, findings would be empty and the
+      # grep-q below would pass silently. Nesting it here guarantees the section
+      # is live before we assert the retired row is absent.
+      if printf '%s' "$findings" | grep -q '구서비스'; then
+        bad "superseded 구서비스 surfaced in Policy Findings"
+      else
+        ok "superseded 구서비스 absent from Policy Findings"
+      fi
     else
       bad "engine finding missing 을서비스 (launch_after_2030)"
-    fi
-    if printf '%s' "$findings" | grep -q '구서비스'; then
-      bad "superseded 구서비스 surfaced in Policy Findings"
-    else
-      ok "superseded 구서비스 absent from Policy Findings"
     fi
   else
     bad "run_logic_check.py failed (exit non-zero)"
