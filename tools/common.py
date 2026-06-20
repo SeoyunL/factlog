@@ -716,6 +716,46 @@ def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str
             )
 
 
+_FLOAT_LITERAL_RE = re.compile(r"\d+\.\d+")
+
+
+def _assert_no_unscaled_number_threshold(
+    specs: dict[str, TypedRelSpec], extra_dl_text: str
+) -> None:
+    """Fail loud if a hand-authored logic-policy.extra.dl rule compares a `number`
+    alias against an UNSCALED float literal (e.g. ``version_num(S, V), V >= 2.0``).
+
+    `number` projects as a fixed-point int64 scaled ×1000 (#125), so a float
+    threshold like ``2.0`` is both wrong (it means 0.002 in scaled units) AND a
+    hard ParseError — the engine .dl text parser rejects a float literal, which
+    rejects the WHOLE program (killing relation/3 + every fact: a dead KB) with
+    only a bare ParseError. Catch it here with a clear, actionable message.
+
+    Scan is NARROW to avoid false positives: only lines that reference a declared
+    `number` alias as a whole word, only the hand-authored extra.dl text (never
+    accepted.dl or date/amount data — their thresholds are legitimately ints)."""
+    number_aliases = [
+        spec.alias for spec in specs.values() if spec.type == "number"
+    ]
+    if not number_aliases:
+        return
+    alias_re = re.compile(
+        r"\b(?:" + "|".join(re.escape(a) for a in number_aliases) + r")\b"
+    )
+    for line in extra_dl_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("//") or stripped.startswith("#"):
+            continue
+        m = _FLOAT_LITERAL_RE.search(line)
+        if m and alias_re.search(line):
+            alias = alias_re.search(line).group(0)
+            raise FactlogError(
+                f"logic-policy.extra.dl: {alias!r} threshold uses an unscaled "
+                f"float {m.group(0)!r}; number is scaled ×1000 — write it in "
+                f"scaled units (e.g. 'V >= 2.0' -> 'V >= 2000')"
+            )
+
+
 def corroboration_counts(facts: list[dict[str, str]]) -> dict[tuple[str, str, str], int]:
     """Map each engine-input fact (subject, relation, object) to the number of
     DISTINCT sources backing it. A fact corroborated by several independent
@@ -972,6 +1012,14 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
     base_program = WIRELOG_PROGRAM + "\n" + policy_program + "\n" + accepted_program
     if specs:
         _assert_no_alias_collision(specs, base_program)
+        # Fail loud BEFORE handing a float-bearing program to the engine: a
+        # number alias compared against an unscaled float in extra.dl would
+        # ParseError-reject the whole program (#125 scaled-×1000 contract).
+        extra_dl = LOGIC_POLICY_DL.with_name("logic-policy.extra.dl")
+        if extra_dl.is_file():
+            _assert_no_unscaled_number_threshold(
+                specs, extra_dl.read_text(encoding="utf-8")
+            )
         for name, spec in specs.items():
             if spec.type not in _TYPED_COL:
                 print(

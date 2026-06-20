@@ -67,6 +67,54 @@ class TestAliasCollision:
             common._assert_no_alias_collision(specs, program)
 
 
+class TestUnscaledNumberThreshold:
+    """#125 fail-loud lint: an unscaled float threshold against a number alias in
+    logic-policy.extra.dl raises a clean FactlogError, not a bare engine
+    ParseError that silently kills the whole program."""
+
+    SPECS = {"버전": common.TypedRelSpec("number", "version_num")}
+
+    def test_unscaled_float_raises(self):
+        extra = (
+            ".decl ge_v2(entity: symbol, reason: symbol)\n"
+            'ge_v2(S, "ge_2_0") :- version_num(S, V), V >= 2.0.\n'
+        )
+        with pytest.raises(common.FactlogError) as exc:
+            common._assert_no_unscaled_number_threshold(self.SPECS, extra)
+        msg = str(exc.value)
+        assert "version_num" in msg
+        assert "2.0" in msg
+        assert "scaled" in msg  # actionable: names the ×1000 contract
+
+    def test_scaled_int_threshold_ok(self):
+        extra = (
+            ".decl ge_v2(entity: symbol, reason: symbol)\n"
+            'ge_v2(S, "ge_2_0") :- version_num(S, V), V >= 2000.\n'
+        )
+        common._assert_no_unscaled_number_threshold(self.SPECS, extra)  # no raise
+
+    def test_no_number_specs_never_fires(self):
+        # A date KB with a (would-be) float literal is NOT a number threshold:
+        # the guard only fires when a number alias is declared.
+        specs = {"정식_운영": common.TypedRelSpec("date", "launch_date")}
+        extra = 'after(S, "x") :- launch_date(S, D), D >= 2.0.\n'
+        common._assert_no_unscaled_number_threshold(specs, extra)  # no raise
+
+    def test_float_on_unrelated_alias_line_ignored(self):
+        # A float literal on a line that does NOT reference the number alias is
+        # not flagged (narrow scan avoids false positives).
+        extra = (
+            'other(S, "x") :- some_date(S, D), D >= 2.0.\n'
+            'ge_v2(S, "ge_2_0") :- version_num(S, V), V >= 2000.\n'
+        )
+        common._assert_no_unscaled_number_threshold(self.SPECS, extra)  # no raise
+
+    def test_comment_line_ignored(self):
+        # A float in a commented-out line is not a live threshold.
+        extra = "// version_num(S, V), V >= 2.0  (old, do not use)\n"
+        common._assert_no_unscaled_number_threshold(self.SPECS, extra)  # no raise
+
+
 _RUNNER = textwrap.dedent(
     """
     import os, sys, json
@@ -453,6 +501,54 @@ def test_number_out_of_int64_range_is_skipped(tmp_path: Path):
     assert subjects == ["appA"]
     assert "out of int64 range" in proc.stderr
     assert "bigApp" in proc.stderr
+
+
+_NUMBER_RAISE_RUNNER = textwrap.dedent(
+    """
+    import os, sys
+    sys.path.insert(0, os.path.join(os.environ["KB_TOOLS"]))
+    import common
+    try:
+        common.run_wirelog()
+    except common.FactlogError as e:
+        print("FACTLOGERROR:" + str(e))
+        sys.exit(0)
+    sys.exit(1)
+    """
+)
+
+
+@pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
+def test_unscaled_number_threshold_extra_dl_fails_loud(tmp_path: Path):
+    # An UNSCALED float threshold against a number alias in extra.dl must raise a
+    # clean FactlogError naming the alias + contract — NOT a bare engine
+    # ParseError that silently kills relation/3 + all facts (#125 critic blocker).
+    (tmp_path / "facts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "policy").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "facts" / "accepted.dl").write_text(
+        'relation("appA","버전","2.5").\n', encoding="utf-8"
+    )
+    (tmp_path / "policy" / "typed-relations.md").write_text(
+        "- `버전` : number as version_num\n", encoding="utf-8"
+    )
+    (tmp_path / "policy" / "logic-policy.dl").write_text(
+        ".decl ge_v2(s: symbol, reason: symbol)\n", encoding="utf-8"
+    )
+    (tmp_path / "policy" / "logic-policy.extra.dl").write_text(
+        'ge_v2(S, "ge_2_0") :- version_num(S, V), V >= 2.0.\n', encoding="utf-8"
+    )
+    env = dict(os.environ)
+    env["FACTLOG_ROOT"] = str(tmp_path)
+    env["KB_TOOLS"] = str(Path(common.__file__).resolve().parent)
+    proc = subprocess.run(
+        [sys.executable, "-c", _NUMBER_RAISE_RUNNER], env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "FACTLOGERROR:" in proc.stdout
+    assert "version_num" in proc.stdout
+    assert "scaled" in proc.stdout
+    # The clean guard fired before the engine ever saw the float literal.
+    assert "ParseError" not in proc.stdout
 
 
 @pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
