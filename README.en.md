@@ -99,12 +99,46 @@ queryable:
 ```bash
 factlog vocab              # entities + relations (engine facts)
 factlog vocab --entities   # just entities
-factlog vocab --relations  # just relations (tagged [attribute] / [single-valued])
+factlog vocab --relations  # just relations (tagged [attribute] / [single-valued] / [typed:<type>])
 factlog vocab --all        # include non-engine names (candidate/needs_review/superseded)
 ```
 
 Objects of declared attribute relations are literals, not entities, so they are
 excluded from the entity list (same typing as `status`).
+
+### Typed relations (`policy/typed-relations.md`)
+
+Some relations carry a literal object that should be **compared**, not just
+matched — so the deterministic engine can order it, threshold it, or range over
+it (e.g. "launched after 2030", "rank <= 3"). Declare such relations in
+`policy/typed-relations.md`. Because the object is a literal, the relation should
+ALSO be declared in `policy/attribute-relations.md`.
+
+One declaration per line:
+
+```
+- `relation name` : <type> as <ascii_alias>
+```
+
+`<ascii_alias>` names the engine side-relation that holds the comparable value.
+It is an author-chosen ASCII identifier (`[A-Za-z_][A-Za-z0-9_]*`) so it stays a
+legal engine name even when the relation name is non-ASCII. Quote a relation name
+containing spaces in backticks.
+
+The four types:
+
+- `date` — `2030.1` / `2030-01-15` → sortable yyyymmdd. **Engine-projectable**
+  (ordering / threshold / range).
+- `ordinal` — `rank 3` / `3rd` → int rank. **Engine-projectable**.
+- `amount` — `100억` / `1,000원` → integer base unit. **Engine-projectable**.
+  Needs a unit table; supply one inline at the end of the line:
+  `: amount as <alias> (억=1e8, 만=1e4, 원=1)` (values must be positive ints).
+  Omit the clause to use the built-in default unit table.
+- `number` — `1,000` / `3.5` → numeric magnitude. Currently **declared only**,
+  not yet engine-projectable (#125).
+
+`factlog vocab` shows declared typed relations with a `[typed:<type>]` tag (e.g.
+`[attribute, typed:date]`).
 
 ### Finding facts (`factlog search`)
 
