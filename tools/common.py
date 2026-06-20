@@ -593,7 +593,7 @@ def _parse_amount_units(body: str) -> dict[str, int]:
             num = decimal.Decimal(value)
         except decimal.InvalidOperation as exc:
             raise FactlogError(f"typed-relations: non-numeric unit value {value!r} for {unit!r}") from exc
-        if num != num.to_integral_value() or num <= 0:
+        if not num.is_finite() or num != num.to_integral_value() or num <= 0:
             raise FactlogError(f"typed-relations: unit value for {unit!r} must be a positive integer, got {value!r}")
         if unit in units:
             raise FactlogError(f"typed-relations: duplicate unit {unit!r} in units clause")

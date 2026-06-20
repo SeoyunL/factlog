@@ -103,6 +103,15 @@ class TestAmountUnits:
         with pytest.raises(common.FactlogError, match="duplicate unit"):
             common._parse_typed_relations("- `예산` : amount as a (억=1e8, 억=1e4)\n")
 
+    @pytest.mark.parametrize("value", ["Infinity", "inf", "-inf", "NaN"])
+    def test_non_finite_unit_errors(self, value):
+        # +Infinity/-Infinity/NaN are non-finite Decimals: +Infinity is treated as
+        # integral and `<= 0` is False, so without the is_finite() short-circuit it
+        # reaches int(num) and raises a raw OverflowError, escaping the FactlogError
+        # fail-loud contract. All must surface as FactlogError instead.
+        with pytest.raises(common.FactlogError, match="positive integer"):
+            common._parse_typed_relations(f"- `예산` : amount as a (억={value})\n")
+
 
 class TestKbContext:
     def _kb(self, tmp_path, *, typed=None, attrs=None):
