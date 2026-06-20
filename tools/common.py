@@ -733,7 +733,10 @@ def _assert_no_unscaled_number_threshold(
 
     Scan is NARROW to avoid false positives: only lines that reference a declared
     `number` alias as a whole word, only the hand-authored extra.dl text (never
-    accepted.dl or date/amount data — their thresholds are legitimately ints)."""
+    accepted.dl or date/amount data — their thresholds are legitimately ints).
+    Quoted `"..."` spans (e.g. a reason string like ``"v2.0_plus"``) are stripped
+    before the float scan — a float-looking token there is a string the engine
+    accepts, not a threshold."""
     number_aliases = [
         spec.alias for spec in specs.values() if spec.type == "number"
     ]
@@ -746,9 +749,12 @@ def _assert_no_unscaled_number_threshold(
         stripped = line.strip()
         if stripped.startswith("//") or stripped.startswith("#"):
             continue
-        m = _FLOAT_LITERAL_RE.search(line)
-        if m and alias_re.search(line):
-            alias = alias_re.search(line).group(0)
+        # Strip quoted strings so a float inside a reason symbol (which the engine
+        # accepts) is not mistaken for an unscaled threshold in the rule body.
+        line_wo_strings = re.sub(r'"[^"]*"', "", line)
+        m = _FLOAT_LITERAL_RE.search(line_wo_strings)
+        if m and alias_re.search(line_wo_strings):
+            alias = alias_re.search(line_wo_strings).group(0)
             raise FactlogError(
                 f"logic-policy.extra.dl: {alias!r} threshold uses an unscaled "
                 f"float {m.group(0)!r}; number is scaled ×1000 — write it in "
@@ -1020,13 +1026,10 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
             _assert_no_unscaled_number_threshold(
                 specs, extra_dl.read_text(encoding="utf-8")
             )
-        for name, spec in specs.items():
-            if spec.type not in _TYPED_COL:
-                print(
-                    f"typed-relations: {name!r} declared {spec.type!r}, which is not yet "
-                    "projectable into the engine; skipping (see #125)",
-                    file=sys.stderr,
-                )
+        # Every literal_types.TYPES member is now projectable (date/ordinal/number/
+        # amount all map to int64 in _TYPED_COL), and _parse_typed_relations drops
+        # any tag outside TYPES at parse time — so a spec is always projectable.
+        assert all(spec.type in _TYPED_COL for spec in specs.values())
     # _typed_decls(specs) is "" when there is nothing projectable, so the program
     # text is byte-identical to today for a KB with no typed-relations (#116 inv.1).
     session = EasySession(base_program + _typed_decls(specs))

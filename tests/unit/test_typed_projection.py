@@ -93,6 +93,16 @@ class TestUnscaledNumberThreshold:
         )
         common._assert_no_unscaled_number_threshold(self.SPECS, extra)  # no raise
 
+    def test_float_inside_quoted_reason_is_not_a_threshold(self):
+        # The threshold is correctly scaled (2000); the only float-looking token
+        # (2.0) lives INSIDE the quoted reason string, which the engine accepts.
+        # Stripping quoted spans before the scan avoids this false positive.
+        extra = (
+            ".decl ge(entity: symbol, reason: symbol)\n"
+            'ge(S, "v2.0_plus") :- version_num(S, V), V >= 2000.\n'
+        )
+        common._assert_no_unscaled_number_threshold(self.SPECS, extra)  # no raise
+
     def test_no_number_specs_never_fires(self):
         # A date KB with a (would-be) float literal is NOT a number threshold:
         # the guard only fires when a number alias is declared.
