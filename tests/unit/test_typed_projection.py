@@ -213,6 +213,69 @@ def test_threshold_is_not_hardcoded(tmp_path: Path):
     assert "after2030: 갑서비스 (launch_after_2030)" in report
 
 
+# --- #121: a superseded typed row is excluded from the engine input ------------
+
+
+def _compile_facts(root: Path) -> subprocess.CompletedProcess[str]:
+    """Run the REAL compile_facts.py against a temp KB (no pyrewire needed)."""
+    env = dict(os.environ)
+    env["FACTLOG_ROOT"] = str(root)
+    tools_dir = Path(common.__file__).resolve().parent
+    return subprocess.run(
+        [sys.executable, str(tools_dir / "compile_facts.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _build_superseded_kb(root: Path) -> None:
+    """A `date` KB seeded via candidates.csv (NOT a hand-written accepted.dl):
+
+    을서비스 (accepted, 2030.1 -> 20300101) clears the threshold;
+    구서비스 (superseded, 2032.1 -> 20320101) WOULD clear but is retired, so it
+    must never reach accepted.dl and must never appear in a comparison finding.
+    """
+    for name in ("sources", "pages", "facts", "decisions", "policy"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+    (root / "facts" / "candidates.csv").write_text(
+        _CANDIDATES_HEADER
+        + "을서비스,정식_운영,2030.1,sources/a.md,accepted,0.9,\n"
+        + "구서비스,정식_운영,2032.1,sources/a.md,superseded,0.9,retired\n",
+        encoding="utf-8",
+    )
+    (root / "policy" / "typed-relations.md").write_text(
+        "- `정식_운영` : date as launch_date\n", encoding="utf-8"
+    )
+    (root / "policy" / "logic-policy.dl").write_text(_MINIMAL_POLICY_DL, encoding="utf-8")
+    (root / "policy" / "logic-policy.extra.dl").write_text(
+        ".decl after2030(entity: symbol, reason: symbol)\n"
+        'after2030(S, "launch_after_2030") :- launch_date(S, D), D >= 20300101.\n',
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
+def test_superseded_typed_row_excluded_from_comparison(tmp_path: Path):
+    # Route through the REAL compile_facts.py: it filters candidates.csv by status
+    # so a `superseded` row never reaches accepted.dl (the engine input). A
+    # hand-written accepted.dl would make this assertion vacuous.
+    _build_superseded_kb(tmp_path)
+    proc = _compile_facts(tmp_path)
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    accepted = (tmp_path / "facts" / "accepted.dl").read_text(encoding="utf-8")
+    # 구서비스 is superseded -> excluded; 을서비스 (accepted) -> present (positive
+    # control). Both prove the filter happens at the compile layer, not the rule.
+    assert "구서비스" not in accepted
+    assert "을서비스" in accepted
+
+    # The retired row's value (20320101) WOULD clear the threshold, so if it
+    # leaked it would surface in the finding. The engine sees only 을서비스.
+    report = _run_logic_check(tmp_path)
+    assert "after2030: 을서비스 (launch_after_2030)" in report
+    assert "구서비스" not in report.split("Policy Findings:", 1)[-1]
+
+
 @pytest.mark.skipif(common.EasySession is None, reason="pyrewire not installed")
 def test_no_typed_file_no_extra_is_byte_identical(tmp_path: Path):
     # A KB with neither typed-relations.md nor logic-policy.extra.dl must produce
