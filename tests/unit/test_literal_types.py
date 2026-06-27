@@ -40,6 +40,16 @@ class TestParseNumber:
     def test_rejects(self, raw):
         assert lt.parse_number(raw) is None
 
+    @pytest.mark.parametrize("raw,expected", [
+        ("-672", -672.0),
+        ("-2.5", -2.5),
+        ("-1,000", -1000.0),
+        ("number(-672)", -672.0),
+    ])
+    def test_accepts_negative(self, raw, expected):
+        # a loss / credit / delta may be negative — number is not magnitude-only.
+        assert lt.parse_number(raw) == expected
+
 
 class TestParseNumberScaled:
     @pytest.mark.parametrize("raw,expected", [
@@ -64,6 +74,17 @@ class TestParseNumberScaled:
 
     def test_returns_int_never_float(self):
         assert type(lt.parse_number_scaled("2.5")) is int
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("-672", -672000),
+        ("-2.5", -2500),
+        ("-1,000", -1000000),
+        ("number(-672000000)", -672000000000),
+        # ROUND_HALF_UP on a negative ties away from zero: -1000.5 -> -1001.
+        ("-1.0005", -1001),
+    ])
+    def test_accepts_negative(self, raw, expected):
+        assert lt.parse_number_scaled(raw) == expected
 
 
 class TestParseOrdinal:
@@ -105,6 +126,15 @@ class TestParseAmount:
     def test_returns_int_never_float(self):
         result = lt.parse_amount("2.675억", lt.DEFAULT_AMOUNT_UNITS)
         assert type(result) is int
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("-100억", -10000000000),
+        ("-1,000원", -1000),
+        ('amount(-100, "억")', -10000000000),
+    ])
+    def test_accepts_negative(self, raw, expected):
+        # a negative amount (a loss / refund) projects to a negative base unit.
+        assert lt.parse_amount(raw, lt.DEFAULT_AMOUNT_UNITS) == expected
 
 
 class TestCanonicalAmount:

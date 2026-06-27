@@ -45,22 +45,23 @@ _DATE_COMPOUND_RE = re.compile(
     r"^date\(\s*(\d{4})\s*,\s*(\d{1,2})(?:\s*,\s*(\d{1,2}))?\s*\)$",
     re.IGNORECASE,
 )
-_NUMBER_RE = re.compile(r"^\d[\d,]*(?:\.\d+)?$")
+_NUMBER_RE = re.compile(r"^-?\d[\d,]*(?:\.\d+)?$")
 _NUMBER_COMPOUND_RE = re.compile(
-    r"^number\(\s*\"?(\d[\d,]*(?:\.\d+)?)\"?\s*\)$",
+    r"^number\(\s*\"?(-?\d[\d,]*(?:\.\d+)?)\"?\s*\)$",
     re.IGNORECASE,
 )
 _ORDINAL_KO_RE = re.compile(r"^제?(\d+)\s*(?:호|위|번|차|등|째)$")
 _ORDINAL_EN_RE = re.compile(r"^(\d+)\s*(?:st|nd|rd|th)$", re.IGNORECASE)
 _ORDINAL_COMPOUND_RE = re.compile(r"^ordinal\(\s*(\d+)\s*\)$", re.IGNORECASE)
 # <number><unit>, contiguous OR a single space between them. The number part is a
-# plain/comma/decimal magnitude; the unit is validated against the table by the
-# caller. A leading `제` (ordinal marker) can't match because the `num` group is
-# anchored to a leading digit (`^\d…`), so `제3호`-style ordinals never match (the
-# first char `제` is a non-digit → no match).
-_AMOUNT_RE = re.compile(r"^(?P<num>\d[\d,]*(?:\.\d+)?) ?(?P<unit>\D+)$")
+# plain/comma/decimal magnitude with an OPTIONAL leading sign (a loss/credit may be
+# negative); the unit is validated against the table by the caller. A leading `제`
+# (ordinal marker) can't match because the `num` group is anchored to an optional
+# sign + leading digit (`^-?\d…`), so `제3호`-style ordinals never match (the first
+# char `제` is neither `-` nor a digit → no match).
+_AMOUNT_RE = re.compile(r"^(?P<num>-?\d[\d,]*(?:\.\d+)?) ?(?P<unit>\D+)$")
 _AMOUNT_COMPOUND_RE = re.compile(
-    r"^amount\(\s*\"?(?P<num>\d[\d,]*(?:\.\d+)?)\"?\s*,\s*\"?(?P<unit>[^\",)]+)\"?\s*\)$",
+    r"^amount\(\s*\"?(?P<num>-?\d[\d,]*(?:\.\d+)?)\"?\s*,\s*\"?(?P<unit>[^\",)]+)\"?\s*\)$",
     re.IGNORECASE,
 )
 
