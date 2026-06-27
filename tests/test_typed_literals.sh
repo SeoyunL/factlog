@@ -138,6 +138,42 @@ else
   echo "SKIP: engine assertions (no pyrewire)"
 fi
 
+# --- #154: amount(N,"unit") must canonicalise quote-free through merge. The
+# engine .dl text parser rejects escaped quotes, so a quoted unit in accepted.dl
+# is a whole-program ParseError. Author writes the documented quoted form;
+# merge_candidates must store amount(N,unit) (no quotes, commas stripped). ---
+AKB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$AKB" >/dev/null
+"$PYTHON" - "$AKB" <<'PY'
+import json, os, sys
+kb = sys.argv[1]
+json.dump(
+    [{"subject": "Acme", "relation": "valuation", "object": 'amount(7,"억")',
+      "source": "sources/a.md", "status": "confirmed", "confidence": 0.9, "note": ""},
+     {"subject": "Beta", "relation": "valuation", "object": 'amount(1,000,"억")',
+      "source": "sources/a.md", "status": "confirmed", "confidence": 0.9, "note": ""}],
+    open(os.path.join(kb, "runs", "amt.json"), "w"), ensure_ascii=False)
+open(os.path.join(kb, "sources", "a.md"), "w").write("x")
+PY
+printf '`valuation`\n' >> "$AKB/policy/attribute-relations.md"
+printf -- '- `valuation` : amount as val_won\n' > "$AKB/policy/typed-relations.md"
+"$PYTHON" "$PLUGIN_ROOT/tools/merge_candidates.py" --wiki "$AKB" >/dev/null 2>&1
+if grep -q 'amount(7,억)' "$AKB/facts/candidates.csv"; then ok "#154 merge canonicalises amount to quote-free amount(7,억)"; else bad "#154 amount not canonicalised in candidates.csv"; fi
+if grep -q 'amount(1000,억)' "$AKB/facts/candidates.csv"; then ok "#154 comma stripped from amount number"; else bad "#154 comma not stripped from amount number"; fi
+printf '// gen\n.decl requires_review(entity: symbol, reason: symbol)\n' > "$AKB/policy/logic-policy.dl"
+FACTLOG_ROOT="$AKB" "$PYTHON" "$PLUGIN_ROOT/tools/compile_facts.py" >/dev/null 2>&1
+if grep -qF 'relation("Acme", "valuation", "amount(7,억)").' "$AKB/facts/accepted.dl"; then ok "#154 accepted.dl carries quote-free amount (no escaped quotes)"; else bad "#154 accepted.dl missing quote-free amount"; fi
+if "$PYTHON" -c 'import pyrewire' 2>/dev/null; then
+  printf '.decl big_val(entity: symbol, reason: symbol)\nbig_val(S, "ge_5e8") :- val_won(S, V), V >= 500000000.\n' > "$AKB/policy/logic-policy.extra.dl"
+  if FACTLOG_ROOT="$AKB" "$PYTHON" "$PLUGIN_ROOT/tools/run_logic_check.py" >/dev/null 2>&1 && grep -q 'big_val: Acme' "$AKB/facts/logic_report.txt"; then
+    ok "#154 amount loads in the engine and projects (was a whole-program ParseError)"
+  else
+    bad "#154 amount still breaks the engine / does not project"
+  fi
+else
+  echo "SKIP: #154 engine-load assertion (no pyrewire)"
+fi
+
 echo ""
 echo "========================================"
 echo "test_typed_literals: $pass passed, $fail failed"

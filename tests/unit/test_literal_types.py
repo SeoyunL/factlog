@@ -107,6 +107,31 @@ class TestParseAmount:
         assert type(result) is int
 
 
+class TestCanonicalAmount:
+    """#154: an amount compound term must store quote-free so the engine .dl text
+    parser (which rejects escaped quotes) accepts the flat relation/3 fact."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ('amount(7,"억")', "amount(7,억)"),
+        ('amount(1,000,"억")', "amount(1000,억)"),   # comma stripped from the number
+        ('amount("2.675", "억")', "amount(2.675,억)"),
+        ("amount(100, 억)", "amount(100,억)"),        # already unquoted -> spacing normalised
+    ])
+    def test_quote_free_canonical(self, raw, expected):
+        assert lt.canonical_amount(raw) == expected
+
+    def test_canonical_carries_no_quote(self):
+        assert '"' not in lt.canonical_amount('amount(7,"억")')
+
+    def test_canonical_still_parses_to_same_scalar(self):
+        canon = lt.canonical_amount('amount(7,"억")')
+        assert lt.parse_amount(canon, lt.DEFAULT_AMOUNT_UNITS) == 700000000
+
+    @pytest.mark.parametrize("raw", ["100억", "number(5)", "date(2030,1)", "", "Acme"])
+    def test_non_amount_is_none(self, raw):
+        assert lt.canonical_amount(raw) is None
+
+
 class TestNormalizeDispatcher:
     def test_dispatches_by_tag(self):
         assert lt.normalize("date", "2030.1") == 20300101

@@ -163,6 +163,24 @@ def parse_amount(raw: str, units: dict[str, int]) -> int | None:
     return int(product.to_integral_value(rounding=decimal.ROUND_HALF_UP))
 
 
+def canonical_amount(raw: str) -> str | None:
+    """Rewrite an ``amount(N,"unit")`` compound term to the quote-free canonical
+    form ``amount(N,unit)`` (commas stripped from ``N``), or ``None`` if *raw* is
+    not an amount compound term.
+
+    The flat ``relation/3`` fact stores the object string verbatim, and the engine
+    ``.dl`` text parser rejects escaped quotes: a quoted unit reaches
+    ``facts/accepted.dl`` as ``"amount(7,\\"억\\")"`` and raises a *whole-program*
+    ParseError (#154). ``_AMOUNT_COMPOUND_RE`` already accepts an unquoted unit, so
+    ``parse_amount`` is unaffected — this only canonicalises the **stored surface
+    form** so authors may still write the documented ``amount(100,"억")`` while the
+    engine receives a quote-free ``amount(100,억)``."""
+    m = _AMOUNT_COMPOUND_RE.match(raw.strip())
+    if not m:
+        return None
+    return f'amount({m.group("num").replace(",", "")},{m.group("unit").strip()})'
+
+
 # `number` dispatches to parse_number_scaled (exact int64 fixed-point, ×1000):
 # the engine .dl text parser has no float column, so a number projects as a
 # sortable scaled int (see #125). parse_number (float) stays exported as the

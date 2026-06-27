@@ -89,6 +89,7 @@ from common import (  # noqa: E402
     source_file_refs,
     sync_ignore_patterns,
 )
+from factlog import literal_types  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -298,6 +299,13 @@ def normalize_rows(
         clean["source"] = source  # NFC-normalised canonical source
         clean["status"] = clean["status"] if clean["status"] in VALID_STATUSES else "needs_review"
         clean["confidence"] = normalize_confidence(clean["confidence"])
+        # Canonicalise an `amount(N,"unit")` object to the quote-free `amount(N,unit)`
+        # form: the engine .dl text parser rejects escaped quotes, so a quoted unit
+        # would break facts/accepted.dl as a whole-program ParseError (#154). Done
+        # before the dedup key so `amount(7,"억")` and `amount(7,억)` collapse to one.
+        canon_amount = literal_types.canonical_amount(clean["object"])
+        if canon_amount is not None:
+            clean["object"] = canon_amount
         # Anchor-insensitive key: source_file is the pre-'#anchor' portion
         # (already computed above for the source-existence check).
         key = (clean["subject"], clean["relation"], clean["object"], source_file)
