@@ -60,10 +60,23 @@ _ORDINAL_COMPOUND_RE = re.compile(r"^ordinal\(\s*(\d+)\s*\)$", re.IGNORECASE)
 # sign + leading digit (`^-?\d…`), so `제3호`-style ordinals never match (the first
 # char `제` is neither `-` nor a digit → no match).
 _AMOUNT_RE = re.compile(r"^(?P<num>-?\d[\d,]*(?:\.\d+)?) ?(?P<unit>\D+)$")
+# Compound amount: the unit may be quoted ("...", allowing spaces and commas) or
+# bare (no comma/paren/quote). The number is optionally quoted. Canonicalisation
+# always emits the quoted unit form (see ``canonical_amount``).
 _AMOUNT_COMPOUND_RE = re.compile(
-    r"^amount\(\s*\"?(?P<num>-?\d[\d,]*(?:\.\d+)?)\"?\s*,\s*\"?(?P<unit>[^\",)]+)\"?\s*\)$",
+    r'^amount\(\s*"?(?P<num>-?\d[\d,]*(?:\.\d+)?)"?\s*,\s*'
+    r'(?:"(?P<qunit>[^"]*)"|(?P<unit>[^,)"]+))\s*\)$',
     re.IGNORECASE,
 )
+
+
+def _amount_unit(match: re.Match[str]) -> str:
+    """The unit from an ``_AMOUNT_COMPOUND_RE`` match (quoted group wins), stripped
+    of surrounding whitespace. The prose ``_AMOUNT_RE`` has only a bare ``unit``
+    group, so this helper is compound-only."""
+    qunit = match.groupdict().get("qunit")
+    unit = qunit if qunit is not None else match.group("unit")
+    return unit.strip()
 
 
 def parse_date(raw: str) -> int | None:
@@ -147,10 +160,15 @@ def parse_amount(raw: str, units: dict[str, int]) -> int | None:
     ``제`` (ordinal marker), a ``%``, or any unit not in *units* -> ``None``.
     ``3 GB`` / ASCII-space units are out of scope.
     """
-    m = _AMOUNT_COMPOUND_RE.match(raw.strip()) or _AMOUNT_RE.match(raw.strip())
-    if not m:
-        return None
-    unit = m.group("unit").strip()
+    text = raw.strip()
+    m = _AMOUNT_COMPOUND_RE.match(text)
+    if m:
+        unit = _amount_unit(m)
+    else:
+        m = _AMOUNT_RE.match(text)
+        if not m:
+            return None
+        unit = m.group("unit").strip()
     multiplier = units.get(unit)
     if multiplier is None:
         return None
@@ -165,21 +183,23 @@ def parse_amount(raw: str, units: dict[str, int]) -> int | None:
 
 
 def canonical_amount(raw: str) -> str | None:
-    """Rewrite an ``amount(N,"unit")`` compound term to the quote-free canonical
-    form ``amount(N,unit)`` (commas stripped from ``N``), or ``None`` if *raw* is
-    not an amount compound term.
+    """Rewrite an amount compound term to the always-quoted canonical form
+    ``amount(N,"unit")`` (commas stripped from ``N``, the unit always quoted), or
+    ``None`` if *raw* is not an amount compound term.
 
-    The flat ``relation/3`` fact stores the object string verbatim, and the engine
-    ``.dl`` text parser rejects escaped quotes: a quoted unit reaches
-    ``facts/accepted.dl`` as ``"amount(7,\\"억\\")"`` and raises a *whole-program*
-    ParseError (#154). ``_AMOUNT_COMPOUND_RE`` already accepts an unquoted unit, so
-    ``parse_amount`` is unaffected — this only canonicalises the **stored surface
-    form** so authors may still write the documented ``amount(100,"억")`` while the
-    engine receives a quote-free ``amount(100,억)``."""
+    Quoting the unit unconditionally makes it unambiguous regardless of its
+    contents — a unit may carry spaces (``"kilometer per hour"``) or commas
+    (``"달러,센트"``) without colliding with the compound's own ``,``/``)`` syntax.
+    The flat ``relation/3`` fact stores this object string verbatim; the engine
+    ``.dl`` text parser supports ``\\"`` escapes (wirelog#924), so a quoted unit
+    reaches ``facts/accepted.dl`` as ``"amount(7,\\"억\\")"`` and loads cleanly.
+    Both the bare (``amount(7,억)``) and quoted (``amount(7,"억")``) input forms
+    canonicalise to the same quoted output, so a re-merge is idempotent and the
+    dedup key collapses the two."""
     m = _AMOUNT_COMPOUND_RE.match(raw.strip())
     if not m:
         return None
-    return f'amount({m.group("num").replace(",", "")},{m.group("unit").strip()})'
+    return f'amount({m.group("num").replace(",", "")},"{_amount_unit(m)}")'
 
 
 # `number` dispatches to parse_number_scaled (exact int64 fixed-point, ×1000):

@@ -13,6 +13,27 @@
 - review_required에는 Q 같은 placeholder를 넣지 말고, 반드시 Natural language question 원문을 문자열로 넣으십시오.
 - "몇 개", "얼마나 많은" 같은 개수 질문은 count("subject", "relation")? 로 표현하십시오 — 해당 (subject, relation)의 객체 수를 엔진이 검증해 셉니다(0도 유효한 답). subject·relation은 accepted여야 합니다.
 
+## 타입 지정 리터럴(compound term) 질의
+
+날짜·금액·순위·일반 수치는 accepted.dl에 **compound term 문자열**로 저장됩니다 —
+`date(2030,1)`, `amount(100,"억")`(금액 단위는 항상 따옴표), `ordinal(3)`,
+`number(2.5)`. object 인자는 저장된 문자열과 일치해야 하므로:
+
+- **값을 추출**하는 질문("정식 운영일이 언제?", "투자액이 얼마?")은 object를 변수로
+  두십시오: `relation("을서비스", "정식_운영", X)?`. 엔진이 `date(2030,1)`처럼 compound
+  term을 그대로 돌려줍니다.
+- **특정 값과 일치**하는지 묻는 질문("투자액이 100억이야?")은 object에 **compound term**을
+  적으십시오. 금액 단위 따옴표는 query 문자열 안에서 `\"`로 escape합니다:
+  `relation("을서비스", "누적_투자액", "amount(100,\"억\")")?`. (단위를 따옴표 없이
+  `amount(100,억)`로 적어도 매칭되지만, 저장 정규형은 따옴표 형식입니다.) 날짜·순위·수치는
+  `date(2030,1)`·`ordinal(3)`·`number(2.5)` 형식 그대로 씁니다. 프로즈(`"100억"`,
+  `"2030.1"`, `"3등"`)는 저장값과 일치하지 않아 검증되지 않습니다.
+- **비교·임계·정렬** 질문("2030년 이후 운영?", "평점 2.0 이상?")은 relation query 한
+  줄로는 표현할 수 없습니다. schema context의 허용 predicate에 비교용 typed
+  predicate(예: `after2030`)가 **있으면** 그 이름으로 `predicate(X, reason)?` 형태로
+  질의하고, **없으면** `review_required("원문 질문")?`로 두십시오 — `D >= ...` 같은
+  비교식을 직접 query에 넣지 마십시오.
+
 {{SCHEMA_CONTEXT}}
 
 Natural language question:

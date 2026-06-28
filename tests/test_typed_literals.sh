@@ -138,10 +138,9 @@ else
   echo "SKIP: engine assertions (no pyrewire)"
 fi
 
-# --- #154: amount(N,"unit") must canonicalise quote-free through merge. The
-# engine .dl text parser rejects escaped quotes, so a quoted unit in accepted.dl
-# is a whole-program ParseError. Author writes the documented quoted form;
-# merge_candidates must store amount(N,unit) (no quotes, commas stripped). ---
+# --- #154 / always-quote (wirelog#924): an amount object canonicalises to the
+# always-quoted amount(N,"unit") form through merge (commas stripped from N). The
+# engine .dl parser supports \" escapes, so the quoted unit loads cleanly. ---
 AKB="$(mktemp -d)/wiki"
 "$PYTHON" -m factlog init --target "$AKB" >/dev/null
 "$PYTHON" - "$AKB" <<'PY'
@@ -158,11 +157,23 @@ PY
 printf '`valuation`\n' >> "$AKB/policy/attribute-relations.md"
 printf -- '- `valuation` : amount as val_won\n' > "$AKB/policy/typed-relations.md"
 "$PYTHON" "$PLUGIN_ROOT/tools/merge_candidates.py" --wiki "$AKB" >/dev/null 2>&1
-if grep -q 'amount(7,억)' "$AKB/facts/candidates.csv"; then ok "#154 merge canonicalises amount to quote-free amount(7,억)"; else bad "#154 amount not canonicalised in candidates.csv"; fi
-if grep -q 'amount(1000,억)' "$AKB/facts/candidates.csv"; then ok "#154 comma stripped from amount number"; else bad "#154 comma not stripped from amount number"; fi
+if "$PYTHON" - "$AKB" <<'PY'
+import csv, os, sys
+rows = list(csv.DictReader(open(os.path.join(sys.argv[1], "facts", "candidates.csv"), encoding="utf-8")))
+objs = {(r["subject"], r["object"]) for r in rows}
+assert ("Acme", 'amount(7,"억")') in objs, objs
+PY
+then ok "always-quote: merge canonicalises amount to amount(7,\"억\")"; else bad "amount not canonicalised to quoted form in candidates.csv"; fi
+if "$PYTHON" - "$AKB" <<'PY'
+import csv, os, sys
+rows = list(csv.DictReader(open(os.path.join(sys.argv[1], "facts", "candidates.csv"), encoding="utf-8")))
+objs = {(r["subject"], r["object"]) for r in rows}
+assert ("Beta", 'amount(1000,"억")') in objs, objs
+PY
+then ok "always-quote: comma stripped from amount number (amount(1000,\"억\"))"; else bad "comma not stripped from amount number"; fi
 printf '// gen\n.decl requires_review(entity: symbol, reason: symbol)\n' > "$AKB/policy/logic-policy.dl"
 FACTLOG_ROOT="$AKB" "$PYTHON" "$PLUGIN_ROOT/tools/compile_facts.py" >/dev/null 2>&1
-if grep -qF 'relation("Acme", "valuation", "amount(7,억)").' "$AKB/facts/accepted.dl"; then ok "#154 accepted.dl carries quote-free amount (no escaped quotes)"; else bad "#154 accepted.dl missing quote-free amount"; fi
+if grep -qF 'relation("Acme", "valuation", "amount(7,\"억\")").' "$AKB/facts/accepted.dl"; then ok "always-quote: accepted.dl carries the escaped quoted unit"; else bad "accepted.dl missing escaped quoted amount"; fi
 if "$PYTHON" -c 'import pyrewire' 2>/dev/null; then
   printf '.decl big_val(entity: symbol, reason: symbol)\nbig_val(S, "ge_5e8") :- val_won(S, V), V >= 500000000.\n' > "$AKB/policy/logic-policy.extra.dl"
   if FACTLOG_ROOT="$AKB" "$PYTHON" "$PLUGIN_ROOT/tools/run_logic_check.py" >/dev/null 2>&1 && grep -q 'big_val: Acme' "$AKB/facts/logic_report.txt"; then

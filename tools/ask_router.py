@@ -66,6 +66,7 @@ from common import (  # noqa: E402
     QUERY_FACT_ABSENT,
     QUERY_OK,
     arg_value,
+    canonical_value,
     is_quoted_string,
     is_variable,
     query_args,
@@ -153,7 +154,10 @@ def evaluate_relation(draft: str, facts: list[dict[str, str]]) -> list[list[str]
     rows: list[list[str]] = []
     for row in facts:
         values = [row["subject"], row["relation"], row["object"]]
-        if all(is_variable(arg) or arg_value(arg) == value for arg, value in zip(args, values)):
+        if all(
+            is_variable(arg) or canonical_value(arg_value(arg)) == canonical_value(value)
+            for arg, value in zip(args, values)
+        ):
             rows.append([row["subject"], row["relation"], row["object"]])
     return rows
 

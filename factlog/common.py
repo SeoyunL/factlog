@@ -1147,6 +1147,17 @@ def _arg_value(arg: str) -> str:
     return arg
 
 
+def _canonical_value(value: str) -> str:
+    """Canonicalise a literal value for comparison so unit quoting does not change
+    a match. An ``amount`` compound term is normalised to its always-quoted
+    canonical form (``amount(7,억)`` / ``amount(7,"억")`` -> ``amount(7,"억")``),
+    the same form merge stores — so a query literal matches the stored object
+    whether or not the author quoted the unit. Any non-amount string is returned
+    unchanged, so dates/numbers/ordinals/entities are unaffected. Total: never
+    raises."""
+    return literal_types.canonical_amount(value) or value
+
+
 def _is_quoted_string(arg: str) -> bool:
     if len(arg) < 2 or arg[0] != '"' or arg[-1] != '"':
         return False
@@ -1180,6 +1191,7 @@ def _quoted_constants(line: str) -> list[str]:
 #   quoted_constants(line) -> every "..." literal in a line
 query_args = _query_args
 arg_value = _arg_value
+canonical_value = _canonical_value
 is_quoted_string = _is_quoted_string
 is_variable = _is_variable
 quoted_constants = _quoted_constants
@@ -1193,7 +1205,10 @@ def _relation_match_count(query: str, facts: list[dict[str, str]]) -> int:
         count = 0
         for row in facts:
             values = [row["subject"], row["relation"], row["object"]]
-            if all(_is_variable(arg) or _arg_value(arg) == value for arg, value in zip(args, values, strict=True)):
+            if all(
+                _is_variable(arg) or _canonical_value(_arg_value(arg)) == _canonical_value(value)
+                for arg, value in zip(args, values, strict=True)
+            ):
                 count += 1
         return count
     return 0
@@ -1266,7 +1281,9 @@ def classify_query(
             return False, QUERY_ENTITY_NOT_ACCEPTED, f"relation subject is not an accepted entity: {_arg_value(subject)}"
         if not _is_variable(relation) and _arg_value(relation) not in relations:
             return False, QUERY_RELATION_NOT_ACCEPTED, f"relation name is not accepted: {_arg_value(relation)}"
-        if not _is_variable(object_) and _arg_value(object_) not in values:
+        if not _is_variable(object_) and _canonical_value(_arg_value(object_)) not in {
+            _canonical_value(v) for v in values
+        }:
             return False, QUERY_ENTITY_NOT_ACCEPTED, f"relation object is not an accepted entity: {_arg_value(object_)}"
         if _relation_match_count(query, facts) == 0:
             return False, QUERY_FACT_ABSENT, "relation query does not match accepted facts"

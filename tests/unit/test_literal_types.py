@@ -110,9 +110,19 @@ class TestParseAmount:
         ("100 억", 10000000000),  # single space allowed
         ("amount(100, 억)", 10000000000),
         ('amount("2.675", "억")', 267500000),
+        ('amount(100,"억")', 10000000000),  # quoted table unit
     ])
     def test_accepts(self, raw, expected):
         assert lt.parse_amount(raw, lt.DEFAULT_AMOUNT_UNITS) == expected
+
+    @pytest.mark.parametrize("raw", [
+        'amount(120,"kilometer per hour")',  # quoted, spaced, not a table unit
+        'amount(2,"달러,센트")',                # quoted, comma, not a table unit
+    ])
+    def test_quoted_unknown_unit_is_none(self, raw):
+        # A quoted unit with spaces/commas parses structurally but is not in the
+        # unit table, so it has no comparable scalar (still a valid stored object).
+        assert lt.parse_amount(raw, lt.DEFAULT_AMOUNT_UNITS) is None
 
     def test_decimal_is_exact(self):
         # int(2.675 * 1e8) == 267499999 (IEEE-754 error); Decimal is exact.
@@ -138,20 +148,31 @@ class TestParseAmount:
 
 
 class TestCanonicalAmount:
-    """#154: an amount compound term must store quote-free so the engine .dl text
-    parser (which rejects escaped quotes) accepts the flat relation/3 fact."""
+    """always-quote (wirelog#924): an amount compound term stores its unit always
+    quoted as ``amount(N,"unit")``. The engine .dl text parser supports \\" escapes,
+    so the quoted unit loads cleanly, and quoting keeps a unit with spaces/commas
+    unambiguous."""
 
     @pytest.mark.parametrize("raw,expected", [
-        ('amount(7,"억")', "amount(7,억)"),
-        ('amount(1,000,"억")', "amount(1000,억)"),   # comma stripped from the number
-        ('amount("2.675", "억")', "amount(2.675,억)"),
-        ("amount(100, 억)", "amount(100,억)"),        # already unquoted -> spacing normalised
+        ('amount(7,"억")', 'amount(7,"억")'),
+        ('amount(7,억)', 'amount(7,"억")'),               # bare unit -> quoted
+        ('amount(1,000,"억")', 'amount(1000,"억")'),       # comma stripped from the number
+        ('amount("2.675", "억")', 'amount(2.675,"억")'),
+        ("amount(100, 억)", 'amount(100,"억")'),           # bare + spacing normalised
+        ('amount(-100,"억")', 'amount(-100,"억")'),         # negative preserved
+        ('amount(120,"kilometer per hour")', 'amount(120,"kilometer per hour")'),  # spaces in unit
+        ('amount(2,"달러,센트")', 'amount(2,"달러,센트")'),   # comma in (quoted) unit
     ])
-    def test_quote_free_canonical(self, raw, expected):
+    def test_always_quoted_canonical(self, raw, expected):
         assert lt.canonical_amount(raw) == expected
 
-    def test_canonical_carries_no_quote(self):
-        assert '"' not in lt.canonical_amount('amount(7,"억")')
+    def test_canonical_quotes_the_unit(self):
+        canon = lt.canonical_amount('amount(7,억)')
+        assert canon == 'amount(7,"억")' and canon.count('"') == 2
+
+    def test_canonical_is_idempotent(self):
+        canon = lt.canonical_amount('amount(7,억)')
+        assert lt.canonical_amount(canon) == canon
 
     def test_canonical_still_parses_to_same_scalar(self):
         canon = lt.canonical_amount('amount(7,"억")')
