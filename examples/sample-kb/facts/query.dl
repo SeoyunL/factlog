@@ -1,7 +1,8 @@
 // query drafts derived from policy/questions.md per
 // skills/factlog/references/text-to-datalog.md
 // Only facts/accepted.dl entities/relations are used; multi-word
-// entities are quoted. At least one query resolves against the
+// entities are quoted. Each query below maps 1:1 to a question in
+// policy/questions.md (q1-q6). At least one query resolves against the
 // accepted facts so the logic_report.txt "Query evaluation" section
 // is populated (this is the AC3 demonstration).
 
@@ -22,7 +23,16 @@ relation("factlog", "is_a", "Claude Code plugin")?
 // query distinguishes a hit (q1-q3) from a miss.
 relation("factlog", "developed_by", "Anthropic")?
 
-// q5: Which factlog steps are performed by Claude vs deterministic scripts?
+// q5: Does this KB record that Anthropic develops Claude Code? (accept demo)
+// This is the very triple a user accepts in the tutorial (README section 4).
+// In the committed initial state ("Anthropic","develops","Claude Code" is
+// still needs_review, 7 engine facts) it resolves to 0 rows. After the human
+// runs `factlog accept Anthropic develops "Claude Code"` (8 engine facts) and
+// re-runs the check, the SAME query resolves to 1 row — a human gate changing
+// the engine's answer.
+relation("Anthropic", "develops", "Claude Code")?
+
+// q6: Which factlog steps are performed by Claude vs deterministic scripts?
 // The split (Claude vs scripts) is not an accepted relation in this KB,
 // so the question is routed to human review rather than a Datalog query.
 review_required("Which steps in factlog are performed by Claude and which by deterministic scripts?")?

@@ -7,10 +7,13 @@ engine facts: 7
 review facts outside engine input: 1
 policy findings: 1
 errors: 0
-warnings: 0
+warnings: 1
 
 Policy Findings:
 - requires_review: factlog (capability_check)
+
+Warnings:
+- query references non-engine entity or relation: develops
 
 Policy evaluation:
 - requires_review: 1 rows
@@ -19,5 +22,6 @@ Query evaluation:
 - relation results: 1 rows; Claude Code, developed_by, Anthropic
 - relation results: 1 rows; Claude Code, uses, Claude model family
 - relation results: 1 rows; factlog, is_a, Claude Code plugin
+- relation results: 0 rows
 - relation results: 0 rows
 - review_required: Which steps in factlog are performed by Claude and which by deterministic scripts?
