@@ -11,7 +11,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import POLICY_DIR, PROMPTS_DIR, RUNS_DIR, WIRELOG_PROGRAM, dl_string, ensure_dirs, require_pyrewire_version
+from common import (
+    POLICY_DIR,
+    PROMPTS_DIR,
+    RUNS_DIR,
+    WIRELOG_PROGRAM,
+    dl_string,
+    ensure_dirs,
+    logic_policy_md_relations,
+    markdown_policy_items,
+    require_pyrewire_version,
+)
 
 try:
     from pyrewire import EasySession
@@ -48,53 +58,16 @@ def render_prompt(policy_text: str) -> str:
     return rendered
 
 
-def markdown_policy_items(text: str) -> list[tuple[int, str, str]]:
-    rows: list[tuple[int, str, str]] = []
-    in_fence = False
-    current_lineno: int | None = None
-    current_item: str | None = None
-
-    def flush_current() -> None:
-        nonlocal current_lineno, current_item
-        if current_lineno is None or current_item is None:
-            return
-        match = re.match(r"^\[([a-z0-9_]+)\]\s+(.+)$", current_item)
-        if match:
-            rows.append((current_lineno, match.group(1), match.group(2).strip()))
-        current_lineno = None
-        current_item = None
-
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            flush_current()
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        if not stripped or stripped.startswith("#"):
-            flush_current()
-            continue
-        if re.match(r"^(?:[-*]|\d+\.)\s+", stripped):
-            flush_current()
-            item = re.sub(r"^[-*]\s+", "", stripped)
-            item = re.sub(r"^\d+\.\s+", "", item)
-            current_lineno = lineno
-            current_item = item
-            continue
-        if current_item is not None and line[:1].isspace():
-            current_item = f"{current_item} {stripped}"
-            continue
-        flush_current()
-    flush_current()
-    return rows
+# markdown_policy_items lives in factlog/common.py so this compiler and the
+# "does this .md define rules?" check (common.logic_policy_md_has_rules, used by
+# _load_logic_policy_from and finalize.py) share one parser and never drift (#190).
 
 
 def fixture_policy_json(policy_text: str) -> dict[str, Any]:
     rules: list[dict[str, Any]] = []
     rejected: list[str] = []
     for lineno, reason, sentence in markdown_policy_items(policy_text):
-        relations = re.findall(r"`([^`]+)`", sentence)
+        relations = logic_policy_md_relations(sentence)
         if not relations:
             rejected.append(f"line {lineno}: expected at least one backtick relation name")
             continue

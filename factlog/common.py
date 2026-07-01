@@ -327,21 +327,84 @@ def load_accepted_facts() -> list[dict[str, str]]:
     return _load_accepted_facts_from(ACCEPTED_DL)
 
 
+def markdown_policy_items(text: str) -> list[tuple[int, str, str]]:
+    """Parse policy bullets out of a logic-policy.md body.
+
+    Single source of truth for the policy-bullet grammar (#190): dash/star OR
+    numbered (``1.``) list markers, a ``[id]`` tag, multi-line continuation of a
+    wrapped bullet, and — critically — lines inside a ```` ``` ```` fenced code
+    block are skipped (they are documentation examples, not live rules).
+    ``tools/generate_logic_policy.py`` imports this so the compiler and the
+    "does this .md define rules?" check can never disagree.
+    """
+    rows: list[tuple[int, str, str]] = []
+    in_fence = False
+    current_lineno: int | None = None
+    current_item: str | None = None
+
+    def flush_current() -> None:
+        nonlocal current_lineno, current_item
+        if current_lineno is None or current_item is None:
+            return
+        match = re.match(r"^\[([a-z0-9_]+)\]\s+(.+)$", current_item)
+        if match:
+            rows.append((current_lineno, match.group(1), match.group(2).strip()))
+        current_lineno = None
+        current_item = None
+
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_current()
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not stripped or stripped.startswith("#"):
+            flush_current()
+            continue
+        if re.match(r"^(?:[-*]|\d+\.)\s+", stripped):
+            flush_current()
+            item = re.sub(r"^[-*]\s+", "", stripped)
+            item = re.sub(r"^\d+\.\s+", "", item)
+            current_lineno = lineno
+            current_item = item
+            continue
+        if current_item is not None and line[:1].isspace():
+            current_item = f"{current_item} {stripped}"
+            continue
+        flush_current()
+    flush_current()
+    return rows
+
+
+def logic_policy_md_relations(sentence: str) -> list[str]:
+    """Backtick-quoted relation names in a policy bullet. A bullet becomes a
+    compilable rule iff this is non-empty — the exact condition
+    ``generate_logic_policy.fixture_policy_json`` uses to accept/reject an item.
+    """
+    return re.findall(r"`([^`]+)`", sentence)
+
+
 def logic_policy_md_has_rules(md_path: Path) -> bool:
     """Deterministic 'does this policy .md define compilable rules?' check.
 
-    A rule bullet looks like ``- [c1] ... `rel` ...`` — a list bullet, a
-    ``[id]`` tag, and at least one backtick-quoted relation. This is the same
-    definition tools/finalize.py uses to distinguish a benign fresh-KB policy
-    (prose/empty → no rules) from one that DOES define rules; both call sites
-    must share it so the two never drift (#190). generate_logic_policy.py's
-    bullet parser (markdown_policy_items + fixture_policy_json) recognises the
-    same shape.
+    Delegates to the real compiler parser (``markdown_policy_items`` +
+    ``logic_policy_md_relations``) rather than a look-alike regex, so it agrees
+    byte-for-byte with what ``generate_logic_policy`` would compile: numbered
+    lists, multi-line bullets, and fenced-code examples are all handled the same
+    way (#190). Result is True iff at least one bullet yields a rule (an ``[id]``
+    tag plus ≥1 backtick relation) — matching ``fixture_policy_json``. Used by
+    ``_load_logic_policy_from`` and ``tools/finalize.py`` to tell a benign empty
+    policy (→ graceful) from an uncompiled real one (→ fail loud).
     """
     if not md_path.is_file():
         return False
     md_text = md_path.read_text(encoding="utf-8")
-    return bool(re.search(r"(?m)^\s*[-*]\s*\[[a-z0-9_]+\].*`", md_text))
+    return any(
+        logic_policy_md_relations(sentence)
+        for _lineno, _reason, sentence in markdown_policy_items(md_text)
+    )
 
 
 def _load_logic_policy_from(logic_policy_dl: Path) -> str:

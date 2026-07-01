@@ -122,9 +122,7 @@ class TestMissingLogicPolicyDl:
         dl = self._dl(tmp_path, md="   \n\n")
         assert common._load_logic_policy_from(dl) == ""
 
-    def test_absent_dl_with_rules_still_raises(self, tmp_path):
-        md = "# Logic policy\n\n- [c1] flag when `requires_review`\n"
-        dl = self._dl(tmp_path, md=md)
+    def _assert_raises_uncompiled(self, dl):
         try:
             common._load_logic_policy_from(dl)
         except common.FactlogError as exc:
@@ -134,6 +132,37 @@ class TestMissingLogicPolicyDl:
         else:
             raise AssertionError("expected FactlogError for uncompiled rules")
 
+    def test_absent_dl_with_rules_still_raises(self, tmp_path):
+        md = "# Logic policy\n\n- [c1] flag when `requires_review`\n"
+        dl = self._dl(tmp_path, md=md)
+        self._assert_raises_uncompiled(dl)
+
+    def test_absent_dl_numbered_list_rule_still_raises(self, tmp_path):
+        # Numbered lists compile too (markdown_policy_items accepts `\d+.`), so a
+        # regex that only saw dashes would SILENTLY DROP this policy (#190 review).
+        md = "# Logic policy\n\n1. [c1] flag when `requires_review`\n"
+        dl = self._dl(tmp_path, md=md)
+        self._assert_raises_uncompiled(dl)
+
+    def test_absent_dl_multiline_bullet_rule_still_raises(self, tmp_path):
+        # A bullet whose backtick relation wraps onto a continuation line still
+        # compiles; a single-line regex would miss it and drop the policy.
+        md = "# Logic policy\n\n- [c1] flag when the fact is\n  `requires_review`\n"
+        dl = self._dl(tmp_path, md=md)
+        self._assert_raises_uncompiled(dl)
+
+    def test_absent_dl_fenced_example_only_is_empty_policy(self, tmp_path):
+        # A .md that documents the rule grammar only inside a ``` code fence
+        # defines ZERO live rules — markdown_policy_items skips fenced lines. A
+        # look-alike regex would (wrongly) see the fenced bullet and hard-fail.
+        md = (
+            "# Logic policy\n\nExample syntax:\n\n"
+            "```\n- [c1] flag when `requires_review`\n```\n\n"
+            "Add your real rules above.\n"
+        )
+        dl = self._dl(tmp_path, md=md)
+        assert common._load_logic_policy_from(dl) == ""
+
     def test_has_rules_helper(self, tmp_path):
         (tmp_path / "rules.md").write_text("- [c1] flag `rel`\n", encoding="utf-8")
         (tmp_path / "prose.md").write_text("just prose, no bullets\n", encoding="utf-8")
@@ -142,6 +171,33 @@ class TestMissingLogicPolicyDl:
         assert common.logic_policy_md_has_rules(tmp_path / "prose.md") is False
         assert common.logic_policy_md_has_rules(tmp_path / "notag.md") is False
         assert common.logic_policy_md_has_rules(tmp_path / "missing.md") is False
+
+    def test_has_rules_matches_compiler(self, tmp_path):
+        """has_rules(md) ⟺ generate_logic_policy compiles ≥1 rule — the drift
+        boundary the #190 review demanded be pinned. fixture_policy_json raises
+        SystemExit when it produces no rule, so 'compiles' == 'did not raise'."""
+        import generate_logic_policy as glp
+
+        cases = {
+            "dash": "- [c1] flag `requires_review`\n",
+            "numbered": "1. [c1] flag `requires_review`\n",
+            "multiline": "- [c1] flag when\n  `requires_review`\n",
+            "star": "* [c1] flag `requires_review`\n",
+            "no_backtick": "- [c1] flag with no relation\n",
+            "no_tag": "- flag `requires_review` but no id\n",
+            "prose": "Just prose describing the policy.\n",
+            "fenced_only": "```\n- [c1] flag `requires_review`\n```\n",
+        }
+        for name, md in cases.items():
+            path = tmp_path / f"{name}.md"
+            path.write_text(md, encoding="utf-8")
+            helper = common.logic_policy_md_has_rules(path)
+            try:
+                glp.fixture_policy_json(md)
+                compiler = True
+            except SystemExit:
+                compiler = False
+            assert helper == compiler, f"{name}: helper={helper} compiler={compiler}"
 
 
 class TestTwoKbsAreIndependent:
