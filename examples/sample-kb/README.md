@@ -127,17 +127,18 @@ factlog status    # → facts: 8 ... [confirmed=7, accepted=1]; 8 engine fact(s)
 *Claude Code 세션에서 실행:*
 
 ```
-/factlog query     # policy/questions.md → facts/query.dl (쿼리 초안)
 /factlog check     # accepted 사실 컴파일 + 로직 체크 + 엔진 리포트 표시
+/factlog query     # (선택) policy/questions.md → facts/query.dl 초안 재생성 (비결정)
 ```
 
-`/factlog check` 전에 반드시 `/factlog query` 를 실행하세요. 로직 체크는
-`facts/query.dl` 의 초안을 평가합니다. `check` 가 보여 주는 `facts/logic_report.txt`
-는 **엔진이 생성** 합니다 — Claude가 결과를 서술하거나 결론짓는 것이 아닙니다.
+`facts/query.dl` 은 복사본에 **이미 동봉** 돼 있으니 곧장 `/factlog check` 를
+실행하면 됩니다. 로직 체크가 그 동봉 초안을 평가해 아래 q1–q6 예시가 그대로
+재현됩니다. `/factlog query` 는 그 초안을 LLM으로 다시 잡아 보는 **선택** 단계이며,
+비결정이라 재생성하면 예시와 어긋날 수 있습니다(바로 아래 경고 참조). `check` 가
+보여 주는 `facts/logic_report.txt` 는 **엔진이 생성** 합니다 — Claude가 결과를
+서술하거나 결론짓는 것이 아닙니다.
 
-> `facts/query.dl` 은 복사본에 **이미 들어 있고**, 아래 q1–q6 예시 출력은 그
-> 동봉된 초안을 기준으로 합니다. `/factlog query` 는 `policy/questions.md` 를 LLM이
-> 다시 초안하는 단계라, 다시 돌리면 초안이 달라져 아래 출력(q5의 정확한 트리플
+> `/factlog query` 를 다시 돌리면 초안이 달라져 아래 출력(q5의 정확한 트리플
 > 문자열·0행/1행 등)과 어긋날 수 있습니다 — `sync` 와 같은 비결정 경계이며 버그가
 > 아닙니다. 반면 `/factlog check` 의 컴파일·로직 체크는 같은 입력이면 항상 같은
 > 결과를 냅니다.
