@@ -160,15 +160,60 @@ factlog status    # → facts: 8 ... [confirmed=7, accepted=1]; 8 engine fact(s)
 
 ## 5. 한 질문에 답 받기 — `/factlog ask`
 
-검증된 답을 한 번에 받고 싶다면 `ask` 를 씁니다. 결정론적으로 엔진(검증됨) 또는
-위키 탐색(미검증)으로 라우팅되며, 각 근거 소스 경로(`← <source>`)를 함께
-보여 줍니다.
+검증된 답을 한 번에 받고 싶다면 `ask` 를 씁니다. 질문은 결정론적으로
+엔진(검증됨) 또는 위키 탐색(미검증)으로 라우팅되며, **Claude 가 판정하는 것이
+아니라 `tools/ask_router.py` 가 코드로** 어느 경로인지 결정합니다(라우팅 근거는
+accepted 사실뿐 — 후보 어휘는 절대 새지 않습니다). 각 답에는 근거 소스
+경로(`← <source>`)가 함께 붙습니다.
 
 *Claude Code 세션에서 실행:*
 
 ```
 /factlog ask Who developed Claude Code?
 ```
+
+이 질문은 초안 `relation("Claude Code", "developed_by", "Anthropic")?` 로 잡히고,
+그 트리플은 **처음부터** accepted 사실(4절 q1)이라 곧장 **엔진 hit(검증됨, 1행)**
+으로 해소됩니다.
+
+```
+VERIFIED — engine
+query: relation("Claude Code", "developed_by", "Anthropic")?
+rows: 1
+  - Claude Code, developed_by, Anthropic (sources: 1, extraction conf: 0.99)
+    ← sources/example.md#what-is-claude-code
+```
+
+이제 **3절에서 여러분이 직접 accept 한** 트리플을 ask 경로에서도 확인해 봅니다.
+
+```
+/factlog ask Does Anthropic develop Claude Code?
+```
+
+이 질문은 초안 `relation("Anthropic", "develops", "Claude Code")?` 로 잡힙니다 —
+4절 q5 와 **같은 트리플** 입니다. 3절에서 accept 를 마쳤으므로(엔진 입력 8개)
+`develops` 가 이제 엔진 관계라서 이 질문도 **엔진 hit(검증됨, 1행)** 으로
+해소됩니다.
+
+```
+VERIFIED — engine
+query: relation("Anthropic", "develops", "Claude Code")?
+rows: 1
+  - Anthropic, develops, Claude Code (sources: 1, extraction conf: 0.90)
+    ← sources/example.md#what-is-claude-code
+```
+
+> **반사실 — 만약 3절 accept 전에 이 질문을 던졌다면?** 그때는 엔진 입력이 7개고
+> `develops` 가 아직 accepted 관계가 아니라서, `ask_router.py` 는 같은 초안을
+> **결정론적으로 위키 탐색(UNVERIFIED)** 으로 라우팅합니다 — Claude 의 판단이
+> 아니라 `develops` 가 엔진 관계 집합에 없다는 사실 하나만으로 코드가 내리는
+> 결정입니다. 이때 질문이 accepted 엔티티(Anthropic·Claude Code)를 언급하므로
+> grounding 앵커로 검증돼 보이는 것은 방향이 반대인
+> `Claude Code, developed_by, Anthropic` 이며(그 외 Claude Code 의 다른 accepted
+> 속성 몇 개도 앵커로 함께 뜹니다), 정작 여러분이 겨냥한
+> `Anthropic, develops, Claude Code` 트리플 자체는 **미검증** 으로 남습니다.
+> 4절 q5 가 리포트에서 0→1 로 바뀌었듯, 같은 **사람의 게이트** 가 ask 경로에서도
+> 이 질문의 답을 **미검증(wiki) → 검증(engine)** 으로 바꾼 것입니다.
 
 ## 6. 사실의 출처 추적 — `factlog provenance`
 
