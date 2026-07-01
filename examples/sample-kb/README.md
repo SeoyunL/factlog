@@ -121,8 +121,9 @@ factlog status    # → facts: 8 ... [confirmed=7, accepted=1]; 8 engine fact(s)
 
 ## 4. 질문을 쿼리로, 그리고 엔진 검증 — `/factlog query` · `/factlog check`
 
-승인된 사실이 준비됐으니 질문에 답할 차례입니다. 먼저 자연어 질문을 Datalog
-쿼리 초안으로 바꾸고, 그다음 엔진이 컴파일·로직 체크를 수행합니다.
+승인된 사실이 준비됐으니 질문에 답할 차례입니다. 자연어 질문은 이미
+`facts/query.dl` 초안으로 복사본에 동봉돼 있고, 엔진이 그 초안을 컴파일·로직
+체크합니다.
 
 *Claude Code 세션에서 실행:*
 
