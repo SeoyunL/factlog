@@ -118,11 +118,40 @@ class Check(NamedTuple):
     * hints    — follow-up guidance lines. Each hint is prefixed at render time
       with ``→`` and already carries an execution-location tag such as
       ``[터미널]`` (a shell) or ``[Claude Code]`` (inside the assistant).
+    * blocks_setup — whether a ``FAIL`` here should gate ``factlog setup``. The
+      standalone ``doctor`` gates on *every* FAIL, but ``setup`` only performs
+      pip install + KB init, which do not use git — so a git FAIL is reported by
+      doctor yet must not flip setup's exit code. Diagnostics setup genuinely
+      needs (Python floor, pyrewire) keep the default ``True``.
     """
 
     severity: str
     title: str
     hints: tuple[str, ...] = ()
+    blocks_setup: bool = True
+
+
+def _harden_stdout() -> None:
+    """Best-effort: make stdout/stderr tolerate non-ASCII on C/ASCII locales.
+
+    doctor prints Korean text and an em-dash (U+2014). On a stream whose encoding
+    is ``ascii`` (e.g. ``LC_ALL=C`` or ``PYTHONIOENCODING=ascii``) that would raise
+    ``UnicodeEncodeError`` and crash the very tool meant to diagnose broken
+    environments. Switching the error handler to ``backslashreplace`` degrades
+    gracefully — non-ASCII shows as escapes, but the exit code, the diagnostic
+    lines and the ASCII ``Python`` token still come through, and nothing crashes.
+
+    Guarded so it is a harmless no-op where ``reconfigure`` is missing (pre-3.7,
+    or a stream that is not a ``TextIOWrapper`` such as a captured buffer).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except (ValueError, OSError, AttributeError):
+            pass
 
 
 def _shadow_factlog_dir() -> str | None:
@@ -134,6 +163,18 @@ def _shadow_factlog_dir() -> str | None:
     imported ``factlog`` package. Such a stray folder shadows the installed
     package on ``sys.path[0]`` and makes ``python -m factlog`` import the wrong
     code.
+
+    Known limitations (documented, behaviour intentionally left as-is):
+
+    * The ``candidate.resolve() == pkg_dir`` guard means that when a stray
+      ``./factlog`` has *already* hijacked the import (so the imported package
+      *is* the stray folder), this returns None and the warning is suppressed —
+      exactly the case where it would be most useful, but distinguishing it
+      reliably from a legitimate in-repo run is not possible from cwd alone.
+    * Conversely, any unrelated directory that merely happens to be named
+      ``factlog`` (and sits next to no ``pyproject.toml``) yields a false-positive
+      WARN. This stays WARN-only precisely so such a false positive never affects
+      the exit code.
     """
     import factlog as _pkg
 
@@ -201,14 +242,20 @@ def _collect_doctor_checks() -> list[Check]:
         )
 
     # (1) git availability. macOS ships it via the Command Line Tools.
+    # FAIL for doctor's sake, but blocks_setup=False: `setup` (pip + KB init)
+    # does not touch git, so a missing git must not flip setup's exit code.
     if shutil.which("git"):
         checks.append(Check("OK", "git"))
     elif sys.platform == "darwin":
-        checks.append(Check("FAIL", "git이 없습니다", ("[터미널] xcode-select --install",)))
+        checks.append(
+            Check("FAIL", "git이 없습니다", ("[터미널] xcode-select --install",),
+                  blocks_setup=False)
+        )
     else:
         checks.append(
             Check("FAIL", "git이 없습니다",
-                  ("[터미널] 패키지 매니저로 git을 설치하세요 (예: apt install git)",))
+                  ("[터미널] 패키지 매니저로 git을 설치하세요 (예: apt install git)",),
+                  blocks_setup=False)
         )
 
     # (3) shadowing ./factlog folder (WARN-only, false-positive shy).
@@ -237,13 +284,23 @@ def _collect_doctor_checks() -> list[Check]:
     return checks
 
 
-def _render_doctor(checks: list[Check], emit_summary: bool = False) -> bool:
-    """Print *checks* in the rich doctor layout. Returns True iff no FAIL rows.
+def _render_doctor(checks: list[Check], emit_summary: bool = False, gate: str = "all") -> bool:
+    """Print *checks* in the rich doctor layout and return the pass/fail gate.
 
-    When *emit_summary* is True a concluding banner is printed. `cmd_setup`
-    calls the doctor twice, so it renders with emit_summary=False to avoid a
-    duplicate banner; only the standalone `cmd_doctor` emits the summary.
+    *emit_summary* prints a concluding banner (only the standalone `cmd_doctor`
+    does this; `cmd_setup` calls the doctor twice and renders lines without a
+    banner to avoid duplication).
+
+    *gate* selects which FAIL rows count against the returned bool:
+
+    * ``"all"``   — any FAIL fails (doctor's own exit code).
+    * ``"setup"`` — only FAIL rows with ``blocks_setup=True`` fail, so a missing
+      git (which setup does not use) never flips setup's exit code.
+
+    The summary banner always reports the *total* FAIL count regardless of gate.
     """
+    _harden_stdout()
+
     print("factlog doctor — 설치 점검")
     print()
 
@@ -262,16 +319,20 @@ def _render_doctor(checks: list[Check], emit_summary: bool = False) -> bool:
         else:
             print(f"결과: FAIL {fails}개. 위 → 안내를 처리한 뒤 doctor를 다시 실행하세요.")
 
+    if gate == "setup":
+        return not any(c.severity == "FAIL" and c.blocks_setup for c in checks)
     return fails == 0
 
 
-def _run_doctor_checks(emit_summary: bool = False) -> bool:
-    """Collect and render the doctor checks. Returns True iff all checks pass.
+def _run_doctor_checks(emit_summary: bool = False, gate: str = "all") -> bool:
+    """Collect and render the doctor checks. Returns the gate result (see
+    :func:`_render_doctor`).
 
-    Shared by `cmd_doctor` and `cmd_setup` so setup reports the exact same
-    diagnostics the standalone doctor would.
+    Shared by `cmd_doctor` (gate="all") and `cmd_setup` (gate="setup") so setup
+    reports the exact same diagnostics the standalone doctor would, while only
+    gating on the checks it actually depends on.
     """
-    return _render_doctor(_collect_doctor_checks(), emit_summary=emit_summary)
+    return _render_doctor(_collect_doctor_checks(), emit_summary=emit_summary, gate=gate)
 
 
 def cmd_doctor(_args: argparse.Namespace) -> int:
@@ -1469,7 +1530,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
     actions.append(f"set active KB to {target} (ingest/ask/sync default here from any directory)")
 
     print("\n=== factlog setup: final environment check ===")
-    final_ok = _run_doctor_checks()
+    # gate="setup": a missing git is reported but does not fail setup, whose
+    # real work (pip install + KB init) does not use git.
+    final_ok = _run_doctor_checks(gate="setup")
 
     # Only claim the dependency was installed/satisfied when the FINAL doctor
     # confirms it. If pip returned 0 but pyrewire is still unusable (a "lying
