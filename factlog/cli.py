@@ -1003,16 +1003,30 @@ def cmd_amend(args: argparse.Namespace) -> int:
             if not isinstance(data, list):
                 continue
             dirty = False
+            new_items: list[dict] = []
             for item in data:
-                if isinstance(item, dict) and (
+                if not isinstance(item, dict):
+                    continue
+                itriple = (
                     nfc(str(item.get("subject", "")).strip()),
                     nfc(str(item.get("relation", "")).strip()),
                     nfc(str(item.get("object", "")).strip()),
-                ) == old:
+                )
+                if itriple != old or str(item.get("status", "")).strip() == SUPERSEDED:
+                    continue
+                if triple_changed:
+                    corrected = dict(item)
+                    for k, v in sets.items():
+                        corrected[k] = v
+                    new_items.append(corrected)
+                    item["status"] = SUPERSEDED
+                else:
                     for k, v in sets.items():
                         item[k] = v
-                    dirty = True
-                    runs_changed += 1
+                dirty = True
+                runs_changed += 1
+            if new_items:
+                data.extend(new_items)
             if dirty:
                 _atomic_write_text(jp, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
