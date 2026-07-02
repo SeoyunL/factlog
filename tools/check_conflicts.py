@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import unicodedata
 from pathlib import Path
 
 _TOOLS_DIR = Path(__file__).parent
@@ -82,7 +83,16 @@ def detect_conflicts(
     notations do not false-positive. The reported values, however, preserve the
     original object strings (provenance): each distinct key contributes one
     deterministic representative (the lexicographically smallest raw object seen
-    for it). Deterministic; never raises."""
+    for it). Deterministic; never raises.
+
+    The typed spec is looked up under the relation's NFC form (#210): the ``typed``
+    dict is keyed by NFC-normalized names (``typed_relations`` normalizes at
+    ``common._parse_typed_relations``), whereas facts / single-valued names are
+    loaded verbatim. Without this, a relation written in NFD (macOS) passes the
+    single-valued membership check (both NFD) but misses the typed lookup, so
+    equivalent notations (억↔조) degrade to raw comparison and false-positive.
+    Membership and reported strings stay on the original (NFD) form; only the
+    scalar-typing lookup is normalized — same boundary fix as #57 / #64."""
     typed = typed or {}
     # (subject, relation) -> group key -> set of raw object strings under it.
     by_key: dict[tuple[str, str], dict[tuple, set[str]]] = {}
@@ -91,7 +101,7 @@ def detect_conflicts(
         if relation not in single_valued:
             continue
         obj = row["object"]
-        key = _group_key(obj, typed.get(relation))
+        key = _group_key(obj, typed.get(unicodedata.normalize("NFC", relation)))
         groups = by_key.setdefault((row["subject"], relation), {})
         groups.setdefault(key, set()).add(obj)
     return {

@@ -10,6 +10,8 @@ original object strings (provenance).
 """
 from __future__ import annotations
 
+import unicodedata
+
 import check_conflicts
 import common
 
@@ -162,6 +164,38 @@ class TestMultiValuedNotFlagged:
         ]
         conflicts = check_conflicts.detect_conflicts(facts, set(), _TYPED_AMOUNT)
         assert conflicts == {}
+
+
+class TestNfdRelationName:
+    """#210: a relation name written in NFD (macOS decomposed jamo) must still
+    reach its NFC-keyed typed spec, so equivalent notations collapse. ``typed``
+    dicts are NFC-keyed (typed_relations normalizes); facts / single-valued names
+    are verbatim (NFD here). detect_conflicts must NFC the lookup."""
+
+    # '매출' decomposed to NFD; distinct bytes from the NFC key in _TYPED_AMOUNT.
+    _NFD_REL = unicodedata.normalize("NFD", "매출")
+
+    def test_nfd_relation_equivalent_notation_not_flagged(self):
+        # Regression guard: fails before the fix (typed.get(NFD) -> None -> raw
+        # fallback -> two raw strings -> false CONFLICT).
+        assert self._NFD_REL != "매출"  # sanity: genuinely NFD
+        facts = [
+            _fact("갑사", self._NFD_REL, 'amount(5400,"억")'),
+            _fact("갑사", self._NFD_REL, 'amount(0.54,"조")'),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {self._NFD_REL}, _TYPED_AMOUNT)
+        assert conflicts == {}
+
+    def test_nfd_relation_real_value_difference_still_conflicts(self):
+        # A genuine difference must still fire, NFD or not; and the reported
+        # relation key preserves the original (NFD) form (provenance).
+        facts = [
+            _fact("갑사", self._NFD_REL, 'amount(5000,"억")'),
+            _fact("갑사", self._NFD_REL, 'amount(5400,"억")'),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {self._NFD_REL}, _TYPED_AMOUNT)
+        assert list(conflicts) == [("갑사", self._NFD_REL)]
+        assert conflicts[("갑사", self._NFD_REL)] == ['amount(5000,"억")', 'amount(5400,"억")']
 
 
 class TestSupersededIgnored:

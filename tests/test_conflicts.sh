@@ -98,6 +98,21 @@ if printf '%s' "$cout" | grep -qF 'amount(5000,"억")' && printf '%s' "$cout" | 
 csv '갑사,매출,"amount(5400,""억"")",sources/x.md,confirmed,0.9,' '갑사,매출,not-a-number,sources/x.md,confirmed,0.9,'
 if run_conflicts; then bad "typed amount: parseable-vs-unparseable difference NOT detected"; else ok "typed amount: unparseable object degrades to raw key (detected)"; fi
 
+# --- #210: the relation name written in NFD (macOS decomposed jamo) must still
+# reach its NFC-keyed typed spec, so equivalent notations collapse (억 ↔ 조) and
+# only real value differences fire — the same asymmetry #57/#64 fixed for names.
+NFD_REL="$("$PYTHON" -c 'import unicodedata; print(unicodedata.normalize("NFD","매출"))')"
+printf '# single-valued\n\n- 주_속성\n- %s\n' "$NFD_REL" > "$KB/policy/single-valued.md"
+printf -- '- `%s` : amount as revenue\n' "$NFD_REL" > "$KB/policy/typed-relations.md"
+
+# NFD relation, equivalent notations -> NOT a conflict (pre-fix: false positive)
+csv "갑사,$NFD_REL,\"amount(5400,\"\"억\"\")\",sources/x.md,confirmed,0.9," "갑사,$NFD_REL,\"amount(0.54,\"\"조\"\")\",sources/x.md,confirmed,0.9,"
+if run_conflicts; then ok "NFD relation: equivalent notations (5400억 == 0.54조) not flagged"; else bad "NFD relation: equivalent notations wrongly flagged (typed lookup missed NFD name)"; fi
+
+# NFD relation, real value difference -> still a CONFLICT
+csv "갑사,$NFD_REL,\"amount(5000,\"\"억\"\")\",sources/x.md,confirmed,0.9," "갑사,$NFD_REL,\"amount(5400,\"\"억\"\")\",sources/x.md,confirmed,0.9,"
+if run_conflicts; then bad "NFD relation: real value difference (5000억 vs 5400억) NOT detected"; else ok "NFD relation: real value difference still detected"; fi
+
 # restore the baseline single-valued policy for any later additions
 printf '# single-valued\n\n- 주_속성\n' > "$KB/policy/single-valued.md"
 rm -f "$KB/policy/typed-relations.md"
