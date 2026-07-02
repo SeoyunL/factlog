@@ -427,6 +427,44 @@ ncheck_field "#227: no alias file — existing relation still routes engine" val
 ncheck_field "#227: no alias file — unknown relation still routes wiki" validate 'relation("Acme API", "published_year", V)?' route wiki
 ncheck_field "#227: no alias file — unknown relation code=relation_not_accepted" validate 'relation("Acme API", "published_year", V)?' code relation_not_accepted
 
+# --- #227 SLICE 1 commit 3: count() canonical symmetry ---
+# AKB is still set from above (same alias KB: 게재연도/publication_year -> published_year,
+# two facts with distinct objects 2005 and 2007).
+
+# 5. count(S, canonical)? -> validates as engine (symmetry with relation branch)
+check_field_router "#227 count: canonical name routes engine" validate 'count("논문A", "published_year")?' route engine
+check_field_router "#227 count: canonical name code=ok" validate 'count("논문A", "published_year")?' code ok
+
+# 6. count evaluates to the correct distinct-object count across variants
+# 논문A has 1 object (2005 via 게재연도); canonical query must find it.
+acount_val="$(arouter evaluate 'count("논문A", "published_year")?' | "$PYTHON" -c "import json,sys; print(json.load(sys.stdin)['rows'][0][0])")"
+if [ "$acount_val" = "1" ]; then ok "#227 count: canonical count(논문A, published_year) = 1"; else bad "#227 count: expected 1, got $acount_val"; fi
+
+# Full-KB count: 2 subjects, each 1 distinct object -> total 2 distinct objects.
+acount_all="$(arouter evaluate 'count(S, "published_year")?' | "$PYTHON" -c "import json,sys; print(json.load(sys.stdin)['rows'][0][0])")"
+if [ "$acount_all" = "2" ]; then ok "#227 count: canonical count(S, published_year) = 2 distinct objects"; else bad "#227 count: expected 2 distinct objects, got $acount_all"; fi
+
+# 7. Collision: add a row stored under the canonical name itself (published_year).
+# relation(S, "published_year", O)? must return 3 rows (no double-count).
+CKB="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$CKB" >/dev/null
+printf '// test\nrelation("논문A", "published_year", "2003").\nrelation("논문B", "게재연도", "2005").\nrelation("논문C", "publication_year", "2007").\n' \
+  > "$CKB/facts/accepted.dl"
+printf 'subject,relation,object,source,status,confidence,note\n%s\n%s\n%s\n' \
+  '논문A,published_year,2003,sources/a.md,confirmed,0.90,' \
+  '논문B,게재연도,2005,sources/b.md,confirmed,0.90,' \
+  '논문C,publication_year,2007,sources/c.md,confirmed,0.90,' \
+  > "$CKB/facts/candidates.csv"
+printf '# Relation aliases\n- `게재연도` -> `published_year`\n- `publication_year` -> `published_year`\n' \
+  > "$CKB/policy/relation-aliases.md"
+crouter() { "$PYTHON" "$ROUTER" "$@" --target "$CKB"; }
+collision_count="$(crouter evaluate 'relation(S, "published_year", O)?' | "$PYTHON" -c "import json,sys; print(json.load(sys.stdin)['count'])")"
+if [ "$collision_count" = "3" ]; then ok "#227 collision: relation canonical+variants returns exactly 3 rows (no double-count)"; else bad "#227 collision: expected 3 rows, got $collision_count"; fi
+
+# 8. count on collision KB: 3 distinct objects -> count = 3
+collision_cnt_val="$(crouter evaluate 'count(S, "published_year")?' | "$PYTHON" -c "import json,sys; print(json.load(sys.stdin)['rows'][0][0])")"
+if [ "$collision_cnt_val" = "3" ]; then ok "#227 collision count: count(S, published_year) = 3 distinct objects (no double-count)"; else bad "#227 collision count: expected 3, got $collision_cnt_val"; fi
+
 echo ""
 echo "========================================"
 echo "test_ask_router: $pass passed, $fail failed"

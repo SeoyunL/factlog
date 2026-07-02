@@ -1545,7 +1545,12 @@ def classify_query(
         if not _is_variable(subject) and _arg_value(subject) not in entities:
             return False, QUERY_ENTITY_NOT_ACCEPTED, f"count subject is not an accepted entity: {_arg_value(subject)}"
         if not _is_variable(relation) and _arg_value(relation) not in relations:
-            return False, QUERY_RELATION_NOT_ACCEPTED, f"count relation is not accepted: {_arg_value(relation)}"
+            # A declared canonical name (one whose surface_variants is non-empty)
+            # counts as accepted even though the canonical itself may not appear
+            # literally in accepted.dl — the stored facts use surface variants.
+            _rel_name = unicodedata.normalize("NFC", _arg_value(relation))
+            if not surface_variants(_rel_name, relation_aliases()):
+                return False, QUERY_RELATION_NOT_ACCEPTED, f"count relation is not accepted: {_arg_value(relation)}"
         return True, QUERY_OK, "passed"
     if predicate in policy_query_predicates:
         if len(args) != 2:

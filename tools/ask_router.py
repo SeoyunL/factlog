@@ -44,6 +44,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 # Ensure tools/ is importable when run directly, and resolve the KB root BEFORE
@@ -206,7 +207,6 @@ def evaluate_relation(draft: str, facts: list[dict[str, str]]) -> list[list[str]
     # Pre-compute surface variants when the relation arg is a quoted canonical.
     rel_variants: set[str] = set()
     if is_quoted_string(r_arg):
-        import unicodedata
         _rel_name = unicodedata.normalize("NFC", arg_value(r_arg))
         rel_variants = surface_variants(_rel_name, relation_aliases())
     rows: list[list[str]] = []
@@ -266,12 +266,20 @@ def evaluate(draft: str, facts: list[dict[str, str]]) -> dict[str, object]:
     if predicate == "count":
         # count(subject, relation)? -> number of distinct objects (a verified
         # aggregate; 0 is a real answer). Rendered as a single value row.
+        # When the relation arg is a quoted canonical name (surface_variants
+        # non-empty), count DISTINCT objects across the canonical AND all its
+        # surface variants — symmetry with the relation branch (#227).
         subject, relation = arg_value(args[0]), arg_value(args[1])
+        rel_variants: set[str] = set()
+        if is_quoted_string(args[1]):
+            _rel_name = unicodedata.normalize("NFC", relation)
+            rel_variants = surface_variants(_rel_name, relation_aliases())
         objects = {
             row["object"]
             for row in facts
             if (is_variable(args[0]) or row["subject"] == subject)
-            and (is_variable(args[1]) or row["relation"] == relation)
+            and (is_variable(args[1]) or row["relation"] == relation
+                 or row["relation"] in rel_variants)
         }
         return {"rows": [[str(len(objects))]], "count": len(objects)}
     if predicate == "path":
