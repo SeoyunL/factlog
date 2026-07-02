@@ -6,12 +6,15 @@ from __future__ import annotations
 
 from factlog.common import (
     FACTS_DIR,
+    canonical_atoms,
     corroboration_counts,
     dedup_engine_atoms,
+    dl_string,
     dl_atom,
     engine_facts,
     ensure_dirs,
     load_facts,
+    relation_aliases,
 )
 
 
@@ -31,6 +34,17 @@ def main() -> None:
     ]
     for row in accepted:
         lines.append(dl_atom(row))
+
+    # Canonical block: emit canonical/3 EDB atoms for alias-participating facts.
+    # Gate: no aliases → emit nothing (accepted.dl byte-identical to no-alias baseline).
+    aliases = relation_aliases()
+    if aliases:
+        c_atoms = canonical_atoms(accepted, aliases)
+        if c_atoms:
+            lines.append("")
+            lines.append("// canonical/3 EDB atoms — engine-only; never parsed by Python readers")
+            for s, canon, o in c_atoms:
+                lines.append(f"canonical({dl_string(s)}, {dl_string(canon)}, {dl_string(o)}).")
 
     out = FACTS_DIR / "accepted.dl"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")

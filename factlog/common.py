@@ -1443,6 +1443,16 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
         session.intern(row["relation"])
         session.intern(row["object"])
 
+    # Intern canonical-atom symbols so decode_wirelog_value round-trips for any
+    # canonical/3 tuple the engine emits or a rule references.  canonical/3 is
+    # pure EDB — never a rule head — so we only intern, never insert.
+    _c_aliases = relation_aliases()
+    if _c_aliases:
+        for s, canon, o in canonical_atoms(accepted, _c_aliases):
+            session.intern(s)
+            session.intern(canon)
+            session.intern(o)
+
     _project_typed_relations(session, specs, accepted)
 
     inferred: dict[str, set[tuple[str, ...]]] = defaultdict(set)
