@@ -69,6 +69,7 @@ os.environ["FACTLOG_ROOT"] = factlog_config.resolve_root_from_argv("--wiki")
 # ---------------------------------------------------------------------------
 
 import csv  # noqa: E402
+import hashlib  # noqa: E402
 import json  # noqa: E402
 import re  # noqa: E402
 import subprocess  # noqa: E402
@@ -359,7 +360,17 @@ def write_facts(root: Path, rows: list[dict[str, str]]) -> None:
 # ---------------------------------------------------------------------------
 
 def page_filename(title: str) -> str:
-    return f"{slugify(title)}.md"
+    slug = slugify(title)
+    # Guard against the filesystem NAME_MAX limit (255 bytes on most systems):
+    # a very long entity name (e.g. a stray free-text value) would otherwise
+    # raise OSError when the page is written. Truncate on a UTF-8 byte boundary
+    # and append a short stable hash so distinct long names never collide.
+    _MAX_SLUG_BYTES = 200
+    if len(slug.encode("utf-8")) > _MAX_SLUG_BYTES:
+        digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:10]
+        truncated = slug.encode("utf-8")[:_MAX_SLUG_BYTES].decode("utf-8", "ignore").strip("-")
+        slug = f"{truncated}-{digest}"
+    return f"{slug}.md"
 
 
 def load_page_template(root: Path) -> str:
