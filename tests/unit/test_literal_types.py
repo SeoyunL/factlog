@@ -31,6 +31,7 @@ class TestParseDate:
         "2023-02-29",       # 2023 is not a leap year
         "date(2024,2,30)",  # compound path, calendar-impossible
         "date(2023,2,29)",  # compound path, non-leap Feb 29
+        "0000-01-01",       # year 0 is below datetime MINYEAR (1) — degrade, not a scalar
     ])
     def test_rejects_calendar_impossible(self, raw):
         # docstring contract: "Returns None if out of range" — a day <= 31 that is
