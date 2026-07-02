@@ -202,8 +202,11 @@ def parse_amount(raw: str, units: dict[str, int]) -> int | None:
     multiplier = units.get(unit)
     if multiplier is None:
         # Prose fallback: a fused currency suffix (``억원``). Strip one trailing
-        # marker and retry against *units*. Only recover when the stem is known
-        # (no-guess contract preserved for unknown units like ``백만``).
+        # marker and retry against *units*. Recovery succeeds ONLY when the
+        # stripped stem is itself a known unit, so an unknown stem (``백만``,
+        # foreign currency) stays ``None``. A redundant marker (``원원`` -> ``원``)
+        # or a fused compound unit also resolves — harmless, since the stem must
+        # still be a real table unit (never a guess).
         if unit.endswith(_CURRENCY_MARKER) and len(unit) > len(_CURRENCY_MARKER):
             multiplier = units.get(unit[: -len(_CURRENCY_MARKER)])
         if multiplier is None:

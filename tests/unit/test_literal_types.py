@@ -179,10 +179,14 @@ class TestParseAmount:
         ("1.2조원", 1200000000000),
         ("-500억원", -50000000000),
         ("5,400억원", 540000000000),
+        ("100 억원", 10000000000),      # single space + fused suffix
+        ("100원원", 100),               # redundant marker: stem 원 is still ×1
     ])
     def test_accepts_fused_currency_suffix(self, raw, expected):
         # (#205) a fused currency suffix (억원/조원) recovers by stripping one
-        # trailing 원 and re-looking-up the stem in the unit table.
+        # trailing 원 and re-looking-up the stem in the unit table. Recovery is
+        # gated on the stem being a real unit, so a redundant 원원 or a spaced
+        # 100 억원 resolves, but an unknown stem never does (see rejects below).
         assert lt.parse_amount(raw, lt.DEFAULT_AMOUNT_UNITS) == expected
 
     @pytest.mark.parametrize("raw,expected", [
