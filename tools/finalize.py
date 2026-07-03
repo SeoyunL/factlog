@@ -240,11 +240,24 @@ def main(argv: list[str] | None = None) -> int:
         # them before trusting the KB"). This makes the invariant unconditional:
         # after a conflict-failing finalize, accepted.dl never contains the
         # contradictory facts.
-        (root / "facts" / "accepted.dl").unlink(missing_ok=True)
+        accepted_dl = root / "facts" / "accepted.dl"
+        removed = accepted_dl.is_file()
+        try:
+            accepted_dl.unlink(missing_ok=True)
+        except OSError as exc:  # never crash finalize on a cleanup failure
+            print(f"finalize: could not remove facts/accepted.dl ({exc}).", file=sys.stderr)
+            removed = False
         print(
             "\nfinalize: CONTRADICTIONS were found (see CONFLICT lines above); "
-            "facts were NOT compiled to facts/accepted.dl. Resolve them (mark "
-            "outdated rows status='superseded') and re-run before trusting the KB.",
+            "facts were NOT compiled to facts/accepted.dl"
+            + (
+                " and the existing facts/accepted.dl was removed, so /factlog ask "
+                "returns nothing until the conflict is resolved"
+                if removed
+                else ""
+            )
+            + ". Resolve them (mark outdated rows status='superseded') and re-run "
+            "before trusting the KB.",
             file=sys.stderr,
         )
         return 1
