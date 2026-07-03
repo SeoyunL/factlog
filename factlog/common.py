@@ -285,6 +285,13 @@ def conversion_origin(path: Path) -> str | None:
     reliable `source:` value (a hand-placed conversion). Used to *verify* a
     legacy stem-key pairing so a pre-#213 conversion is tied to the exact
     original it was made from, never a same-stem sibling of a different extension.
+
+    The recorded `source:` may be a bare basename (legacy, pre-#214) OR a
+    sources/-relative path (#214: `sub_a/data.hwpx` disambiguates same-name
+    originals in different subdirs). Either way this returns just the basename,
+    so every basename-keyed consumer (paired_conversion, eject) is unaffected by
+    the header format — the subdir that #214 encodes lives in the conversion's
+    own mirrored path, not in this pairing signal.
     """
     try:
         head = path.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
@@ -294,7 +301,35 @@ def conversion_origin(path: Path) -> str | None:
     if not m:
         return None
     origin = unicodedata.normalize("NFC", m.group(1).strip())
-    return origin or None
+    if not origin:
+        return None
+    # Normalise a sources/-relative header (#214) down to the basename so the
+    # contract ("the original basename") holds for both header formats.
+    return PurePosixPath(origin).name or None
+
+
+def conversion_body_is_empty(path: Path) -> bool:
+    """True iff an ingest conversion's body (excluding its provenance header) is blank.
+
+    A scanned/image-only PDF (or any input with no extractable text) converts to
+    a file that carries only the ingest provenance header and no content — a
+    silent 0-facts source (#229). Return True for such a conversion so callers can
+    flag it as `converted-but-empty (likely scanned/needs OCR)` instead of
+    conflating it with a not-yet-synced source.
+
+    Returns False for a file with no factlog provenance header (a plain text
+    source or a hand-placed conversion — not something ingest produced) and for an
+    unreadable file (err toward "has content" so a read glitch never hides text).
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    parts = text.split("\n", 1)
+    if "ingested-by-factlog" not in parts[0]:
+        return False  # not an ingest conversion — do not judge its emptiness here
+    body = parts[1] if len(parts) > 1 else ""
+    return body.strip() == ""
 
 
 def paired_conversion(

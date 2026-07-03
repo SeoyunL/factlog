@@ -221,6 +221,166 @@ printf '%s' "$srcout" | grep -qF "runs/sources/report.md" \
   || ok "#213 sources never references a bare report.md"
 
 # ---------------------------------------------------------------------------
+# 7. #214: the provenance `source:` records the path *relative to sources/* so
+#    same-name originals in different subdirs get distinct provenance, and
+#    eject --orphans still pairs each conversion with its own original (no false
+#    delete, no mispair) — for both the new header and a legacy basename header.
+# ---------------------------------------------------------------------------
+PROVKB="$(mktemp -d)/wiki"
+"${FACTLOG[@]}" init --target "$PROVKB" >/dev/null
+mkdir -p "$PROVKB/sources/sub_a" "$PROVKB/sources/sub_b"
+make_hwpx "$PROVKB/sources/sub_a/data.hwpx" "alpha body"
+make_hwpx "$PROVKB/sources/sub_b/data.hwpx" "beta body"
+make_hwpx "$PROVKB/sources/top.hwpx" "root body"
+"${FACTLOG[@]}" ingest --scan --target "$PROVKB" >/dev/null 2>&1
+A_HDR="$(head -1 "$PROVKB/runs/sources/sub_a/data.hwpx.md" 2>/dev/null || true)"
+B_HDR="$(head -1 "$PROVKB/runs/sources/sub_b/data.hwpx.md" 2>/dev/null || true)"
+printf '%s' "$A_HDR" | grep -qF "source: sub_a/data.hwpx" \
+  && ok "#214 sub_a conversion records sources-relative provenance (sub_a/data.hwpx)" \
+  || bad "#214 sub_a provenance not sources-relative: $A_HDR"
+printf '%s' "$B_HDR" | grep -qF "source: sub_b/data.hwpx" \
+  && ok "#214 sub_b conversion records sources-relative provenance (sub_b/data.hwpx)" \
+  || bad "#214 sub_b provenance not sources-relative: $B_HDR"
+[ "$A_HDR" != "$B_HDR" ] \
+  && ok "#214 same-name originals in different subdirs get distinct provenance" \
+  || bad "#214 same-name subdir originals still collide on identical provenance"
+# root-direct original is unchanged (bare basename, no regression)
+grep -qF "source: top.hwpx" "$PROVKB/runs/sources/top.hwpx.md" \
+  && ok "#214 root-direct original keeps a bare-basename provenance (no regression)" \
+  || bad "#214 root-direct provenance changed (regression)"
+# eject --orphans after removing ONLY sub_a's original: sub_a's conversion is an
+# orphan, sub_b's (its original still present) is kept — no false delete/mispair.
+rm "$PROVKB/sources/sub_a/data.hwpx"
+ejout="$("${FACTLOG[@]}" eject --orphans --target "$PROVKB" 2>&1)"; ejrc=$?
+printf '%s' "$ejout" | grep -qF "runs/sources/sub_a/data.hwpx.md" \
+  && ok "#214 eject --orphans flags sub_a's conversion (its original is gone)" \
+  || bad "#214 eject --orphans missed the real orphan (sub_a)"
+printf '%s' "$ejout" | grep -qF "runs/sources/sub_b/data.hwpx.md" \
+  && bad "#214 eject --orphans FALSE-deleted sub_b (original still present)" \
+  || ok "#214 eject --orphans keeps sub_b's conversion (no false delete/mispair)"
+[ -f "$PROVKB/runs/sources/sub_b/data.hwpx.md" ] \
+  && ok "#214 sub_b conversion survives on disk" \
+  || bad "#214 sub_b conversion wrongly deleted from disk"
+
+# legacy basename header (pre-#214): same-name originals whose headers BOTH say
+# `source: data.hwpx` must still pair by mirrored subdir — no false orphan delete.
+LEGKB="$(mktemp -d)/wiki"
+"${FACTLOG[@]}" init --target "$LEGKB" >/dev/null
+mkdir -p "$LEGKB/sources/sub_a" "$LEGKB/sources/sub_b" \
+         "$LEGKB/runs/sources/sub_a" "$LEGKB/runs/sources/sub_b"
+touch "$LEGKB/sources/sub_a/data.hwpx" "$LEGKB/sources/sub_b/data.hwpx"
+printf '<!-- ingested-by-factlog | source: data.hwpx | converter: x | date: y -->\n\nalpha\n' \
+  > "$LEGKB/runs/sources/sub_a/data.hwpx.md"
+printf '<!-- ingested-by-factlog | source: data.hwpx | converter: x | date: y -->\n\nbeta\n' \
+  > "$LEGKB/runs/sources/sub_b/data.hwpx.md"
+rm "$LEGKB/sources/sub_a/data.hwpx"
+legout="$("${FACTLOG[@]}" eject --orphans --target "$LEGKB" 2>&1)"
+if printf '%s' "$legout" | grep -qF "runs/sources/sub_a/data.hwpx.md" \
+   && ! printf '%s' "$legout" | grep -qF "runs/sources/sub_b/data.hwpx.md"; then
+  ok "#214 legacy basename headers still pair by subdir (no false orphan on sub_b)"
+else
+  bad "#214 legacy basename header pairing regressed: $legout"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. #215: --scan surfaces a recognized binary-extension file whose CONTENT is
+#    plain text (or 0 bytes) instead of silently dropping it. A genuine plain
+#    text source (no converter extension) stays unflagged.
+# ---------------------------------------------------------------------------
+SCANKB="$(mktemp -d)/wiki"
+"${FACTLOG[@]}" init --target "$SCANKB" >/dev/null
+printf 'plain text pretending to be hwpx\n' > "$SCANKB/sources/05_fake_ext.hwpx"
+: > "$SCANKB/sources/06_zero_bytes.hwpx"
+printf 'legit plain notes\n' > "$SCANKB/sources/notes.txt"
+scanout="$("${FACTLOG[@]}" ingest --scan --target "$SCANKB" 2>&1)"
+printf '%s' "$scanout" | grep -qF "05_fake_ext.hwpx" \
+  && ok "#215 --scan surfaces the plaintext-content binary-ext file (05)" \
+  || bad "#215 --scan silently dropped 05_fake_ext.hwpx"
+printf '%s' "$scanout" | grep -qiE "non-binary content" \
+  && ok "#215 --scan labels it 'binary extension, non-binary content'" \
+  || bad "#215 --scan missing non-binary-content warning"
+printf '%s' "$scanout" | grep -qF "06_zero_bytes.hwpx" \
+  && ok "#215 --scan surfaces the 0-byte binary-ext file (06)" \
+  || bad "#215 --scan silently dropped 06_zero_bytes.hwpx"
+printf '%s' "$scanout" | grep -qiE "empty file|0 bytes" \
+  && ok "#215 --scan labels the 0-byte file distinctly" \
+  || bad "#215 --scan missing 0-byte label"
+printf '%s' "$scanout" | grep -qF "notes.txt" \
+  && bad "#215 --scan wrongly flagged a legit plain .txt source" \
+  || ok "#215 --scan leaves a legit plain-text source unflagged (no false positive)"
+
+# ---------------------------------------------------------------------------
+# 9. #229: a conversion whose body is only the provenance header (a scanned/
+#    image PDF -> pdftotext exits 0 with empty text) is counted as
+#    converted-but-empty and distinguished by `sources`/`status`, while a normal
+#    text PDF is unaffected. Guarded on pdftotext (the only converter that can
+#    exit 0 with empty output; the built-in converters treat empty as failure).
+# ---------------------------------------------------------------------------
+if command -v pdftotext >/dev/null 2>&1; then
+  EMPTYKB="$(mktemp -d)/wiki"
+  "${FACTLOG[@]}" init --target "$EMPTYKB" >/dev/null
+  # scanned/image PDF: valid PDF, one page, NO text operators -> empty text out.
+  # A binary marker comment keeps _looks_binary True so --scan converts it.
+  "$PYTHON" - "$EMPTYKB/sources/03_scanned.pdf" <<'PY'
+import sys
+pdf = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + (
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n"
+    b"trailer<</Size 4/Root 1 0 R>>\n%%EOF"
+)
+open(sys.argv[1], "wb").write(pdf)
+PY
+  # a normal text PDF (has a text-showing content stream) -> non-empty output.
+  "$PYTHON" - "$EMPTYKB/sources/02_text.pdf" <<'PY'
+import sys
+content = b"BT /F1 24 Tf 72 700 Td (Hello factlog world) Tj ET"
+objs = [
+    b"<</Type/Catalog/Pages 2 0 R>>",
+    b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+    b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>",
+    b"<</Length %d>>\nstream\n%s\nendstream" % (len(content), content),
+    b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+]
+out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"; offs = []
+for i, o in enumerate(objs, 1):
+    offs.append(len(out)); out += b"%d 0 obj" % i + o + b"endobj\n"
+xref = len(out); out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+for off in offs: out += b"%010d 00000 n \n" % off
+out += b"trailer<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF" % (len(objs) + 1, xref)
+open(sys.argv[1], "wb").write(out)
+PY
+  emptyout="$("${FACTLOG[@]}" ingest --scan --target "$EMPTYKB" 2>&1)"
+  printf '%s' "$emptyout" | grep -qiE "converted-but-empty" \
+    && ok "#229 empty conversion (scanned PDF) counted as converted-but-empty" \
+    || bad "#229 empty conversion not flagged: $emptyout"
+  printf '%s' "$emptyout" | grep -qF "03_scanned.pdf" \
+    && ok "#229 the empty conversion names the scanned source" \
+    || bad "#229 empty-conversion warning missing the source name"
+  # normal text PDF must NOT be mis-flagged as empty (no regression)
+  if printf '%s' "$emptyout" | grep "02_text.pdf" | grep -qiE "converted-but-empty"; then
+    bad "#229 a normal text PDF was wrongly flagged converted-but-empty (regression)"
+  else
+    ok "#229 a normal text PDF is a plain success (no regression)"
+  fi
+  # `sources` distinguishes the empty conversion from a not-yet-synced source
+  esrc="$("${FACTLOG[@]}" sources --target "$EMPTYKB" 2>&1)"
+  printf '%s' "$esrc" | grep "03_scanned.pdf" | grep -qiE "converted-but-empty" \
+    && ok "#229 sources marks the scanned PDF converted-but-empty" \
+    || bad "#229 sources did not distinguish the empty conversion"
+  printf '%s' "$esrc" | grep "02_text.pdf" | grep -qiE "converted-but-empty" \
+    && bad "#229 sources wrongly marked the text PDF converted-but-empty" \
+    || ok "#229 sources leaves the text PDF unmarked (no regression)"
+  # `status` counts converted-but-empty separately
+  estat="$("${FACTLOG[@]}" status --target "$EMPTYKB" 2>&1)"
+  printf '%s' "$estat" | grep -i "sources:" | grep -qiE "converted-but-empty" \
+    && ok "#229 status counts converted-but-empty on the sources line" \
+    || bad "#229 status did not surface converted-but-empty"
+else
+  echo "SKIP: no pdftotext — skipping #229 empty-conversion assertions"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

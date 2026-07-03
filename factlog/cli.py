@@ -597,7 +597,13 @@ def cmd_sources(args: argparse.Namespace) -> int:
     import unicodedata
     from pathlib import Path
 
-    from factlog.common import is_sync_ignored, paired_conversion, source_rel_key, sync_ignore_patterns
+    from factlog.common import (
+        conversion_body_is_empty,
+        is_sync_ignored,
+        paired_conversion,
+        source_rel_key,
+        sync_ignore_patterns,
+    )
 
     def nfc(s: str) -> str:
         return unicodedata.normalize("NFC", s)
@@ -663,6 +669,11 @@ def cmd_sources(args: argparse.Namespace) -> int:
         flags = ""
         if ignored:
             flags += "   [ignored — excluded from sync]"
+        elif not facts and conv_ref and conversion_body_is_empty(target / conv_ref):
+            # #229: a conversion that ran but has only a provenance header (a
+            # scanned/image PDF) is a silent 0-facts source. Distinguish it from
+            # a normal source that simply has not been synced yet.
+            flags += "   [converted-but-empty — likely scanned PDF; needs OCR]"
         elif not facts:
             flags += "   [no facts — run /factlog sync or factlog ingest]"
         print(f"  [{facts:>3}] {orig}  ({ext}){arrow}{flags}")
@@ -1511,9 +1522,18 @@ def cmd_status(args: argparse.Namespace) -> int:
     )
     covered = direct + via
     total = len(refs)
+    # #229: count conversions whose body is blank (scanned/image PDF, etc.). They
+    # are "with none" but for a distinct reason — the converter ran and produced
+    # no text — so call them out separately from unconverted / not-yet-synced.
+    empty_conv = sum(
+        1
+        for p, ref in refs.items()
+        if ref.startswith("runs/sources/") and common.conversion_body_is_empty(p)
+    )
     via_note = f" ({via} via conversion)" if via else ""
     excl_note = f", {n_ignored} sync-ignored" if n_ignored else ""
-    print(f"  sources:    {total} file(s), {covered} with facts{via_note}, {total - covered} with none{excl_note}")
+    empty_note = f", {empty_conv} converted-but-empty (likely scanned/needs OCR)" if empty_conv else ""
+    print(f"  sources:    {total} file(s), {covered} with facts{via_note}, {total - covered} with none{excl_note}{empty_note}")
 
     # Conflicts (single-valued relations with >1 distinct object)
     if sv:
@@ -1786,19 +1806,58 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     # found under sources/. --scan honors the sync-ignore list (an explicitly
     # named path is always converted — the user asked for it directly).
     work: list[Path] = [Path(p).expanduser() for p in args.paths]
+    # #215: a --scan discovery that a file was NOT a binary can no longer drop it
+    # silently. A file whose extension has a recognized converter but whose
+    # content is not binary (a plaintext .hwpx, a 0-byte .pdf) would otherwise
+    # vanish from every count while an explicit `ingest <file>` reports it as
+    # failed — an inconsistency the operator can't see. Surface both classes.
+    scan_nonbinary_refs: list[str] = []  # recognized ext, but non-binary content
+    scan_empty_refs: list[str] = []  # 0-byte file with a recognized ext
     if args.scan:
         patterns = sync_ignore_patterns(target)
         ignored = 0
         for path in sorted(p for p in (target / "sources").rglob("*") if p.is_file()):
-            if path.name.startswith(".") or not _looks_binary(path):
+            if path.name.startswith("."):
                 continue
             ref = unicodedata.normalize("NFC", path.relative_to(target).as_posix())
+            if not _looks_binary(path):
+                # Only a recognized *conversion target* (a binary-format
+                # extension) is worth flagging: a plain .txt/.md source is read
+                # directly by sync as text and is correctly not a conversion job.
+                if path.suffix.lower() not in ingest.INGEST_CONVERTERS:
+                    continue
+                if is_sync_ignored(ref, patterns):
+                    ignored += 1
+                    continue
+                try:
+                    empty = path.stat().st_size == 0
+                except OSError:
+                    empty = False
+                (scan_empty_refs if empty else scan_nonbinary_refs).append(ref)
+                continue
             if is_sync_ignored(ref, patterns):
                 ignored += 1
                 continue
             work.append(path)
         if ignored:
             print(f"factlog ingest --scan: skipped {ignored} sync-ignored source(s)")
+        if scan_nonbinary_refs:
+            print(
+                f"factlog ingest --scan: {len(scan_nonbinary_refs)} ignored "
+                "(binary extension, non-binary content — not converted; "
+                "sync reads it as text if it is a valid source):",
+                file=sys.stderr,
+            )
+            for ref in scan_nonbinary_refs:
+                print(f"    - {ref}", file=sys.stderr)
+        if scan_empty_refs:
+            print(
+                f"factlog ingest --scan: {len(scan_empty_refs)} ignored "
+                "(empty file, 0 bytes — nothing to convert):",
+                file=sys.stderr,
+            )
+            for ref in scan_empty_refs:
+                print(f"    - {ref}", file=sys.stderr)
     if not work:
         if args.scan:
             print("factlog ingest --scan: no binary source files to convert")
@@ -1807,8 +1866,11 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         return 2
 
     converted = 0
+    empty_converted = 0  # #229: converter ran but the output body is blank
     skipped = 0
     failures = 0
+    scan_nonbinary = len(scan_nonbinary_refs)  # #215: surfaced in the summary
+    scan_empty = len(scan_empty_refs)
     for src in work:
         if not src.is_file():
             print(f"factlog ingest: not a file: {src}", file=sys.stderr)
@@ -1851,9 +1913,20 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         # subdir. An explicitly-named path outside sources/ has no subtree to
         # mirror, so it falls back to a flat output name.
         try:
-            rel_parent = src.resolve().relative_to(sources_dir).parent
+            src_rel = src.resolve().relative_to(sources_dir)
+            rel_parent = src_rel.parent
+            # #214: record the source's path *relative to sources/* in the
+            # provenance header, so same-name originals in different subdirs
+            # (sources/sub_a/data.hwpx, sources/sub_b/data.hwpx) get distinct
+            # `source:` values (sub_a/data.hwpx vs sub_b/data.hwpx) instead of a
+            # colliding basename. A root-direct original stays a bare basename
+            # (relative_to(sources) == the filename), so its header is unchanged.
+            source_label = src_rel.as_posix()
         except (ValueError, OSError):
             rel_parent = Path()
+            # An explicit path outside sources/ has no sources-relative form;
+            # fall back to the basename (matches the flat output name below).
+            source_label = src.name
         # Keep the original's *full* filename (extension included) and append the
         # out-suffix, so same-stem/different-extension originals (report.hwpx,
         # report.pptx) convert to distinct outputs (report.hwpx.md,
@@ -1863,7 +1936,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         dst = derived / rel_parent / (src.name + out_suffix)
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists() and not args.force and dst.stat().st_mtime >= src.stat().st_mtime:
-            print(f"factlog ingest: {dst.relative_to(target).as_posix()} up to date; skipping {src.name}")
+            print(f"factlog ingest: {dst.relative_to(target).as_posix()} up to date; skipping {source_label}")
             skipped += 1
             continue
 
@@ -1896,15 +1969,36 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         when = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         body = dst.read_text(encoding="utf-8", errors="replace")
         if out_suffix == ".md":
-            header = f"<!-- ingested-by-factlog | source: {src.name} | converter: {tool} | date: {when} -->\n\n"
+            header = f"<!-- ingested-by-factlog | source: {source_label} | converter: {tool} | date: {when} -->\n\n"
         else:
-            header = f"[ingested-by-factlog] source: {src.name} | converter: {tool} | date: {when}\n\n"
+            header = f"[ingested-by-factlog] source: {source_label} | converter: {tool} | date: {when}\n\n"
         dst.write_text(header + body, encoding="utf-8")
 
-        converted += 1
-        print(f"factlog ingest: {src.name} -> {dst.relative_to(target).as_posix()} (via {tool})")
+        dst_rel = dst.relative_to(target).as_posix()
+        # #229: the converter exited 0 and wrote a file, but if its body (before
+        # the header we just added) is blank, the input had no extractable text —
+        # a scanned/image PDF, an empty doc, etc. Counting it as `converted` hides
+        # a silent 0-facts source, so split it out and warn (the merge un-converted
+        # warning only sees a *missing* conversion, never an empty one).
+        if body.strip() == "":
+            empty_converted += 1
+            print(
+                f"factlog ingest: {source_label} -> {dst_rel} converted-but-empty "
+                "(likely scanned/needs OCR)",
+                file=sys.stderr,
+            )
+        else:
+            converted += 1
+            print(f"factlog ingest: {source_label} -> {dst_rel} (via {tool})")
 
-    print(f"factlog ingest: {converted} converted, {skipped} skipped, {failures} failed")
+    summary = f"{converted} converted, {skipped} skipped, {failures} failed"
+    if empty_converted:
+        summary += f", {empty_converted} converted-but-empty (likely scanned/needs OCR)"
+    if scan_nonbinary:
+        summary += f", {scan_nonbinary} ignored (binary extension, non-binary content)"
+    if scan_empty:
+        summary += f", {scan_empty} ignored (empty file)"
+    print(f"factlog ingest: {summary}")
     return 1 if failures else 0
 
 
@@ -1958,7 +2052,7 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
     conversions/originals). Returns an _EjectSelection, or an int exit code when
     nothing matches. Prints the plan exactly as cmd_eject used to inline."""
     import re
-    from pathlib import Path
+    from pathlib import Path, PurePosixPath
 
     # Tie each runs/sources/ conversion to the original it was made from, read
     # from the ingest provenance header ("... | source: <name> | ..."). Two
@@ -1984,7 +2078,13 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
         if m:
             origin = nfc(m.group(1).strip())
             if origin:
-                conv_origin[ref] = origin
+                # #214: the header may now record a sources/-relative path
+                # (sub_a/data.hwpx) rather than a bare basename. Reduce it to the
+                # basename so the pairing/orphan reconstruction below — which
+                # rebuilds sources/<subdir>/<origin> from the conversion's own
+                # mirrored subdir — stays correct for both header formats and no
+                # legacy basename header regresses.
+                conv_origin[ref] = PurePosixPath(origin).name
 
     def matches(ref: str, name: str) -> bool:
         name = nfc(name)
