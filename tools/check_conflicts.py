@@ -86,7 +86,29 @@ def _group_key(obj: str, spec: TypedRelSpec | None) -> tuple:
     does not parse (normalize -> None): backward-compatible, lossless degrade. The
     two key spaces are tagged (``"scalar"`` vs ``"raw"``) so a scalar never
     collides with an unrelated raw string. Total: never raises (normalize is
-    total)."""
+    total).
+
+    **ordinal unit loss (#218 / #224 A):** ``normalize("ordinal", …)`` keeps only
+    the integer *rank* — the ordinal-class unit (호/위/번/차/등/째) is dropped at
+    parse time (``literal_types.parse_ordinal``), so it never enters the key. A
+    cross-unit pair therefore collapses onto one scalar: ``제3호`` and ``3위`` both
+    key as ``("scalar", 3)``. This is **by design** and consistent with the engine,
+    which likewise compares ordinals on rank alone (``_TYPED_COL["ordinal"]`` is a
+    bare int64, no unit column). ordinal is a *rank-only* contract: same rank =
+    same value. If two notations denote genuinely different domains (a rank vs a
+    house number), that distinction belongs in the model — declare them as
+    **separate relations**, not one single-valued ordinal relation. (Contrast
+    ``amount``, where 억↔조 equivalence is the intended collapse.)
+
+    **int64 divergence note (#224 C):** ``normalize`` can return a scalar wider
+    than int64 (mainly ``number`` via ``parse_number_scaled``, which has no range
+    guard — ``amount`` already degrades to raw when ``parse_amount`` overflows,
+    #205). The engine, by contrast, **skips insertion** of an out-of-int64-range
+    scalar (see ``insert_typed_facts`` in ``common.py`` ~ the ``-(2**63) <= scalar
+    < 2**63`` guard). So this checker may group under a scalar the engine would
+    drop. That affects **grouping only** (never insertion) and is harmless: the
+    checker is strictly more willing to merge equivalents, never less. No behaviour
+    change here — note only."""
     if spec is not None:
         scalar = literal_types.normalize(spec.type, obj, spec.units)
         if scalar is not None:
@@ -110,6 +132,11 @@ def detect_conflicts(
     original object strings (provenance): each distinct key contributes one
     deterministic representative (the lexicographically smallest raw object seen
     for it). Deterministic; never raises.
+
+    Two grouping subtleties documented on ``_group_key``: ordinal collapses
+    cross-unit notations onto the shared rank (rank-only contract, #218/#224 A),
+    and a scalar wider than int64 groups here even though the engine skips its
+    insertion (harmless grouping-only divergence, #224 C).
 
     **Alias canonicalization (#227):** when *aliases* is provided (non-empty),
     each row's relation is canonicalized via ``_canonicalize`` before the

@@ -252,12 +252,17 @@ def canonical_amount(raw: str) -> str | None:
 _PARSERS = {"date": parse_date, "number": parse_number_scaled, "ordinal": parse_ordinal}
 
 
-def normalize(type_tag: str, raw: str, units: dict[str, int] | None = None) -> int | float | None:
+def normalize(type_tag: str, raw: str, units: dict[str, int] | None = None) -> int | None:
     """Parse *raw* under *type_tag* into its canonical scalar, or ``None`` if it
     does not parse (or the tag is unknown). Total: never raises.
 
     ``amount`` is special-cased: it uses *units* (or ``DEFAULT_AMOUNT_UNITS`` when
-    a declaration carries no inline table). date/number/ordinal ignore *units*."""
+    a declaration carries no inline table). date/number/ordinal ignore *units*.
+
+    Return type is ``int | None``: every projected type (date/ordinal/amount and
+    ``number`` via ``parse_number_scaled``'s ×1000 fixed-point) yields an **int**,
+    so a caller keying on the scalar never needs to handle a float. The public
+    float parser ``parse_number`` stays a separate ``float`` API (validity gate)."""
     if type_tag == "amount":
         return parse_amount(raw, units or DEFAULT_AMOUNT_UNITS)
     parser = _PARSERS.get(type_tag)

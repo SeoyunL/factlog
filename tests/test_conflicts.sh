@@ -154,6 +154,45 @@ printf '# single-valued\n\n- 주_속성\n' > "$KB/policy/single-valued.md"
 rm -f "$KB/policy/typed-relations.md"
 rm -f "$KB/policy/relation-aliases.md"
 
+# --- #218 / #224 A: ordinal is a rank-only contract. parse_ordinal drops the
+# ordinal-class unit (호/위/번/...), so cross-unit notations of the same rank
+# collapse onto one value — consistent with the engine (rank-only comparison).
+# Pin the by-design collapse (a future unit-aware grouping would fail here).
+printf '# single-valued\n\n- 순위\n' > "$KB/policy/single-valued.md"
+printf -- '- `순위` : ordinal as rank\n' > "$KB/policy/typed-relations.md"
+printf '# x\n' > "$KB/sources/x.md"
+# 제3호 and 3위 both normalize to rank 3 -> ONE value, not a conflict.
+csv '갑,순위,제3호,sources/x.md,confirmed,0.9,' '갑,순위,3위,sources/x.md,confirmed,0.9,'
+if run_conflicts; then ok "ordinal rank-only: 제3호 == 3위 (rank 3) not flagged"; else bad "ordinal rank-only: cross-unit same-rank wrongly flagged"; fi
+# a genuine rank difference (3 vs 5) must still fire.
+csv '갑,순위,제3호,sources/x.md,confirmed,0.9,' '갑,순위,5위,sources/x.md,confirmed,0.9,'
+if run_conflicts; then bad "ordinal rank-only: distinct ranks (3 vs 5) NOT detected"; else ok "ordinal rank-only: distinct ranks (3 vs 5) detected"; fi
+
+# --- #224 B1: a CUSTOM unit table declared in typed-relations.md must flow
+# end-to-end (typed_relations() -> spec.units -> _group_key) with a REAL KB, so
+# equivalent amounts under the custom table collapse (prior tests: hand-built).
+printf '# single-valued\n\n- 보상\n' > "$KB/policy/single-valued.md"
+printf -- '- `보상` : amount as reward (달러=1300, 센트=13)\n' > "$KB/policy/typed-relations.md"
+# amount(2,"달러")=2600 == amount(200,"센트")=2600 -> NOT a conflict.
+csv '갑,보상,"amount(2,""달러"")",sources/x.md,confirmed,0.9,' '갑,보상,"amount(200,""센트"")",sources/x.md,confirmed,0.9,'
+if run_conflicts; then ok "custom units: amount(2,달러) == amount(200,센트) not flagged"; else bad "custom units: equivalent amounts wrongly flagged (custom table not applied)"; fi
+# 2달러 (2600) vs 3달러 (3900) -> a real difference under the custom table.
+csv '갑,보상,"amount(2,""달러"")",sources/x.md,confirmed,0.9,' '갑,보상,"amount(3,""달러"")",sources/x.md,confirmed,0.9,'
+if run_conflicts; then bad "custom units: distinct amounts (2 vs 3 달러) NOT detected"; else ok "custom units: distinct amounts (2 vs 3 달러) detected"; fi
+
+# --- #224 B2: a bare year `2030` has no month -> parse_date None -> degrades to
+# the raw key, which is distinct from a scalar date (2030.1 -> 20300101). So the
+# pair fires a real CONFLICT: a bare year is NOT silently a parseable date.
+printf '# single-valued\n\n- 출시\n' > "$KB/policy/single-valued.md"
+printf -- '- `출시` : date as launch_date\n' > "$KB/policy/typed-relations.md"
+csv '기서비스,출시,2030,sources/x.md,confirmed,0.9,' '기서비스,출시,2030.1,sources/x.md,confirmed,0.9,'
+if run_conflicts; then bad "year-only date: bare 2030 vs 2030.1 NOT detected (bare year mis-parsed as date?)"; else ok "year-only date: bare 2030 degrades to raw and conflicts with scalar 2030.1"; fi
+
+# restore clean state
+printf '# single-valued\n\n- 주_속성\n' > "$KB/policy/single-valued.md"
+rm -f "$KB/policy/typed-relations.md"
+rm -f "$KB/policy/relation-aliases.md"
+
 echo ""
 echo "========================================"
 echo "test_conflicts: $pass passed, $fail failed"

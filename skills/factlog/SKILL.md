@@ -226,6 +226,11 @@ compact compound terms when that preserves structure better than prose strings:
 `date(2030,1)`, `date(2030,1,15)`, `number(2.5)`, `ordinal(3)`, or
 `amount(100,"억")`. The flat `relation/3` fact still stores that term as the
 object string, while the typed side-relation projects its comparable scalar.
+`ordinal` compares on **rank only**: the ordinal-class unit (호/위/번/차/등/째) is
+dropped at normalization, so `제3호` and `3위` are the *same* value (rank 3) to both
+the engine and the conflict checker. If a rank and a house number are genuinely
+different domains, model them as **separate relations** rather than one ordinal
+relation (contrast `amount`, where 억↔조 equivalence is intended).
 The predicate's rows surface in
 `logic_report.txt` under `Policy Findings:` (`after2030: 을서비스 (launch_after_2030)`)
 via the existing policy-findings path, because its `.decl` name is auto-discovered

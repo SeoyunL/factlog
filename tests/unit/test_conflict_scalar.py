@@ -198,6 +198,88 @@ class TestNfdRelationName:
         assert conflicts[("갑사", self._NFD_REL)] == ['amount(5000,"억")', 'amount(5400,"억")']
 
 
+class TestOrdinalRankOnly:
+    """#218 / #224 A: ordinal is a *rank-only* contract. ``parse_ordinal`` keeps
+    only the integer rank and drops the ordinal-class unit (호/위/번/차/등/째), so
+    cross-unit notations of the same rank collapse onto one value — consistent with
+    the engine, which also compares ordinals on rank alone. This pins that
+    by-design collapse so a future 'unit-aware grouping' change (which would
+    diverge from the engine) fails loudly here."""
+
+    _TYPED_ORDINAL = {"순위": common.TypedRelSpec("ordinal", "rank")}
+
+    def test_cross_unit_same_rank_collapses_to_one_value(self):
+        # 제3호 and 3위 both normalize to rank 3 -> a single value, NOT a conflict.
+        facts = [
+            _fact("갑", "순위", "제3호"),
+            _fact("갑", "순위", "3위"),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {"순위"}, self._TYPED_ORDINAL)
+        assert conflicts == {}
+
+    def test_distinct_ranks_still_conflict(self):
+        # A genuine rank difference (3 vs 5) must still fire — the rank-only
+        # contract collapses units, not values.
+        facts = [
+            _fact("갑", "순위", "제3호"),
+            _fact("갑", "순위", "5위"),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {"순위"}, self._TYPED_ORDINAL)
+        assert list(conflicts) == [("갑", "순위")]
+        # provenance: original notations preserved, one representative per rank,
+        # sorted (ASCII '5' < Hangul '제').
+        assert conflicts[("갑", "순위")] == ["5위", "제3호"]
+
+
+class TestYearOnlyDateDegrade:
+    """#224 B2: a bare year ``2030`` has no month, so ``parse_date`` returns None
+    and the object degrades to the raw-string key ``("raw","2030")``. A scalar
+    date (``2030.1`` -> 20300101) keys as ``("scalar", 20300101)``. The two keys
+    are distinct, so the pair fires a real CONFLICT — pinning that a bare year is
+    NOT silently treated as a parseable date."""
+
+    def test_bare_year_degrades_and_conflicts_with_scalar_date(self):
+        facts = [
+            _fact("기서비스", "출시", "2030"),
+            _fact("기서비스", "출시", "2030.1"),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {"출시"}, _TYPED_DATE)
+        assert list(conflicts) == [("기서비스", "출시")]
+        # provenance: both original strings preserved as representatives.
+        assert conflicts[("기서비스", "출시")] == ["2030", "2030.1"]
+
+
+class TestCustomUnitTableParsed:
+    """#224 B1: the custom unit table declared in ``policy/typed-relations.md``
+    must flow through the REAL parser (``common._parse_typed_relations``) into
+    ``spec.units`` and then into ``_group_key``, so equivalent amounts under a
+    custom table collapse. Prior tests only used hand-built specs; this pins the
+    parse -> units -> grouping path. (The shell test covers the full KB path.)"""
+
+    def test_custom_units_equivalent_amounts_collapse(self):
+        # 달러=1300, 센트=13: amount(2,"달러") == amount(200,"센트") == 2600.
+        text = '- `보상` : amount as reward (달러=1300, 센트=13)\n'
+        specs = common._parse_typed_relations(text)
+        assert specs["보상"].units == {"달러": 1300, "센트": 13}
+        facts = [
+            _fact("갑", "보상", 'amount(2,"달러")'),
+            _fact("갑", "보상", 'amount(200,"센트")'),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {"보상"}, specs)
+        assert conflicts == {}
+
+    def test_custom_units_distinct_amounts_conflict(self):
+        # 2달러 (2600) vs 3달러 (3900) -> a real difference under the custom table.
+        text = '- `보상` : amount as reward (달러=1300, 센트=13)\n'
+        specs = common._parse_typed_relations(text)
+        facts = [
+            _fact("갑", "보상", 'amount(2,"달러")'),
+            _fact("갑", "보상", 'amount(3,"달러")'),
+        ]
+        conflicts = check_conflicts.detect_conflicts(facts, {"보상"}, specs)
+        assert conflicts[("갑", "보상")] == ['amount(2,"달러")', 'amount(3,"달러")']
+
+
 class TestSupersededIgnored:
     def test_superseded_row_excluded_from_conflict(self):
         # engine_facts drops non-engine statuses -> a superseded row can't fire.
