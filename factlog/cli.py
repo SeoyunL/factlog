@@ -576,8 +576,48 @@ def cmd_use(args: argparse.Namespace) -> int:
         print(f"factlog use: {target} does not exist. Run 'factlog init --target {args.target}' first.", file=sys.stderr)
         return 1
     factlog_config.write_root(target)
+    # --lang, when given, is set alongside the root in the same config file; when
+    # omitted the existing language (if any) is preserved by write_root, so `use`
+    # never silently drops a configured narration language.
+    lang = getattr(args, "lang", None)
+    if lang is not None:
+        factlog_config.write_lang(lang)
     note = "" if (target / "sources").is_dir() else "  (warning: no sources/ — not a factlog KB yet; run 'factlog init')"
     print(f"factlog use: active KB set to {target}{note}")
+    if lang is not None:
+        print(f"  narration language: {lang}")
+    print(f"  config: {factlog_config.config_path()}")
+    return 0
+
+
+def cmd_lang(args: argparse.Namespace) -> int:
+    """Get or set the assistant's human-facing narration language.
+
+    No argument: print the configured language on a single line (empty line when
+    unset). This is a porcelain contract — the skill parses exactly this shape to
+    decide the narration language — so it never carries a label, matching
+    `factlog where --porcelain`. It affects ONLY the assistant's prose (narration,
+    summaries, 'needs review' framing); engine reports, CLI stdout, and fact data
+    stay verbatim in their source language.
+
+    With a CODE: store it (validated leniently — any non-empty, short token such as
+    `ko` or `en`) in the active-KB config, leaving the root untouched, then confirm.
+    """
+    code = getattr(args, "code", None)
+    if code is None:
+        # Query mode: one line, no label (empty line when unset).
+        print(factlog_config.read_lang() or "")
+        return 0
+    normalized = code.strip()
+    if not normalized or len(normalized) > 32:
+        print(
+            "factlog lang: give a short language code (e.g. 'ko' or 'en'); "
+            "run `factlog lang` with no argument to see the current setting.",
+            file=sys.stderr,
+        )
+        return 2
+    factlog_config.write_lang(normalized)
+    print(f"factlog lang: narration language set to {normalized}")
     print(f"  config: {factlog_config.config_path()}")
     return 0
 
@@ -587,7 +627,8 @@ def cmd_where(args: argparse.Namespace) -> int:
     # --porcelain: emit ONLY the active KB root (absolute path), one line, no
     # label. This is the machine-parseable contract for `export FACTLOG_ROOT=...`
     # in SKILL.md / hooks — pin exactly this shape so LLMs never parse the prose
-    # form. The human output below (unchanged) stays diagnostic-only.
+    # form. It stays root-only on purpose (never mix in lang); the narration
+    # language has its own porcelain contract in `factlog lang`.
     if getattr(args, "porcelain", False):
         print(root)
         return 0
@@ -595,6 +636,9 @@ def cmd_where(args: argparse.Namespace) -> int:
     print(f"active KB: {root}")
     print(f"resolved from: {label} (precedence: --flag > $FACTLOG_ROOT > config > cwd)")
     print(f"config file: {factlog_config.config_path()}")
+    lang = factlog_config.read_lang()
+    if lang:
+        print(f"narration language: {lang} (assistant prose only; set with `factlog lang`)")
     return 0
 
 
@@ -1694,6 +1738,13 @@ def cmd_setup(args: argparse.Namespace) -> int:
     else:
         actions.append(f"KB already present at {target}")
     actions.append(f"set active KB to {target} (ingest/ask/sync default here from any directory)")
+    # Optional narration language: set only when --lang is given, so an existing
+    # language survives a re-run of setup that omits the flag (write_root above
+    # already preserves it).
+    lang = getattr(args, "lang", None)
+    if lang is not None:
+        factlog_config.write_lang(lang)
+        actions.append(f"set narration language to {lang} (assistant prose only)")
 
     print("\n=== factlog setup: final environment check ===")
     # gate="setup": a missing git is reported but does not fail setup, whose
@@ -2458,6 +2509,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="one-shot bootstrap: doctor, ensure deps, init KB, re-check",
     )
     setup.add_argument("--target", default="~/wiki", help="knowledge base root to create")
+    setup.add_argument(
+        "--lang",
+        default=None,
+        metavar="CODE",
+        help="narration language for the assistant's prose (e.g. ko, en); "
+        "does not translate engine reports, CLI output, or fact data",
+    )
     setup.set_defaults(func=cmd_setup)
 
     ingest = sub.add_parser(
@@ -2533,7 +2591,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     use = sub.add_parser("use", help="set the active KB targeted by ingest/ask/sync from any directory")
     use.add_argument("target", help="knowledge base root to make active")
+    use.add_argument(
+        "--lang",
+        default=None,
+        metavar="CODE",
+        help="also set the narration language for the assistant's prose (e.g. ko, en); "
+        "omit to keep the current language",
+    )
     use.set_defaults(func=cmd_use)
+
+    lang = sub.add_parser(
+        "lang",
+        help="get or set the assistant's narration language (prose only; not engine output)",
+    )
+    lang.add_argument(
+        "code",
+        nargs="?",
+        default=None,
+        metavar="CODE",
+        help="language code to set (e.g. ko, en); omit to print the current setting",
+    )
+    lang.set_defaults(func=cmd_lang)
 
     where = sub.add_parser("where", help="print the active KB and where it was resolved from")
     where.add_argument(

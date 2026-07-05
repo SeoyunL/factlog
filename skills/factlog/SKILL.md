@@ -89,6 +89,39 @@ where you copy `examples/sample-kb` and run `factlog use` (see
 repo must still target the configured active KB, so the LLM extraction step and
 the engine step operate on the *same* KB.
 
+## Output language (assistant prose only)
+
+At the **start of every flow**, decide the language for your **human-facing
+narration, summaries, and "needs review" framing**. Check the configured
+language deterministically:
+
+```bash
+factlog lang   # prints the configured code (e.g. ko) on one line, or an empty line
+```
+
+Decide with a **two-step precedence** (explicit setting wins):
+
+1. **If `factlog lang` prints a code → narrate in that language.** This is the
+   reliable signal: it works even when the user only typed a slash command.
+2. **If it prints an empty line → narrate in the user's conversation language**
+   (best effort). When there is no conversational signal — e.g. the user only ran
+   a command with no natural-language sentence — there is nothing to detect from,
+   so keep the previous default (the model's default language). Never guess the
+   UI language from the language of the KB's facts; data language ≠ UI language.
+
+Set it with `factlog lang <code>` (or `factlog use <kb> --lang <code>` /
+`factlog setup --lang <code>`). `factlog lang` with no argument is a porcelain
+contract — parse exactly that one line, do not scrape prose.
+
+**Boundary — this changes ONLY your own prose. It does NOT change evidence:**
+
+- **Engine reports (`facts/logic_report.txt`) and CLI stdout stay verbatim** —
+  show them exactly as produced (Deterministic gate rule #2). **Do not translate
+  them.** Instead, add a **short gloss** in the chosen language *beside* the
+  verbatim block to explain what it means.
+- **Fact data (subject / relation / object) stays in its source language** — never
+  translate a fact's values; the KB records them as extracted.
+
 ## Canonical source value for fact extraction
 
 When writing extracted fact rows to `$FACTLOG_ROOT/runs/*.json`, the `source`

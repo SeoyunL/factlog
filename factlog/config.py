@@ -9,8 +9,11 @@ config file and resolves the effective root with the precedence:
     --wiki/--target flag  >  $FACTLOG_ROOT  >  config file  >  cwd
 
 The config lives at ${XDG_CONFIG_HOME:-~/.config}/factlog/config.json as
-{"root": "<absolute kb path>"}. No third-party imports, so both factlog/cli.py
-and every tool's pre-import root resolver can share it.
+{"root": "<absolute kb path>", "lang": "<code>"}. The optional ``lang`` field
+records the language for the assistant's human-facing narration/summaries only
+(never engine reports, CLI stdout, or fact data — see SKILL.md). No third-party
+imports, so both factlog/cli.py and every tool's pre-import root resolver can
+share it.
 """
 
 from __future__ import annotations
@@ -25,31 +28,83 @@ def config_path() -> Path:
     return Path(base) / "factlog" / "config.json"
 
 
+def _read_config() -> dict:
+    """Return the parsed config object, or {} for a missing/malformed file.
+
+    Central safe reader so both ``read_root`` and ``read_lang`` degrade the same
+    way (bad JSON / non-object / unreadable → {}) instead of crashing. Preserving
+    the full dict also lets ``write_root``/``write_lang`` keep sibling fields they
+    do not own.
+    """
+    path = config_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def read_root() -> str | None:
     """Return the configured active-KB root (absolute), or None if unset/invalid.
 
     Any malformed config — bad JSON, non-object, missing/empty/non-string root —
     returns None so resolution falls back to cwd rather than crashing.
     """
-    path = config_path()
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    root = data.get("root") if isinstance(data, dict) else None
+    root = _read_config().get("root")
     if not isinstance(root, str) or not root:
         return None
     return str(Path(root).expanduser().resolve())
 
 
+def read_lang() -> str | None:
+    """Return the configured narration language code, or None if unset/invalid.
+
+    The language is advisory metadata for the assistant's human-facing prose only;
+    it never affects root resolution. A missing/empty/non-string ``lang`` (or a
+    malformed config) returns None so a root-only config — and every pre-``lang``
+    KB — behaves exactly as before.
+    """
+    lang = _read_config().get("lang")
+    if not isinstance(lang, str):
+        return None
+    lang = lang.strip()
+    return lang or None
+
+
 def write_root(path: str | os.PathLike) -> Path:
-    """Record *path* as the active KB. Returns the config file path written."""
+    """Record *path* as the active KB, preserving any configured ``lang``.
+
+    Returns the config file path written. Root and language are independent
+    settings, so re-pointing the active KB must never drop a language the user
+    already set.
+    """
     cfg = config_path()
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    resolved = str(Path(path).expanduser().resolve())
-    cfg.write_text(json.dumps({"root": resolved}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    data = _read_config()
+    data["root"] = str(Path(path).expanduser().resolve())
+    cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return cfg
+
+
+def write_lang(code: str | None) -> Path:
+    """Set (or clear) the narration language, preserving the configured ``root``.
+
+    A non-empty *code* is stored trimmed; passing None or an empty/whitespace
+    string removes the field (reverting to conversation-language behaviour).
+    Returns the config file path written. The ``root`` field is read back and
+    re-emitted untouched so setting a language never disturbs the active KB.
+    """
+    cfg = config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    data = _read_config()
+    normalized = code.strip() if isinstance(code, str) else ""
+    if normalized:
+        data["lang"] = normalized
+    else:
+        data.pop("lang", None)
+    cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return cfg
 
 
