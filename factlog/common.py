@@ -1424,16 +1424,23 @@ def dependency_graph(facts: list[dict[str, str]]) -> dict[str, list[str]]:
 
 def dependency_path(facts: list[dict[str, str]], start: str, target: str) -> list[str]:
     graph = dependency_graph(facts)
+    # The engine defines path/2 only over edges (path(S,O):-edge(S,O) / :-edge(S,M),
+    # path(M,O)), so a path requires >= 1 edge: match `target` only AFTER at least
+    # one hop. This makes a reflexive path("X","X") a verified negative unless a real
+    # cycle leads back to X — never the zero-edge trivial [start] (#256). `seen`
+    # guards EXPANSION (not enqueue) so a genuine cycle back to `start`/`target` is
+    # still discovered before that node's edges are pruned.
     queue: deque[tuple[str, list[str]]] = deque([(start, [start])])
-    seen = {start}
+    seen: set[str] = set()
     while queue:
         node, path = queue.popleft()
-        if node == target:
+        if len(path) > 1 and node == target:
             return path
+        if node in seen:
+            continue
+        seen.add(node)
         for nxt in graph.get(node, []):
-            if nxt not in seen:
-                seen.add(nxt)
-                queue.append((nxt, path + [nxt]))
+            queue.append((nxt, path + [nxt]))
     return []
 
 
