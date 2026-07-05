@@ -6,6 +6,7 @@ description: >-
   logic check, and attempt gated self-correction. Use when the user asks to
   "sync facts", "check the wiki", "run factlog", "verify facts", or update a
   knowledge base from its source documents.
+argument-hint: "setup | add | sync | query | check | repair | ask"
 allowed-tools: Bash(*factlog_python.sh *) Bash(python3 *) Bash(python *) Bash(py *) Read Edit Write Grep Glob
 ---
 
