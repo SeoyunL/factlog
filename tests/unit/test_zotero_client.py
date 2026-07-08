@@ -381,6 +381,23 @@ class TestAnnotations:
         c = ZoteroClient(ZoteroConfig(), backend=backend)
         assert [a["key"] for a in c.get_annotations("A")] == ["A1", "A2"]
 
+    def test_case_variant_image_ink_excluded(self):
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[
+            _annotation("H", "highlight"), _annotation("IMG", "Image"), _annotation("INK", "INK")]))
+        assert [a["key"] for a in c.get_annotations("A")] == ["H"]
+
+    def test_missing_type_is_kept_fail_open(self):
+        typeless = {"key": "T", "data": {"key": "T", "itemType": "annotation",
+                                         "annotationText": "x"}}  # no annotationType
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[typeless]))
+        assert [a["key"] for a in c.get_annotations("A")] == ["T"]
+
+    def test_empty_text_annotation_kept_at_client_level(self):
+        # Pruning empty-text annotations is the writer's job (#M), not the client's.
+        empty = _annotation("E", "highlight", text="", comment="")
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[empty]))
+        assert [a["key"] for a in c.get_annotations("A")] == ["E"]
+
     def test_connection_failure_wrapped(self):
         c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(raise_os=True))
         with pytest.raises(ZoteroConnectionError):
