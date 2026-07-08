@@ -321,3 +321,84 @@ class TestFetchFile:
         c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(raise_os=True))
         with pytest.raises(ZoteroConnectionError):
             c.fetch_file("K")
+
+
+def _note(key, parent="KH78JUPE"):
+    return {"key": key, "data": {"key": key, "itemType": "note", "parentItem": parent,
+                                 "note": "<p>Comment: under review</p>"}}
+
+
+def _annotation(key, atype="highlight", text="passage", comment="", page="3"):
+    return {"key": key, "data": {"key": key, "itemType": "annotation", "annotationType": atype,
+                                 "annotationText": text, "annotationComment": comment,
+                                 "annotationPageLabel": page}}
+
+
+class TestNotes:
+    def test_filters_to_notes(self):
+        backend = FakeBackend(children=[_note("N1"), PDF_ATT, _annotation("A1")])
+        c = ZoteroClient(ZoteroConfig(), backend=backend)
+        out = c.get_notes("KH78JUPE")
+        assert [n["key"] for n in out] == ["N1"]
+        assert ("children", "KH78JUPE") in backend.calls
+
+    def test_no_notes_returns_empty(self):
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[PDF_ATT]))
+        assert c.get_notes("K") == []
+
+    def test_order_and_pagination(self):
+        backend = FakeBackend(children=[_note("N1")], extra_pages=[[_note("N2")]])
+        c = ZoteroClient(ZoteroConfig(), backend=backend)
+        assert [n["key"] for n in c.get_notes("K")] == ["N1", "N2"]
+
+    def test_connection_failure_wrapped(self):
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(raise_os=True))
+        with pytest.raises(ZoteroConnectionError):
+            c.get_notes("K")
+
+
+class TestAnnotations:
+    def test_filters_to_text_annotations(self):
+        backend = FakeBackend(children=[
+            _annotation("H", "highlight"),
+            _annotation("U", "underline"),
+            _annotation("N", "note"),
+            _annotation("IMG", "image"),   # excluded
+            _annotation("INK", "ink"),     # excluded
+            _note("NOTE1"),                # not an annotation
+        ])
+        c = ZoteroClient(ZoteroConfig(), backend=backend)
+        out = c.get_annotations("ATTKEY")
+        assert [a["key"] for a in out] == ["H", "U", "N"]
+        assert ("children", "ATTKEY") in backend.calls
+
+    def test_no_annotations_returns_empty(self):
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[_note("N1")]))
+        assert c.get_annotations("A") == []
+
+    def test_order_and_pagination(self):
+        backend = FakeBackend(children=[_annotation("A1")], extra_pages=[[_annotation("A2")]])
+        c = ZoteroClient(ZoteroConfig(), backend=backend)
+        assert [a["key"] for a in c.get_annotations("A")] == ["A1", "A2"]
+
+    def test_case_variant_image_ink_excluded(self):
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[
+            _annotation("H", "highlight"), _annotation("IMG", "Image"), _annotation("INK", "INK")]))
+        assert [a["key"] for a in c.get_annotations("A")] == ["H"]
+
+    def test_missing_type_is_kept_fail_open(self):
+        typeless = {"key": "T", "data": {"key": "T", "itemType": "annotation",
+                                         "annotationText": "x"}}  # no annotationType
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[typeless]))
+        assert [a["key"] for a in c.get_annotations("A")] == ["T"]
+
+    def test_empty_text_annotation_kept_at_client_level(self):
+        # Pruning empty-text annotations is the writer's job (#M), not the client's.
+        empty = _annotation("E", "highlight", text="", comment="")
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(children=[empty]))
+        assert [a["key"] for a in c.get_annotations("A")] == ["E"]
+
+    def test_connection_failure_wrapped(self):
+        c = ZoteroClient(ZoteroConfig(), backend=FakeBackend(raise_os=True))
+        with pytest.raises(ZoteroConnectionError):
+            c.get_annotations("A")
