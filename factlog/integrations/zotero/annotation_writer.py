@@ -28,10 +28,17 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from factlog.integrations.zotero._textio import atomic_write_text, yaml_scalar
+from factlog.integrations.zotero._textio import (
+    ANNOTATION_MARKER_RE as _MARKER_LINE_RE,
+)
+from factlog.integrations.zotero._textio import (
+    ANNOTATION_SOURCE_MARKER as _MARKER,
+)
+from factlog.integrations.zotero._textio import (
+    atomic_write_text,
+    yaml_scalar,
+)
 
-_MARKER = "source_kind: annotations"
-_MARKER_LINE_RE = re.compile(r"^source_kind:\s*annotations\s*$", re.MULTILINE)
 _HEAD_SCAN_BYTES = 4096
 
 # Strip script/style/comment *contents* (not just the tags) before removing tags.

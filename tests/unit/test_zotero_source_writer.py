@@ -227,6 +227,14 @@ class TestReadZoteroKey:
         f.write_text('---\nsource_kind: annotations\nzotero_key: "K1"\n---\n', encoding="utf-8")
         assert read_zotero_key(f) == ""
 
+    def test_marker_substring_in_title_is_not_annotation(self, tmp_path):
+        # A real bib file whose TITLE merely contains the marker text must still
+        # yield its key (line-anchored marker match, no false positive).
+        f = tmp_path / "bib.md"
+        f.write_text('---\nzotero_key: "K1"\ntitle: "On source_kind: annotations"\n---\n',
+                     encoding="utf-8")
+        assert read_zotero_key(f) == "K1"
+
     def test_body_zotero_key_text_not_matched(self, tmp_path):
         # A `zotero_key:` line in the BODY (after the closing fence) must not be
         # mistaken for the front-matter key.

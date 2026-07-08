@@ -2710,6 +2710,7 @@ def cmd_zotero_import(args: argparse.Namespace) -> int:
             print(f"pdf_errors\t{report.pdf_errors}")
         if annotations:
             print(f"annotations_written\t{report.annotations_written}")
+            print(f"annotations_updated\t{report.annotations_updated}")
             print(f"annotations_skipped\t{report.annotations_skipped}")
             print(f"annotation_errors\t{report.annotation_errors}")
         print(f"dry_run\t{'1' if dry_run else '0'}")
@@ -2743,7 +2744,8 @@ def cmd_zotero_import(args: argparse.Namespace) -> int:
     if annotations:
         ann_verb = "Would write" if dry_run else "Annotations"
         _human(f"  {ann_verb}: written {report.annotations_written}, "
-               f"skipped {report.annotations_skipped}, errors {report.annotation_errors}")
+               f"updated {report.annotations_updated}, skipped {report.annotations_skipped}, "
+               f"errors {report.annotation_errors}")
 
     # Convert after the import summary so the narration reads in order.
     convert_rc = 0

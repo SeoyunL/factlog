@@ -240,6 +240,48 @@ class TestImport:
         assert report.imported == 1  # bib still succeeded
         assert report.annotation_errors == 1
 
+    def test_annotation_unclassified_error_isolated(self, tmp_path):
+        # A non-Zotero/non-OSError from the client must not abort the batch.
+        class Boom(FakeClient):
+            def get_notes(self, item_key):
+                raise ValueError("weird")
+
+        client = Boom([_item("K1"), _item("K2")])
+        report = import_items(client, target=tmp_path, collection="X", annotations=True)
+        assert report.imported == 2  # both bib items still imported
+        assert report.annotation_errors == 2
+
+    def test_annotation_updated_counted_separately(self, tmp_path):
+        import_items(FakeClient([_item("K1")], notes={"K1": [_pdf_note("<p>a</p>")]}),
+                     target=tmp_path, collection="X", annotations=True)
+        report = import_items(FakeClient([_item("K1")], notes={"K1": [_pdf_note("<p>a</p>"), _pdf_note("<p>b</p>")]}),
+                              target=tmp_path, collection="X", annotations=True)
+        assert report.annotations_written == 0 and report.annotations_updated == 1
+
+    def test_annotations_merged_across_attachments(self, tmp_path):
+        client = FakeClient(
+            [_item("K1")],
+            attachments={"K1": [_pdf_att("ATT1"), _pdf_att("ATT2")]},
+            annotations={"ATT1": [_pdf_annotation("from one", "1")],
+                         "ATT2": [_pdf_annotation("from two", "2")]},
+        )
+        import_items(client, target=tmp_path, collection="X", annotations=True)
+        text = next((tmp_path / "sources").glob("*-notes.md")).read_text(encoding="utf-8")
+        assert "from one" in text and "from two" in text
+
+    def test_annotations_no_overwrite_user_notes_file(self, tmp_path):
+        # A user's own <stem>-notes.md is not clobbered (P4), surfaced as skipped.
+        (tmp_path / "sources").mkdir()
+        # First import the bib to learn the stem, then plant a user file at <stem>-notes.md.
+        import_items(FakeClient([_item("K1", "One")]), target=tmp_path, collection="X")
+        bib = next((tmp_path / "sources").glob("*.md"))
+        user_notes = bib.with_name(bib.stem + "-notes.md")
+        user_notes.write_text("# my own notes\n", encoding="utf-8")
+        report = import_items(FakeClient([_item("K1", "One")], notes={"K1": [_pdf_note()]}),
+                              target=tmp_path, collection="X", annotations=True)
+        assert report.annotations_skipped == 1 and report.annotations_written == 0
+        assert user_notes.read_text(encoding="utf-8").startswith("# my own notes")
+
     def test_annotations_dry_run_writes_nothing(self, tmp_path):
         client = FakeClient([_item("K1")], notes={"K1": [_pdf_note("<p>n</p>")]})
         report = import_items(client, target=tmp_path, collection="X", annotations=True, dry_run=True)
