@@ -17,10 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from factlog.integrations.zotero.annotation_writer import AnnotationResult, write_annotations
-from factlog.integrations.zotero.api_client import ZoteroClient, ZoteroError
+from factlog.integrations.zotero.api_client import ZoteroClient
 from factlog.integrations.zotero.config import ZoteroConfig
 from factlog.integrations.zotero.item_parser import parse_item
-from factlog.integrations.zotero.pdf_importer import PdfOutcome, place_pdfs
+from factlog.integrations.zotero.pdf_importer import PdfOutcome, _att_key, place_pdfs
 from factlog.integrations.zotero.source_writer import SourceWriter
 
 
@@ -67,8 +67,13 @@ class ImportReport:
 
     @property
     def annotations_written(self) -> int:
-        # A newly written or refreshed notes file.
-        return sum(1 for o in self.annotation_outcomes if o.status in ("written", "updated"))
+        # Newly created notes files only (see annotations_updated for refreshes).
+        return sum(1 for o in self.annotation_outcomes if o.status == "written")
+
+    @property
+    def annotations_updated(self) -> int:
+        # Existing notes files rewritten because a highlight/note changed.
+        return sum(1 for o in self.annotation_outcomes if o.status == "updated")
 
     @property
     def annotations_skipped(self) -> int:
@@ -167,17 +172,18 @@ def import_items(
 def _import_annotations(client, parsed, base_stem, target, dry_run) -> AnnotationResult:
     """Collect an item's notes + PDF-attachment annotations and write the source.
 
-    Per-item isolation: any client/write failure becomes an error outcome so one
-    bad item never aborts the whole import.
+    Per-item isolation: any client/write failure (including an unclassified
+    exception the client re-raises) becomes an error outcome so one bad item never
+    aborts the whole import — annotations are a side feature, like PDF placement.
     """
     key = parsed.get("zotero_key", "")
     try:
         notes = client.get_notes(key)
         anns: list[dict] = []
         for attachment in client.get_pdf_attachments(key):
-            att_key = (attachment.get("data") or {}).get("key") or attachment.get("key", "")
+            att_key = _att_key(attachment)
             if att_key:
                 anns.extend(client.get_annotations(att_key))
         return write_annotations(parsed, anns, notes, base_stem, target, dry_run=dry_run)
-    except (ZoteroError, OSError) as exc:
-        return AnnotationResult(None, "error", str(exc))
+    except Exception as exc:  # noqa: BLE001 — deliberate per-item isolation
+        return AnnotationResult(None, "error", str(exc) or type(exc).__name__)
