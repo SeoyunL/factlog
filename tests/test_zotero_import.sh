@@ -43,7 +43,7 @@ NOKB="$(mktemp -d)/plain"; mkdir -p "$NOKB"  # no sources/
 # --- 1. --help lists the selectors and options ------------------------------
 out="$(fl zotero-import --help 2>&1)"; rc=$?
 missing=""
-for opt in --collection --tag --items --target --dry-run --porcelain; do
+for opt in --collection --tag --items --target --dry-run --porcelain --pdf; do
   grep -q -- "$opt" <<<"$out" || missing="$missing $opt"
 done
 if [ "$rc" -eq 0 ] && [ -z "$missing" ]; then
@@ -90,6 +90,16 @@ if [ "$rc" -eq 1 ] && grep -q "invalid TOML" <<<"$out" && ! grep -q "Traceback" 
   ok "malformed KB config -> graceful exit 1"
 else
   bad "malformed config rc=$rc: $out"
+fi
+
+# --- 7. --pdf is accepted and still gated by the KB check (hermetic) ---------
+# --pdf reaches the same _require_kb gate before any Zotero/PDF work, so a
+# non-KB target fails gracefully — proving the flag parses without a live client.
+out="$(fl zotero-import --collection Foo --pdf --target "$NOKB" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "not a factlog KB" <<<"$out" && ! grep -q "Traceback" <<<"$out"; then
+  ok "--pdf accepted, still gated by KB check"
+else
+  bad "--pdf gating rc=$rc: $out"
 fi
 
 echo
