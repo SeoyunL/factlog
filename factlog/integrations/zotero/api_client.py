@@ -227,20 +227,28 @@ class ZoteroClient:
 
     # -- notes & annotations (phase 3) -------------------------------------
     def get_notes(self, item_key: str) -> list[dict]:
-        """Note children of a bibliographic item, in Zotero's order (read-only)."""
+        """Note *children* of a bibliographic item, in Zotero's order (read-only).
+
+        Only child notes are returned; standalone (parent-less) notes are out of
+        scope for phase 3 and are not reachable through this method.
+        """
         children = self._fetch(lambda: self._all(self.backend.children(item_key)))
         return [c for c in children if _data(c).get("itemType") == "note"]
 
     def get_annotations(self, attachment_key: str) -> list[dict]:
-        """Text-bearing annotation children of a PDF attachment, in order.
+        """Annotation children of a PDF attachment, in order (read-only).
 
-        Image/ink annotations carry no text, so they are skipped; highlight,
-        underline, note, and text annotations are kept.
+        A denylist keeps everything except image/ink annotations (the only types
+        that inherently carry no text), matched case-insensitively — an annotation
+        with a missing/unknown type is kept. Whether a kept annotation actually
+        has usable text (both annotationText and annotationComment empty) is not
+        decided here: empty-text pruning is the annotation writer's job (#M), so
+        this stays a thin type filter.
         """
         children = self._fetch(lambda: self._all(self.backend.children(attachment_key)))
         return [
             c
             for c in children
             if _data(c).get("itemType") == "annotation"
-            and _data(c).get("annotationType") not in _NON_TEXT_ANNOTATION_TYPES
+            and str(_data(c).get("annotationType", "")).lower() not in _NON_TEXT_ANNOTATION_TYPES
         ]
