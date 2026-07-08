@@ -27,6 +27,14 @@ _NON_BIBLIOGRAPHIC = frozenset({"attachment", "note", "annotation"})
 # Max itemKeys per Zotero API request; larger id lists are fetched in batches.
 _ID_BATCH = 50
 
+# Attachment content type imported as a full-text source in phase 2.
+_PDF_CONTENT_TYPE = "application/pdf"
+
+# Link modes whose bytes Zotero actually stores (and the Local API can serve).
+# linked_file/linked_url point outside Zotero's storage, so file() cannot return
+# them — they are skipped rather than surfaced as un-downloadable attachments.
+_DOWNLOADABLE_LINK_MODES = frozenset({"imported_file", "imported_url"})
+
 
 class ZoteroError(Exception):
     """A Zotero request could not be satisfied (bad collection, web mode, ...)."""
@@ -39,6 +47,17 @@ class ZoteroConnectionError(ZoteroError):
 def _data(item: dict) -> dict:
     data = item.get("data") if isinstance(item, dict) else None
     return data if isinstance(data, dict) else {}
+
+
+def _is_downloadable_pdf(data: dict) -> bool:
+    if data.get("itemType") != "attachment":
+        return False
+    content_type = data.get("contentType")
+    if not isinstance(content_type, str):
+        return False
+    if content_type.split(";")[0].strip().lower() != _PDF_CONTENT_TYPE:
+        return False
+    return data.get("linkMode") in _DOWNLOADABLE_LINK_MODES
 
 
 class ZoteroClient:
@@ -180,3 +199,25 @@ class ZoteroClient:
                 )
             )
         return out
+
+    # -- attachments (phase 2) ---------------------------------------------
+    def get_pdf_attachments(self, parent_key: str) -> list[dict]:
+        """Downloadable PDF child attachments of an item, in Zotero's order.
+
+        Kept only if the child is an ``attachment`` whose content type is PDF
+        (compared case-insensitively, ignoring any ``; charset=…`` parameter) and
+        whose ``linkMode`` is one Zotero actually stores. Snapshots, notes,
+        non-PDF files, and linked (not stored) files are skipped.
+        """
+        children = self._fetch(lambda: self._all(self.backend.children(parent_key)))
+        return [child for child in children if _is_downloadable_pdf(_data(child))]
+
+    def fetch_file(self, key: str) -> bytes:
+        """Download an attachment's bytes over the Local API (read-only).
+
+        The whole file is loaded into memory; streaming large attachments is out
+        of scope for phase 2.
+        """
+        if not isinstance(key, str) or not key.strip():
+            raise ZoteroError("fetch_file needs a non-empty attachment key.")
+        return self._fetch(lambda: self.backend.file(key))
