@@ -172,16 +172,20 @@ class TestMissingAndInvalid:
 
 
 class TestCrossSourceDuplicate:
-    def test_shared_doi_is_skipped_and_reported(self, tmp_path):
+    def test_shared_doi_is_merged_and_reported(self, tmp_path):
+        # Two records sharing a DOI: the first is written, the second is the same
+        # paper via the DOI join key. As of Step 4c the arXiv writer merges it into
+        # the first original's sidecar (§7.3) rather than reporting a bare skip.
         kb = _kb(tmp_path)
         report = import_works(
             [_work("1706.03762", doi="10.1/x"),
              _work("1810.04805", title="dup", doi="10.1/x")],
             target=kb,
         )
-        assert report.imported == 1 and report.skipped == 1
-        skipped = [o for o in report.outcomes if o.status == "skipped"][0]
-        assert "duplicate DOI" in skipped.reason
+        assert report.imported == 1 and report.merged == 1
+        assert report.skipped == 0
+        merged = [o for o in report.outcomes if o.status == "merged"][0]
+        assert "duplicate DOI" in merged.reason
 
 
 class TestReport:
@@ -196,6 +200,7 @@ class TestReport:
         report = ImportReport([
             WorkOutcome("imported", "a", "A"),
             WorkOutcome("skipped", "b", "B"),
+            WorkOutcome("merged", "d", "D"),
             WorkOutcome("error", "c", ""),
         ])
-        assert (report.imported, report.skipped, report.errors) == (1, 1, 1)
+        assert (report.imported, report.skipped, report.merged, report.errors) == (1, 1, 1, 1)
