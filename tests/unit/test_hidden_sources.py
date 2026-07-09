@@ -159,3 +159,58 @@ class TestNestedRepoStateIsInvisibleEverywhere:
         status_out = capsys.readouterr().out
         assert hidden_dir not in status_out
         assert _status_source_count(status_out) == 1
+
+
+class TestAKbUnderADotDirectoryIsNotEmpty:
+    """`is_hidden_source` measures "hidden" relative to the SOURCE ROOT, not the
+    filesystem root. Measuring it against an absolute path would make every source
+    hidden for a KB at `~/.factlog-kb`, silently emptying a real user's library.
+    Nothing pinned that."""
+
+    @pytest.mark.parametrize("kb_rel", [".factlog-kb", ".a/.b/kb", "plain-kb"])
+    def test_every_source_is_still_visible(self, tmp_path, kb_rel):
+        kb = tmp_path / kb_rel
+        (kb / "sources").mkdir(parents=True)
+        (kb / "sources" / "paper.md").write_text("---\ntitle: P\n---\n", encoding="utf-8")
+        (kb / "sources" / ".hidden").mkdir()
+        (kb / "sources" / ".hidden" / "x.md").write_text("x", encoding="utf-8")
+
+        found = [p.name for p in common.source_files(kb)]
+        assert found == ["paper.md"], f"KB under {kb_rel!r} lost its sources"
+
+    def test_the_dot_component_of_the_kb_path_is_not_treated_as_hidden(self, tmp_path):
+        kb = tmp_path / ".factlog-kb"
+        (kb / "sources").mkdir(parents=True)
+        paper = kb / "sources" / "paper.md"
+        paper.write_text("---\ntitle: P\n---\n", encoding="utf-8")
+        assert not common.is_hidden_source(paper, kb / "sources")
+
+
+class TestACandidateCitingAHiddenSourceIsDropped:
+    """A behaviour change this issue did not ask for, pinned so it is not a
+    surprise. `common.source_file_refs()` no longer returns dot-named paths, so
+    `merge_candidates` drops a candidate citing one and `factlog provenance` calls
+    it stale.
+
+    The blast radius is nil in practice: no factlog pipeline ever created such a
+    fact, because sync and coverage already skipped hidden paths (they used the
+    path-parts check), and the importers only ever write `sources/<slug>.md`. Only
+    a hand-placed file and a hand-written candidate can reach this."""
+
+    def test_a_hidden_source_is_absent_from_the_on_disk_ref_set(self, tmp_path):
+        (tmp_path / "sources" / ".prov").mkdir(parents=True)
+        (tmp_path / "sources" / ".prov" / "x.md").write_text("x", encoding="utf-8")
+        (tmp_path / "sources" / "paper.md").write_text("p", encoding="utf-8")
+
+        refs = common.source_file_refs(tmp_path)
+        assert "sources/paper.md" in refs
+        assert "sources/.prov/x.md" not in refs
+
+    def test_sync_never_created_such_a_fact_in_the_first_place(self, tmp_path):
+        # The bound on the blast radius, asserted rather than argued: a file under
+        # a hidden directory is not a source, so nothing can cite it legitimately.
+        (tmp_path / "sources" / ".prov").mkdir(parents=True)
+        hidden = tmp_path / "sources" / ".prov" / "x.md"
+        hidden.write_text("---\ntitle: X\n---\n", encoding="utf-8")
+        assert common.is_hidden_source(hidden, tmp_path / "sources")
+        assert hidden not in common.source_files(tmp_path)
