@@ -31,8 +31,12 @@ fresh file on every version bump, breaking idempotent re-import (P3).
 file regardless of which integration wrote it, and that is what makes §7.1
 cross-source duplicate detection work. ``preprint: true`` is emitted
 unconditionally — this record *is* an arXiv deposit, and remains a preprint even
-when ``journal``/``doi`` show a published version exists (§5.2's ``preprint:
-false`` fires only at merge time, which is a later step).
+when ``journal``/``doi`` show a published version exists. The front-matter ``preprint`` flag is
+**never flipped**, at merge time or ever: an arXiv record describes an arXiv
+deposit, which stays a preprint whatever else exists (#60), and the original is
+byte-immutable (P4) so there is no file to flip. Whether a peer-reviewed version
+exists is derived from the provenance ledger — a non-preprint record beside this
+one — not from a boolean anyone must keep in sync (§5.3, #65 H1).
 """
 from __future__ import annotations
 
@@ -43,6 +47,14 @@ from factlog.integrations.arxiv.work_parser import (
 )
 from factlog.integrations.common._textio import yaml_list as _yaml_list
 from factlog.integrations.common._textio import yaml_scalar as _yaml_str
+from factlog.integrations.common.provenance import (
+    ProvenanceConflict,
+    SourceRecord,
+    add_source,
+    read_provenance,
+    sidecar_path,
+    write_provenance,
+)
 from factlog.integrations.common.source_writer import BaseSourceWriter, WriteResult
 
 __all__ = ["ArxivSourceWriter", "WriteResult", "withdrawal_agent", "withdrawal_warning"]
@@ -54,6 +66,18 @@ _WITHDRAWAL_AGENTS = {
     WITHDRAWN_BY_AUTHOR: "the author",
     WITHDRAWN_BY_ADMIN: "arXiv administrators",
 }
+
+
+def _substantive(record: SourceRecord) -> dict:
+    """A record's fields that describe the *deposit*, excluding ``imported_at``.
+
+    ``imported_at`` is when factlog first recorded the provenance, not a fact
+    about the paper, so two imports of the same deposit at different clock times
+    are the same provenance and must merge idempotently (P3). Everything else —
+    ``type``, ``id``, ``version`` and the arXiv fields — genuinely describes the
+    deposit, and a change in any of them is a divergence an import may not revise.
+    """
+    return {k: v for k, v in record.to_dict().items() if k != "imported_at"}
 
 
 def withdrawal_agent(withdrawn_by: str | None) -> str:
@@ -81,6 +105,12 @@ class ArxivSourceWriter(BaseSourceWriter):
 
     identity_key = "arxiv_id"
     source_name = "arxiv"
+    # arXiv is the one integration that merges (§7.3): when a paper is already in
+    # the KB via another database (an OpenAlex record of its published version,
+    # matched on the shared arXiv id or DOI), the arXiv deposit is folded into
+    # that original's provenance sidecar instead of writing a second file. Zotero
+    # and OpenAlex leave this False and never touch a sidecar.
+    merges_cross_source = True
 
     def identity_of(self, parsed: ParsedArxivWork) -> str:
         # The BASE id, never versioned_id: P3 idempotence keys on it, so a later
@@ -125,8 +155,10 @@ class ArxivSourceWriter(BaseSourceWriter):
             lines.append(f"doi: {_yaml_str(parsed.doi)}")
         if parsed.journal_ref:
             lines.append(f"journal: {_yaml_str(parsed.journal_ref)}")
-        # Always true: this record is the arXiv deposit. `journal`/`doi` carry the
-        # published-ness factually; flipping this would front-run merge logic.
+        # Always true: this record is the arXiv deposit, a preprint whatever else
+        # exists (#60). `journal`/`doi` carry published-ness factually; this is
+        # never flipped, at merge time or ever (#65 H1) — the published version's
+        # existence is a ledger fact, not a boolean to keep in sync.
         lines.append("preprint: true")
         lines.append("imported_from: arxiv")
         if imported_at:
@@ -152,3 +184,90 @@ class ArxivSourceWriter(BaseSourceWriter):
         if parsed.doi:
             parts.append(f"\n- DOI: {parsed.doi}")
         return "".join(parts) + "\n"
+
+    # -- §7.3 merge into an existing original's provenance sidecar ----------
+    def _provenance_record(self, parsed: ParsedArxivWork, imported_at: str) -> SourceRecord:
+        """The arXiv contribution to a source's provenance ledger.
+
+        Identity is the BASE, version-free id — the join key and the ledger's
+        idempotency key both use it, so a re-import of the same version is a
+        no-op. Fields carry what is arXiv-specific and stable per version:
+        ``version``, ``submitted``, ``last_updated``, ``comment``,
+        ``primary_category``, and ``withdrawn_by`` when the paper is withdrawn.
+
+        Deliberately excluded: ``abs_url``/``pdf_url`` (derivable from the id, so
+        storing them duplicates a thing that can go stale) and ``doi``/
+        ``journal_ref`` (the merge target is an OpenAlex-primary record that
+        already holds these authoritatively, and the DOI is the join key — a
+        second copy invites disagreement about which is right).
+
+        ``submitted``/``last_updated`` are ``datetime.date``. ``SourceRecord``
+        serializes through ``json.dumps``, which raises ``TypeError`` on a
+        ``date``, and ``provenance`` is source-agnostic and correctly refuses to
+        guess types — so the conversion to an ISO string is this builder's job. A
+        ``None`` field is dropped by :meth:`SourceRecord.to_dict`, so optional
+        values pass straight through.
+        """
+        fields: dict[str, object | None] = {
+            "version": parsed.version,
+            "submitted": parsed.submitted.isoformat() if parsed.submitted else None,
+            "last_updated": parsed.last_updated.isoformat() if parsed.last_updated else None,
+            "comment": parsed.comment,
+            "primary_category": parsed.primary_category or None,
+        }
+        if parsed.withdrawn_by is not None:
+            fields["withdrawn_by"] = parsed.withdrawn_by
+        return SourceRecord(
+            type="arxiv", id=parsed.arxiv_id, imported_at=imported_at, fields=fields
+        )
+
+    def _merge(
+        self, parsed: ParsedArxivWork, decision: WriteResult, imported_at: str
+    ) -> WriteResult:
+        """Append this arXiv deposit to the existing original's sidecar (§7.3).
+
+        The original ``.md`` is never opened — only its sidecar at
+        ``sidecar_path(decision.path)`` is read-modify-written, so the original
+        stays byte- and mtime-immutable (P4). The disk ledger is re-read every
+        call (never cached), so a prior merge is respected.
+
+        Idempotence (P3) is defined by the deposit's **substantive** fields, never
+        the import clock. The CLI stamps a fresh ``imported_at`` on every run, so
+        comparing whole records (as :func:`add_source` does) would flag a plain
+        re-import as a conflict. Instead: if an arXiv record for this base id is
+        already present and its substantive fields match, this is a no-op that
+        keeps the *first* import's timestamp — the ledger stays byte-identical.
+
+        A record whose substantive fields **differ** (a new version, or upstream
+        metadata that moved) is a divergence an *import* has no authority to
+        revise (H2): it becomes a per-id ``error`` — never a batch crash — that
+        points at the refresh path (``arxiv-check-versions``), which alone may
+        rewrite the entry via :func:`update_source`. Only a genuinely new
+        ``(type, id)`` is appended, via :func:`add_source`.
+        """
+        sidecar = sidecar_path(decision.path)
+        record = self._provenance_record(parsed, imported_at)
+        provenance = read_provenance(sidecar)
+        existing = next((r for r in provenance.records if r.key == record.key), None)
+        if existing is not None:
+            if _substantive(existing) == _substantive(record):
+                return decision  # already recorded; keep the first timestamp
+            recorded = existing.fields.get("version")
+            version = f"v{recorded}" if recorded is not None else "a different version"
+            return WriteResult(
+                decision.path,
+                "error",
+                f"ledger records {version}; run arxiv-check-versions to record "
+                "the new version",
+            )
+        # A new (type, id): add_source cannot conflict here, but its idempotency
+        # guarantee is kept as the single writer of the append.
+        try:
+            add_source(provenance, record)
+        except ProvenanceConflict:  # pragma: no cover - guarded by the check above
+            return WriteResult(
+                decision.path, "error",
+                "provenance ledger diverged; run arxiv-check-versions",
+            )
+        write_provenance(sidecar, provenance)
+        return decision
