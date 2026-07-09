@@ -3460,7 +3460,13 @@ def cmd_arxiv_search(args: argparse.Namespace) -> int:
     # what a real run sends — and it makes arXiv's own reading of the query
     # visible, which matters because a bare multi-word phrase is not searched as a
     # phrase (#89).
-    if args.dry_run:
+    # --show-query spends no request; it prints the exact `search_query` that would
+    # be sent. It used to be `--dry-run`, back when this command imported nothing
+    # (#80). Now that it does, `--dry-run` must mean what it means everywhere else
+    # in factlog and in `openalex-search`: do the work, write nothing. Two sibling
+    # commands whose identical `--dry-run` help hid different behaviour is the trap
+    # this splits (#81).
+    if args.show_query:
         composed = compose_search_query(args.query, categories, args.year)
         if porcelain:
             print(f"query\t{composed}")
@@ -4110,6 +4116,12 @@ def build_parser() -> argparse.ArgumentParser:
         "arxiv-search",
         help="search arXiv and import chosen works into sources/ (free; --all or a TTY prompt)",
     ))
+    ax_search.add_argument(
+        "--show-query", action="store_true",
+        help="print the exact search_query that would be sent and exit, without "
+             "spending a request. `--dry-run` searches and reports what it would "
+             "import, like openalex-search.",
+    )
     ax_search.add_argument(
         "--query", required=True,
         help='search text (required). A bare multi-word query is searched as a '
