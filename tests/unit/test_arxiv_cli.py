@@ -98,6 +98,21 @@ class TestImport:
         with pytest.raises(SystemExit):
             run(["arxiv-import", "--target", "x"])
 
+    def test_imported_at_is_a_real_utc_timestamp(self, tmp_path, fake):
+        # The importer's unit tests inject `imported_at` as a literal, so the
+        # format the CLI actually stamps is only covered here.
+        from datetime import datetime, timezone
+
+        kb = _kb(tmp_path)
+        fake(FakeClient())
+        run(["arxiv-import", "--id", "1706.03762", "--target", str(kb)])
+        written = next((kb / "sources").glob("*.md")).read_text()
+        line = next(ln for ln in written.splitlines()
+                    if ln.startswith("imported_at:"))
+        stamped = datetime.fromisoformat(line.split(": ", 1)[1].strip().strip('"'))
+        assert stamped.tzinfo is not None
+        assert stamped.utcoffset() == timezone.utc.utcoffset(None)
+
     def test_dry_run_writes_nothing(self, tmp_path, fake, capsys):
         kb = _kb(tmp_path)
         fake(FakeClient())

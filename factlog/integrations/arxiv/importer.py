@@ -85,6 +85,11 @@ def import_works(
     become ``error`` outcomes. With ``dry_run`` no file is created; the report
     still names the file each work *would* claim, collision suffixes included.
 
+    When one batch names several versions of the same paper, the **highest** is
+    written and the others are skipped. Identity is the base id (P3), so exactly
+    one of them can land; taking the lowest would hand a user who asked for
+    ``--id 2311.09277v2`` the contents of v1 while reporting success.
+
     Outcome order is deterministic: work outcomes first (sorted by
     ``(arxiv_id, version)``), then error outcomes (sorted by ``key``).
     """
@@ -94,13 +99,25 @@ def import_works(
         include_abstract=settings.include_abstract,
     )
 
-    work_outcomes: list[WorkOutcome] = []
-    for work in sorted(works, key=lambda w: (w.arxiv_id, w.version)):
+    # Written highest-version-first so the newest wins the identity slot; the
+    # report is re-sorted ascending below, so output order does not depend on it.
+    ordered = sorted(works, key=lambda w: (w.arxiv_id, -w.version))
+    work_outcomes: list[tuple[str, int, WorkOutcome]] = []
+    for work in ordered:
         result = (
             writer.plan(work, target) if dry_run
             else writer.write(work, target, imported_at)
         )
-        work_outcomes.append(
+        reason = result.reason
+        if result.status == "skipped" and reason.startswith("already imported"):
+            # Distinguish "this paper is already in the KB" from "a newer version
+            # of it won the slot in this very batch", which is otherwise baffling.
+            newer = next((w for w in ordered
+                          if w.arxiv_id == work.arxiv_id and w.version > work.version), None)
+            if newer is not None:
+                reason = f"superseded by {newer.versioned_id} in this batch"
+        work_outcomes.append((
+            work.arxiv_id, work.version,
             WorkOutcome(
                 status=result.status,
                 # The versioned id is what a reader recognises; identity/dedup
@@ -108,9 +125,10 @@ def import_works(
                 key=work.versioned_id,
                 title=work.title or "(untitled)",
                 path=result.path,
-                reason=result.reason,
-            )
-        )
+                reason=reason,
+            ),
+        ))
+    work_outcomes.sort(key=lambda item: (item[0], item[1]))
 
     error_outcomes = [
         WorkOutcome("error", key, "", None, reason) for key, reason in invalid
@@ -121,4 +139,4 @@ def import_works(
         )
     error_outcomes.sort(key=lambda o: o.key)
 
-    return ImportReport(work_outcomes + error_outcomes)
+    return ImportReport([outcome for _, _, outcome in work_outcomes] + error_outcomes)

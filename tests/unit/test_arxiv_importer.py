@@ -44,6 +44,40 @@ class TestImportWorks:
         report = import_works([_work("1706.03762", version=5)], target=_kb(tmp_path))
         assert report.outcomes[0].key == "1706.03762v5"
 
+    def test_the_highest_version_in_a_batch_wins_the_identity_slot(self, tmp_path):
+        # Identity is the base id (P3), so only one version of a paper can land.
+        # Writing the lowest would hand a user who asked for v2 the text of v1
+        # while reporting success. Order the batch lowest-first to prove the
+        # write order, not the argument order, decides.
+        kb = _kb(tmp_path)
+        report = import_works(
+            [_work("1706.03762", version=1, title="draft"),
+             _work("1706.03762", version=2, title="revised")],
+            target=kb,
+        )
+        assert report.imported == 1
+        assert report.skipped == 1
+        written = next((kb / "sources").glob("*.md")).read_text()
+        assert 'arxiv_version: 2' in written
+        assert "revised" in written
+
+    def test_a_version_skipped_for_a_newer_one_says_so(self, tmp_path):
+        report = import_works(
+            [_work("1706.03762", version=1), _work("1706.03762", version=2)],
+            target=_kb(tmp_path),
+        )
+        skipped = next(o for o in report.outcomes if o.status == "skipped")
+        assert skipped.key == "1706.03762v1"
+        assert skipped.reason == "superseded by 1706.03762v2 in this batch"
+
+    def test_a_paper_already_in_the_kb_is_not_reported_as_superseded(self, tmp_path):
+        # The "superseded" wording is only true within one batch. A plain
+        # re-import must keep the identity-match reason.
+        kb = _kb(tmp_path)
+        import_works([_work("1706.03762", version=2)], target=kb)
+        report = import_works([_work("1706.03762", version=2)], target=kb)
+        assert report.outcomes[0].reason.startswith("already imported")
+
     def test_import_order_is_by_id_then_version(self, tmp_path):
         # Deterministic order -> reproducible collision suffixes and porcelain.
         kb = _kb(tmp_path)
