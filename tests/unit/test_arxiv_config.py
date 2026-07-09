@@ -7,9 +7,12 @@ OpenAlex side, except arXiv does not even reject an unknown *field* name.
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from factlog.integrations.arxiv.config import (
+    ARXIV_EPOCH_YEAR,
     CATEGORIES,
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -18,6 +21,7 @@ from factlog.integrations.arxiv.config import (
     ArxivConfig,
     ArxivConfigError,
     ArxivValidationError,
+    build_submitted_date,
     from_mapping,
     load_config,
     validate_category,
@@ -120,6 +124,69 @@ def test_sort_translates_to_the_api_spelling(value, expected):
 def test_unknown_sort_is_rejected():
     with pytest.raises(ArxivValidationError, match="invalid sort"):
         validate_sort("bogus")
+
+
+# -- build_submitted_date (#80) --------------------------------------------
+# The bounds are always the full YYYYMMDDTTTT form the live API needs: a bare
+# four-digit year (`[2020 TO 2021]`) is silently reinterpreted to a different,
+# larger result set than the equivalent full-form span.
+
+
+def test_single_year_expands_to_a_full_year_span():
+    assert build_submitted_date("2020") == "submittedDate:[202001010000 TO 202012312359]"
+
+
+def test_year_range_expands_to_the_full_span():
+    assert build_submitted_date("2020-2023") == (
+        "submittedDate:[202001010000 TO 202312312359]"
+    )
+
+
+def test_whitespace_around_the_range_is_tolerated():
+    assert build_submitted_date(" 2020 - 2023 ") == (
+        "submittedDate:[202001010000 TO 202312312359]"
+    )
+
+
+def test_bounds_are_never_emitted_as_bare_years():
+    # The bare-year form silently means something else on the live API, so the
+    # clause must always carry the eight trailing digits.
+    clause = build_submitted_date("2020")
+    assert "[2020 TO" not in clause and "TO 2020]" not in clause
+
+
+def test_reversed_range_is_rejected_not_sent():
+    # A reversed span answers 200/0 on the live API — a silent lie, so it is
+    # caught here rather than passed through.
+    with pytest.raises(ArxivValidationError, match="runs backwards"):
+        build_submitted_date("2023-2020")
+
+
+def test_year_below_the_arxiv_epoch_is_rejected():
+    with pytest.raises(ArxivValidationError, match="outside arXiv's range"):
+        build_submitted_date(str(ARXIV_EPOCH_YEAR - 1))
+
+
+def test_far_future_year_is_rejected():
+    # A future year answers 200/0 rather than erroring, so a typo like 2099 would
+    # read as "no such literature exists".
+    with pytest.raises(ArxivValidationError, match="outside arXiv's range"):
+        build_submitted_date("2099", today=date(2026, 7, 9))
+
+
+def test_next_year_is_accepted_as_the_ceiling():
+    # A submission dated early next year (timezones, embargoes) must not be
+    # false-rejected.
+    assert build_submitted_date("2027", today=date(2026, 7, 9)).startswith(
+        "submittedDate:[2027"
+    )
+
+
+@pytest.mark.parametrize("bad", ["", "  ", "abc", "20xy", "202", "20200", "2020-",
+                                 "-2020", "2020-2021-2022", "2020/2021"])
+def test_malformed_year_is_rejected(bad):
+    with pytest.raises(ArxivValidationError):
+        build_submitted_date(bad)
 
 
 def test_from_mapping_reads_client_and_import_sections():

@@ -50,6 +50,7 @@ from factlog import __version__
 from factlog.integrations.arxiv.config import (
     API_DEFAULT_MAX_RESULTS,
     ArxivConfig,
+    build_submitted_date,
     validate_category,
     validate_search_query,
     validate_sort,
@@ -338,6 +339,7 @@ class ArxivClient:
         query: str,
         *,
         categories=(),
+        year: str | None = None,
         limit: int | None = None,
         sort: str | None = None,
         start: int = 0,
@@ -356,6 +358,10 @@ class ArxivClient:
         clauses = [validate_search_query(query)]
         for category in categories:
             clauses.append(f"cat:{validate_category(category)}")
+        # --year expands to a submittedDate span; a bare year, reversed span, or
+        # out-of-range year each answer 200/0, so they are validated here (#80).
+        if year:
+            clauses.append(build_submitted_date(year))
 
         params: dict = {
             "search_query": " AND ".join(clauses),
