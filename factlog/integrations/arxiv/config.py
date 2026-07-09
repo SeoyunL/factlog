@@ -30,6 +30,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 # factlog policy, not an API constraint: the API serves max_results=5000 (a
@@ -122,6 +123,14 @@ _FIELD_TOKEN_RE = re.compile(r'(?:^|[\s(])([A-Za-z_]+):("[^"]*"|\S+)')
 SORT_FIELDS = {"submitted": "submittedDate", "updated": "lastUpdatedDate",
                "relevance": "relevance"}
 
+# arXiv's first submission was August 1991; nothing predates it. A --year below
+# this, or above next year, is a typo, not a query — and a typo must not read as
+# "no such literature exists".
+ARXIV_EPOCH_YEAR = 1991
+
+# --year is `YYYY` or `YYYY-YYYY`. Anything else is rejected before a request.
+_YEAR_RE = re.compile(r"^\s*([0-9]{4})(?:\s*-\s*([0-9]{4}))?\s*$")
+
 
 class ArxivConfigError(Exception):
     """An arXiv settings file was named but could not be read/parsed/validated."""
@@ -196,6 +205,54 @@ def validate_sort(value: str) -> str:
         known = ", ".join(sorted(SORT_FIELDS))
         raise ArxivValidationError(f"invalid sort {value!r}; expected one of: {known}")
     return SORT_FIELDS[value.strip()]
+
+
+def build_submitted_date(year_spec: str, *, today: date | None = None) -> str:
+    """Turn ``--year`` (``YYYY`` or ``YYYY-YYYY``) into a ``submittedDate:`` clause.
+
+    Measured against the live API (#80), three silent traps make this a
+    validate-and-expand step rather than a passthrough:
+
+    * **A bare four-digit year is silently reinterpreted.** ``submittedDate:[2020
+      TO 2021]`` answers 200 with a *different, larger* count than the full
+      ``[202001010000 TO 202112312359]`` form covering the same span. The bounds
+      are therefore always emitted as arXiv's documented ``YYYYMMDDTTTT`` form,
+      never as bare years.
+    * **A reversed or out-of-range span answers 200 with zero results**, not an
+      error — ``[...2359 TO ...0000]`` and a year like 2099 both read as "no such
+      literature exists". So the start must not exceed the end, and each year
+      must fall within arXiv's lifetime (``1991`` .. next year).
+    * **Only syntactic garbage 400/500s** (``[abc TO def]`` is a 500), which is
+      too late and too coarse to guide the operator. Everything catchable is
+      caught here, before a request is spent.
+
+    Returns e.g. ``submittedDate:[202001010000 TO 202012312359]``.
+    """
+    if not isinstance(year_spec, str) or not year_spec.strip():
+        raise ArxivValidationError("--year must be a year or range, e.g. 2023 or 2020-2025.")
+    match = _YEAR_RE.match(year_spec)
+    if match is None:
+        raise ArxivValidationError(
+            f"invalid --year {year_spec!r}; expected a year or range, e.g. 2023 or 2020-2025."
+        )
+
+    start_year = int(match.group(1))
+    end_year = int(match.group(2)) if match.group(2) else start_year
+
+    ceiling = (today or date.today()).year + 1
+    for year in (start_year, end_year):
+        if not ARXIV_EPOCH_YEAR <= year <= ceiling:
+            raise ArxivValidationError(
+                f"year {year} is outside arXiv's range ({ARXIV_EPOCH_YEAR}-{ceiling}); "
+                "arXiv answers an out-of-range year with zero results rather than an error."
+            )
+    if start_year > end_year:
+        raise ArxivValidationError(
+            f"--year range {start_year}-{end_year} runs backwards; arXiv answers a "
+            "reversed range with zero results rather than an error."
+        )
+
+    return f"submittedDate:[{start_year}01010000 TO {end_year}12312359]"
 
 
 def xdg_config_path() -> Path:
