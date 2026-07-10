@@ -3817,25 +3817,18 @@ def cmd_arxiv_acknowledge_withdrawal(args: argparse.Namespace) -> int:
                     f"no arXiv record for id {arxiv_id!r} is in this KB, so there is nothing "
                     "to acknowledge."
                 )
-        elif entry.recorded_version is not None:
-            # Front matter carries `arxiv_version`, so `arxiv-backfill-provenance` builds
-            # the ledger from it (#114); after that this command records the decision. The
-            # human gate stays: backfill writes no `withdrawn_by`, only this command does.
-            reason = (
-                f"{arxiv_id!r} is known only from front matter (imported before #82), so "
-                "it has no provenance ledger to record a decision in — and re-import will "
-                "not create one. Run `factlog arxiv-backfill-provenance` to build one from "
-                "its front matter, then re-run this command to acknowledge."
-            )
         else:
-            # No `arxiv_version`: backfill refuses this paper (#113), so no command can
-            # build the ledger this decision would live in — tracked in #135.
-            reason = (
-                f"{arxiv_id!r} is known only from front matter (imported before #82), so "
-                "it has no provenance ledger to record a decision in, and its front matter "
-                "carries no arxiv_version, so `arxiv-backfill-provenance` refuses it "
-                "(#113); no command can build a ledger for it, so this signal cannot be "
-                "acknowledged here (#135)."
+            # A front-matter paper (four kinds, #98) has no *arXiv ledger record* to write a
+            # decision into. Which command gives it one is not a function of `arxiv_version`
+            # alone — a readable sidecar with no arXiv record is repaired by `arxiv-import`,
+            # an absent one by `arxiv-backfill-provenance` only when a version is present, an
+            # unreadable one by nothing (#132). The one classifier in check_versions decides,
+            # so this refusal never denies a command that repairs the paper nor prescribes
+            # one that errors. The human gate stays: this branch writes nothing.
+            reason = cv.front_matter_acknowledge_refusal(
+                arxiv_id,
+                sidecar_state=entry.sidecar_state,
+                has_recorded_version=entry.recorded_version is not None,
             )
         print(f"factlog {command}: {reason} No request was made; nothing written.",
               file=sys.stderr)

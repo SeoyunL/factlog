@@ -40,6 +40,8 @@ from factlog.integrations.common.provenance import (
     sidecar_path,
     write_provenance,
 )
+from factlog.integrations.openalex.source_writer import OpenAlexSourceWriter
+from factlog.integrations.openalex.work_parser import ParsedWork
 
 
 # --------------------------------------------------------------------------- #
@@ -596,6 +598,52 @@ class TestRefusesBeforeQuery:
         assert client.calls == []  # refused before the fetch: ZERO API requests
         assert not (tmp_path / "source-provenance").exists()
         assert _kb_snapshot(tmp_path) == before
+
+    def test_readable_sidecar_with_no_arxiv_record_names_arxiv_import_not_135(
+        self, tmp_path, fake, capsys
+    ):
+        # A sidecar EXISTS (another integration wrote it and echoed `arxiv_id`) but holds no
+        # arXiv record. This paper HAS a ledger, so #135 (which is about a paper that can
+        # never obtain one) is a lie here; `arxiv-import` merges an arXiv record into the
+        # existing ledger — measured below. The refusal must name that working command.
+        arxiv_id = "2311.09277"
+        # A genuine OpenAlex-primary source: its sidecar carries only an `openalex` record
+        # that echoes `arxiv_id` as an identifying cross-reference. `arxiv-import --id`
+        # merges an arXiv record into that ledger (a hand-built record with arxiv_id merely
+        # in `fields` is instead `skipped`, so it would not be a faithful reproduction).
+        written = OpenAlexSourceWriter().write(
+            ParsedWork(openalex_id="W1", title="A Paper", authors=("Ada Lovelace",),
+                       year=2023, journal="J", doi=None, pmid=None, arxiv_id=arxiv_id,
+                       work_type="article"),
+            tmp_path, imported_at="2026-01-01T00:00:00Z",
+        )
+        assert sidecar_path(written.path, tmp_path).is_file()
+        before = _kb_snapshot(tmp_path)
+        client = fake(FakeClient([_work(arxiv_id, version=7, withdrawn_by="author")]))
+        code = run([
+            "arxiv-acknowledge-withdrawal", "--id", arxiv_id,
+            "--target", str(tmp_path), "--yes",
+        ])
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "holds no arXiv record" in err
+        assert f"arxiv-import --id {arxiv_id}" in err
+        assert "#135" not in err
+        assert "arxiv-backfill-provenance" not in err
+        assert client.calls == []  # refused before the fetch: ZERO API requests
+        assert _kb_snapshot(tmp_path) == before
+
+        # And the prescribed command actually resolves it: import merges an arXiv record,
+        # after which the withdrawal is recorded and acknowledge finds nothing to do.
+        fake(FakeClient([_work(arxiv_id, version=7, withdrawn_by="author")]))
+        assert run(["arxiv-import", "--id", arxiv_id, "--target", str(tmp_path)]) == 0
+        capsys.readouterr()
+        fake(FakeClient([_work(arxiv_id, version=7, withdrawn_by="author")]))
+        assert run([
+            "arxiv-acknowledge-withdrawal", "--id", arxiv_id,
+            "--target", str(tmp_path), "--yes",
+        ]) == 0
+        assert "nothing to acknowledge" in capsys.readouterr().out
 
     def test_absent_id_refuses_before_query_zero_api(self, tmp_path, fake, capsys):
         _seed(tmp_path, "1706.03762", 7, withdrawn_by="author")  # a different paper
