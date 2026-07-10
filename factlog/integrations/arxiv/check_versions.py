@@ -837,7 +837,7 @@ def report_lines(
 
     if un_withdrawn:
         lines.append(
-            "\nNo longer withdrawn (arXiv reversed a withdrawal the ledger records):"
+            "\nNo longer withdrawn (arXiv reversed a withdrawal this KB records):"
         )
         for result in un_withdrawn:
             lines.append(f"  ↺ {un_withdrawal_note(result)}{_sources_suffix(result)}")
