@@ -31,6 +31,9 @@ def _arxiv(recorded_from: str, *, recorded: str | None = None) -> cv.VersionChec
         recorded_withdrawn_by=recorded,
         newly_withdrawn=True,
         recorded_from=recorded_from,
+        # A pre-#82 paper with no sidecar: the branch whose remedy is the backfill. Without
+        # this the default SIDECAR_READABLE would route to the arxiv-import branch (#132).
+        sidecar_state=cv.SIDECAR_ABSENT,
     )
 
 
