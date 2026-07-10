@@ -53,6 +53,8 @@ import re
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
+from factlog.integrations.pubmed.mesh import MeshHeading, parse_mesh_headings
+
 __all__ = [
     "ParsedPubMedWork",
     "PresentRecord",
@@ -103,6 +105,10 @@ class ParsedPubMedWork:
     doi: str | None = None
     abstract: str = ""
     pub_date_raw: str | None = None
+    # #165: MeSH descriptors with descriptor- AND qualifier-level majorness
+    # preserved (the level OpenAlex drops; spike §7). Empty on an unindexed
+    # record. Source-scoped — coexists with OpenAlex's flat ``mesh_terms``.
+    mesh_headings: tuple[MeshHeading, ...] = ()
 
     @property
     def has_abstract(self) -> bool:
@@ -292,11 +298,15 @@ def parse_article(record: ET.Element) -> ParsedPubMedWork:
     if not pmid:
         raise PubMedParseError("PubmedArticle record has no PMID")
 
+    # MeSH lives under MedlineCitation, not Article (#165, spike §7): read it here
+    # so it survives even a degenerate Article-less citation.
+    mesh_headings = parse_mesh_headings(citation)
+
     article = citation.find("Article")
     if article is None:
         # A citation with no Article is degenerate but still addressable; expose
         # the PMID (so deleted/merged classification still works) with empty body.
-        return ParsedPubMedWork(pmid=pmid)
+        return ParsedPubMedWork(pmid=pmid, mesh_headings=mesh_headings)
 
     pubmed_data = record.find("PubmedData")
     year, pub_date_raw = _pub_date(article)
@@ -316,6 +326,7 @@ def parse_article(record: ET.Element) -> ParsedPubMedWork:
         doi=_doi(article, pubmed_data),
         abstract=" ".join(abstract_parts),
         pub_date_raw=pub_date_raw,
+        mesh_headings=mesh_headings,
     )
 
 
