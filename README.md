@@ -330,14 +330,20 @@ rule rather than a similarity guess:
 | **split wrapper** | `기타(IL-10)` beside `IL-10` — one value filed twice. Queries are leaking now. |
 | **wrapper value** | `기타(INFLA-score)` — not queryable by its own name. |
 | **placeholder** | `기타`, `불명`, `N/A` — carries no information, hides what the source said. |
-| **spelling duplicate** | Equal after folding case/space/punctuation. If the spellings sit on **one** subject it is a value split; on **different** subjects it may be a duplicate record — a different repair. |
+| **spelling duplicate** | Equal after folding case/space/punctuation (`IL-8` / `il 8`). A query leak — unless the relation is an **identity** (see below), where a collision across subjects means a possible duplicate *record* instead. |
 
-Whether a folded collision is a *split* or a *duplicate record* is decided by
-policy, not by a guess: in a relation declared in `policy/attribute-relations.md`
-the value identifies its subject (a title, a DOI), so two subjects sharing one is
-probably two records of one thing. In any other relation, values are shared
-across subjects by design, and a collision there is a real query leak.
-`--strict` fails on leaks only.
+**Identity relations.** A relation is treated as an identity when *both* hold: it
+is declared literal-valued in `policy/attribute-relations.md`, **and** the data is
+injective — every distinct value belongs to exactly one subject. A title and a DOI
+qualify; a publication year does not (many papers share 2023), even though it is
+declared literal. In an identity relation two subjects sharing a folded value is
+probably two records of one thing. Everywhere else values are shared across
+subjects by design, so a collision is a real query leak. `--strict` fails on leaks
+only.
+
+Requiring both signals matters: the declaration alone downgraded real `2023년` /
+`2023 년` splits to "duplicate record", and injectivity alone would call anything
+an identity in a KB with two facts.
 
 Nothing is merged automatically. Fix with `factlog amend <subject> <relation>
 <object> --set-object <canonical>`, which rewrites the row durably (both

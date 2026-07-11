@@ -31,6 +31,9 @@ rule, not a guess:
      hides whatever the source actually said.
   4. Spelling duplicate — two values of one relation that are equal after folding
      case, spaces, and punctuation (`IL-8` / `il 8`). Deterministic, not fuzzy.
+     In an IDENTITY relation (a title, a DOI — declared literal AND injective in
+     the data) a collision across subjects means a possible duplicate RECORD, not
+     a split; anywhere else it is a query leak. See `_identity_relations`.
 
 Findings are reported for HUMAN judgement; nothing is merged. Fix with
 `factlog amend <subject> <relation> <object> --set-object <canonical>`, which
@@ -90,6 +93,10 @@ _PLACEHOLDERS = {
 # distinct numbers as one value split — a false positive that failed --strict on
 # perfectly good data.
 _DIGIT_SEP_RE = re.compile(r"(?<=\d)[-._/](?=\d)")
+# A thousands separator IS noise, unlike a decimal point: `1,000` and `1000` are
+# the same number, and policy/typed-relations.md lists both as valid `number`
+# spellings. Dropped before the digit-separator guard runs.
+_THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 _SEP_RE = re.compile(r"[\s\-_./·]+")
 _KEEP = "\x00"
 
@@ -101,6 +108,7 @@ def _fold(value: str) -> str:
     silent on exactly the KBs (Korean values, authored on macOS) it exists for.
     """
     folded = unicodedata.normalize("NFC", value)
+    folded = _THOUSANDS_RE.sub("", folded)
     folded = _DIGIT_SEP_RE.sub(_KEEP, folded)
     return _SEP_RE.sub("", folded).casefold()
 
@@ -115,21 +123,49 @@ def _match_wrapper(value: str) -> str | None:
     return None
 
 
+def _identity_relations(
+    facts: list[dict[str, str]],
+    attribute: set[str],
+) -> set[str]:
+    """Relations whose VALUE identifies its subject (a title, a DOI).
+
+    Two signals, both required:
+
+    * the author declared it literal-valued in `policy/attribute-relations.md`, and
+    * the data is INJECTIVE — every distinct value belongs to exactly one subject.
+
+    The declaration alone is not enough: `발행연도` is an attribute too, yet many
+    papers share a year, so treating it as identity downgraded a real `2023년` /
+    `2023 년` split to "duplicate record" — the same misclassification, just
+    smaller. The data alone is not enough either: in a KB with two facts every
+    value trivially has one owner, so injectivity would call anything identity.
+    Requiring both keeps the judgement honest on real KBs and conservative on tiny
+    ones (unproven ⇒ treated as categorical ⇒ a collision is reported as a leak).
+    """
+    owners: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for row in facts:
+        owners[row["relation"]][row["object"]].add(row["subject"])
+    return {
+        relation
+        for relation in attribute
+        if owners.get(relation) and all(len(s) == 1 for s in owners[relation].values())
+    }
+
+
 def audit(
     facts: list[dict[str, str]],
-    identity_relations: set[str] | None = None,
+    attribute_relations: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """Group values by relation and apply the rules. Pure — no I/O.
 
-    `identity_relations` are the literal-valued (attribute) relations — a title, a
-    DOI, a year. Their value IDENTIFIES its subject, so two subjects whose values
-    fold together are probably two records of one thing, not one value split in
-    two. For every OTHER (categorical) relation, values are shared across subjects
-    by design, and a folded collision between them IS the query leak: asking for
-    `IL-8` misses the rows filed as `il 8`. Judging by subject count instead of by
-    policy got this exactly backwards, and let the leak through the --strict gate.
+    In an IDENTITY relation (see `_identity_relations`) the value identifies its
+    subject, so two subjects whose values fold together are probably two records of
+    one thing — not one value split in two. In every OTHER relation values are
+    shared across subjects by design, and a folded collision between them IS the
+    query leak: asking for `IL-8` misses the rows filed as `il 8`. Judging that by
+    subject count got it exactly backwards and let the leak through --strict.
     """
-    identity = identity_relations or set()
+    identity = _identity_relations(facts, attribute_relations or set())
 
     by_relation: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     subjects: dict[tuple[str, str], set[str]] = defaultdict(set)

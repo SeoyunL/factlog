@@ -94,7 +94,7 @@ class TestSpellingDuplicate:
             _row("제목", "Omega-3 and Lung Function", "PMID_1"),
             _row("제목", "omega-3 and lung function", "PMID_2"),
         ]
-        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
+        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "duplicate_record"
         assert dup["subjects"] == "PMID_1, PMID_2"
 
@@ -139,19 +139,19 @@ class TestKindIsDecidedByPolicy:
 
     def test_categorical_collision_across_subjects_is_a_leak(self):
         facts = [_row("염증지표", "IL-8", "P1"), _row("염증지표", "il 8", "P2")]
-        dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
+        dup = value_audit.audit(facts, attribute_relations=set())["duplicates"][0]
         assert dup["kind"] == "split"
 
     def test_identity_relation_collision_across_subjects_is_a_duplicate_record(self):
         # A title identifies its paper. Two papers whose titles fold together are
         # probably two records of one thing — a different repair, and not a leak.
         facts = [_row("제목", "Omega-3 and Lung", "PMID_1"), _row("제목", "omega-3 and lung", "PMID_2")]
-        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
+        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "duplicate_record"
 
     def test_identity_relation_collision_on_one_subject_is_still_a_leak(self):
         facts = [_row("제목", "A B", "PMID_1"), _row("제목", "a  b", "PMID_1")]
-        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
+        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "split"
 
 
@@ -295,3 +295,65 @@ class TestExitCodes:
         assert result.returncode == 0
         assert "no candidate facts" in result.stdout
         assert "Traceback" not in result.stderr
+
+
+class TestIdentityNeedsBothSignals:
+    """A declared literal is not automatically an identity.
+
+    Using `attribute-relations.md` alone as the identity proxy left the SAME
+    misclassification behind, just smaller: `발행연도` is declared literal, yet many
+    papers share a year, so a real `2023년` / `2023 년` split was downgraded to
+    "duplicate record" and waved through --strict. Identity now needs the
+    declaration AND injective data (every value owned by exactly one subject).
+    """
+
+    def test_a_shared_literal_year_is_not_an_identity(self):
+        facts = [
+            _row("발행연도", "2023년", "P1"),
+            _row("발행연도", "2023 년", "P2"),
+            _row("발행연도", "2024년", "P3"),
+            _row("발행연도", "2024년", "P4"),  # a year is shared → not injective
+        ]
+        dup = value_audit.audit(facts, attribute_relations={"발행연도"})["duplicates"][0]
+        assert dup["kind"] == "split"
+
+    def test_a_title_is_an_identity(self):
+        facts = [
+            _row("제목", "Omega-3 and Lung", "PMID_1"),
+            _row("제목", "omega-3 and lung", "PMID_2"),
+            _row("제목", "Something Else", "PMID_3"),
+        ]
+        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
+        assert dup["kind"] == "duplicate_record"
+
+    def test_an_undeclared_relation_is_never_an_identity(self):
+        # Injective by accident (one row each), but not declared → categorical.
+        facts = [_row("염증지표", "IL-8", "P1"), _row("염증지표", "il 8", "P2")]
+        dup = value_audit.audit(facts, attribute_relations=set())["duplicates"][0]
+        assert dup["kind"] == "split"
+
+
+class TestThousandsSeparator:
+    def test_a_thousands_separator_is_noise(self):
+        # policy/typed-relations.md lists `1,000` and `1000` as the same number.
+        facts = [_row("총_문항_수", "1,000", "P1"), _row("총_문항_수", "1000", "P1")]
+        assert len(value_audit.audit(facts)["duplicates"]) == 1
+
+    def test_a_decimal_point_is_still_not_noise(self):
+        facts = [_row("복용량", "1.5", "P1"), _row("복용량", "15", "P1")]
+        assert value_audit.audit(facts)["duplicates"] == []
+
+
+class TestSuffixWrapperBoundary:
+    def test_a_legitimate_suffix_parenthetical_is_not_a_wrapper(self):
+        # The reversed rule must not swallow every trailing parenthesis — the same
+        # boundary the prefix rule holds for `ETC (electron transport chain)`.
+        facts = [
+            _row("대상질환", "chronic obstructive pulmonary disease (COPD)", "P1"),
+            _row("염증지표", "interleukin-6 (IL-6)", "P2"),
+        ]
+        assert not any(value_audit.audit(facts).values())
+
+    def test_a_junk_suffix_is_still_a_wrapper(self):
+        found = value_audit.audit([_row("염증지표", "TGF-β(기타)", "P1")])
+        assert found["wrappers"][0]["inner"] == "TGF-β"
