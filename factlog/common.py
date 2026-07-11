@@ -1825,8 +1825,19 @@ def build_text_to_datalog_prompt(question: str) -> str:
 
 
 def dependency_graph(facts: list[dict[str, str]]) -> dict[str, list[str]]:
+    """Edges between entities, mirroring the engine's `edge/2`.
+
+    Attribute relations are skipped, exactly as the engine rule skips them: their
+    objects are literals (a date, a count), not nodes a dependency path can run
+    through (#226). Keeping the two definitions in step matters — the report asks
+    the ENGINE whether a path exists and then asks THIS to render the trace, so a
+    divergence would print a route the engine says does not exist.
+    """
+    attrs = attribute_relations()
     graph: dict[str, list[str]] = defaultdict(list)
     for row in engine_input_rows(facts):
+        if row["relation"] in attrs:
+            continue
         graph[row["subject"]].append(row["object"])
     return graph
 
@@ -1864,16 +1875,34 @@ def first_dependency_path(facts: list[dict[str, str]]) -> list[str]:
     return []
 
 
+# `attr_rel` carries the relations declared in policy/attribute-relations.md, and
+# edges skip them. Their objects are LITERALS — a date, a count — not things a
+# dependency path can meaningfully run through. The scaffolded policy file promises
+# exactly this ("kept OUT of the entity set, so they do not show up as entities,
+# path nodes, or count subjects"), but the rule had no such filter, so a path could
+# hop through `2030.1` as if a date were an entity (#226).
+#
+# A KB that declares no attribute relations gets no `attr_rel` facts, so the
+# derived edges are identical to before.
 WIRELOG_PROGRAM = """
 .decl relation(subject: symbol, rel: symbol, object: symbol)
 .decl canonical(subject: symbol, rel: symbol, object: symbol)
+.decl attr_rel(rel: symbol)
 .decl edge(start: symbol, target: symbol)
 .decl path(start: symbol, target: symbol)
 
-edge(S, O) :- relation(S, R, O).
+edge(S, O) :- relation(S, R, O), !attr_rel(R).
 path(S, O) :- edge(S, O).
 path(S, O) :- edge(S, M), path(M, O).
 """
+
+
+def _attr_rel_facts() -> str:
+    """`attr_rel` facts for the declared attribute relations (empty when none)."""
+    names = sorted(attribute_relations())
+    if not names:
+        return ""
+    return "\n" + "\n".join(f'attr_rel("{name}").' for name in names) + "\n"
 
 
 def decode_wirelog_value(session: EasySession, value: object) -> object:
@@ -1956,7 +1985,7 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
     accepted_program = ACCEPTED_DL.read_text(encoding="utf-8")
     policy_program = load_logic_policy()
     specs = typed_relations()
-    base_program = WIRELOG_PROGRAM + "\n" + policy_program + "\n" + accepted_program
+    base_program = WIRELOG_PROGRAM + _attr_rel_facts() + "\n" + policy_program + "\n" + accepted_program
     if specs:
         _assert_no_alias_collision(specs, base_program)
         # Fail loud BEFORE handing a float-bearing program to the engine: a
