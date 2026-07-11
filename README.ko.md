@@ -245,7 +245,12 @@ Windows에서 `python` / `python3` 실행 파일 문제로 `setup` 이 실패하
 pip install -r ~/git/factlog-academic/requirements.txt   # pyrewire>=1.0.3,<2.0
 python3 -m factlog doctor          # checks Python 3.11+ and pyrewire
 python3 -m factlog init --target ~/wiki   # scaffold the KB layout
+python3 -m factlog use ~/wiki      # 활성 KB로 지정
 ```
+
+`use` 줄이 중요합니다. `init`은 활성 KB가 아직 없을 때만 새 KB를 채택합니다. 이미
+활성 KB가 있는데 `use`를 빠뜨리면, 옛 KB가 활성인 채로 남고 새 KB는 만들어지기만
+합니다. (`init --target ~/wiki --activate` 로 한 번에 처리할 수도 있습니다.)
 
 ## 상세 레퍼런스
 
@@ -297,9 +302,15 @@ factlog ingest --scan --target ~/wiki        # auto-convert every binary under s
 
 #### 활성 KB (설정해 둔 KB를 어디서든 대상으로)
 
-`factlog init`/`setup`(또는 `factlog use <kb>`) 이후, 선택한 KB가 **활성 KB**로
-기록됩니다. 그래서 `ingest`/`ask`/`sync` 및 도구들이 어느 작업 디렉터리에서든
-그 KB를 대상으로 동작합니다 — `--target`/`--wiki` 가 필요 없습니다.
+`factlog setup`(또는 `factlog use <kb>`)은 선택한 KB를 **활성 KB**로 기록합니다.
+그래서 `ingest`/`ask`/`sync` 및 도구들이 어느 작업 디렉터리에서든 그 KB를 대상으로
+동작합니다 — `--target`/`--wiki` 가 필요 없습니다.
+
+`factlog init`도 기록하지만, **쓸 수 있는 활성 KB가 아직 없을 때만** 그렇습니다.
+이미 활성 KB가 있으면 `init`은 새 KB를 만들되 활성 KB는 건드리지 않습니다. 그러지
+않으면 다른 셸·테스트·에이전트가 스크래치 KB를 만드는 순간
+`accept`/`reject`/`amend`/`sync`가 조용히 그쪽을 향하게 됩니다. 전환은
+`factlog use <kb>`로 명시적으로 하거나, 처음부터 `init --activate`로 요청하십시오.
 
 *터미널에서 실행:*
 
@@ -584,6 +595,38 @@ chain)` 은 실재하는 값입니다.
 `tools/entity_audit.py` 는 이웃한 점검입니다. KB 전체에서 *엔티티* 분열을 토큰 공유
 휴리스틱으로 찾으므로 범위가 넓고 훨씬 시끄럽습니다(같은 KB에서 후보 2275건). 바로
 조치할 수 있는 정밀한 관계별 발견이 필요하면 `value_audit` 을 쓰십시오.
+#### 값 계층 (`policy/value-hierarchy.md`)
+
+같은 관계의 두 값은, 따로 말해 주지 않으면 서로 무관한 문자열입니다. 코호트연구는
+관찰연구**입니다**. 그러나 선언이 없으면 `relation(P, "연구유형", "관찰연구")?` 는
+정확히 `관찰연구` 라고 적힌 행만 돌려주고 `코호트연구` 로 기록된 행을 전부 놓칩니다 —
+조용한 누락이고, 이 KB가 막으려는 바로 그 실패입니다. 실제 KB에서 그 질의는 14편 중
+6편만 반환했습니다.
+
+```markdown
+# policy/value-hierarchy.md
+- 연구유형: 코호트연구 ⊂ 관찰연구
+- 연구유형: 단면연구 ⊂ 관찰연구
+- 대상질환: `emphysema` <: COPD
+```
+
+`<:` 와 `<` 는 `⊂` 의 ASCII 표기입니다. 공백·`:`·`<` 가 든 값은 백틱으로 감싸십시오.
+조상은 이행적입니다(`a ⊂ b` 이고 `b ⊂ c` 면 `c` 질의가 `a` 행도 잡습니다).
+
+**적용 범위.** 포섭은 질의의 **객체**를 매칭할 때 적용되며, 게이트·평가기·논리
+리포트 셋 모두가 같은 선언을 읽습니다. 그래서 `/factlog ask` 와 `/factlog check` 가
+같은 질문에 다르게 답할 수 없습니다. 사실을 다시 쓰지는 않습니다 — `accepted.dl` 은
+여전히 승인된 후보 행의 1:1 투영이고, 각 행은 자기 값과 자기 출처를 그대로 유지합니다.
+**단방향**입니다(좁은 값을 물으면 넓은 값은 돌아오지 않습니다). `factlog search` ·
+`provenance` · `vocab` · 커버리지 · 모순 탐지에는 **적용되지 않습니다** — 이들은 여전히
+값을 정확히 일치시킵니다.
+
+넓은 값이 어느 사실에도 등장하지 않아도 됩니다. 선언만으로 질의 가능한 개념이 됩니다.
+
+실수는 조용히 무동작으로 남지 않고 보고됩니다. **순환**은 통째로 폐기되며(그대로 두면
+포섭이 양방향이 되어 단방향 계약이 깨집니다), 어떤 accepted 사실도 쓰지 않는 관계나 값을
+선언하면 논리 리포트의 경고로 뜹니다 — 그러지 않으면 오타 하나로, 넓은 질의가 좁은 행을
+잡고 있다고 **믿게** 됩니다.
 
 #### 타입 지정 관계 (`policy/typed-relations.md`)
 

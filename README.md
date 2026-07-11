@@ -86,9 +86,15 @@ factlog ingest --scan --target ~/wiki        # auto-convert every binary under s
 
 ### Active KB (target the set-up KB from anywhere)
 
-After `factlog init`/`setup` (or `factlog use <kb>`), the chosen KB is recorded
-as the **active KB**, so `ingest`/`ask`/`sync` and the tools target it from any
-working directory — no `--target`/`--wiki` needed:
+`factlog setup` (or `factlog use <kb>`) records the chosen KB as the **active
+KB**, so `ingest`/`ask`/`sync` and the tools target it from any working
+directory — no `--target`/`--wiki` needed:
+
+`factlog init` records it too, but **only when no usable active KB is set yet**.
+Once you have one, `init` scaffolds the new KB and leaves the active KB alone —
+otherwise creating a scratch KB in another shell, a test, or an agent would
+silently repoint `accept`/`reject`/`amend`/`sync` at it. Switch deliberately with
+`factlog use <kb>`, or ask for it up front with `init --activate`.
 
 ```bash
 factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
@@ -378,6 +384,45 @@ transport chain)` is a real value.
 fragmentation across the whole KB by a shared-token heuristic, so it is broader
 and far noisier (2275 candidates on that same KB). Use `value_audit` when you
 want precise, per-relation findings you can act on.
+### Value hierarchy (`policy/value-hierarchy.md`)
+
+Two values of the same relation are unrelated strings unless you say otherwise.
+A cohort study **is** an observational study, but without a declaration
+`relation(P, "study_type", "observational")?` returns only the rows spelled
+exactly `observational` and silently misses every row filed as `cohort` — a quiet
+omission, which is the one failure mode this KB exists to prevent. In a real KB
+that query returned 6 rows out of 14.
+
+```markdown
+# policy/value-hierarchy.md
+- study_type: cohort ⊂ observational
+- study_type: cross_sectional ⊂ observational
+- target_disease: `emphysema` <: COPD
+- 연구유형: 코호트연구 ⊂ 관찰연구          # non-ASCII names work the same
+```
+
+`<:` and `<` are ASCII spellings of `⊂`. Backtick-quote a value containing a
+space, a `:` or a `<`. Ancestors are transitive (`a ⊂ b` and `b ⊂ c` means a
+query for `c` also matches an `a` row). Names are matched after Unicode NFC
+normalisation, so a policy file written on macOS still meets its facts.
+
+**Scope — where subsumption applies.** It is applied when a query's **object** is
+matched, by all three of the gate, the evaluator and the logic report, so
+`/factlog ask` and `/factlog check` cannot disagree about what a question means.
+It does **not** rewrite facts: `accepted.dl` stays a 1:1 projection of the
+accepted candidate rows, and every row keeps its own value and its own
+provenance. It is **one-way** — asking for the narrow value never returns the
+broad one. It does **not** apply to `factlog search`, `provenance`, `vocab`,
+coverage, or conflict detection, which all still match values exactly.
+
+The broad value does not need to appear in any fact — declaring it is enough for
+it to become a queryable concept.
+
+Mistakes are reported rather than left to do nothing quietly: a **cycle** is
+dropped in full (keeping it would make subsumption mutual and break the one-way
+contract), and a declaration naming a relation or value that no accepted fact
+uses is surfaced in the logic report's warnings — a typo would otherwise leave
+you believing the broad query now catches the narrow rows when it does not.
 
 ### Typed relations (`policy/typed-relations.md`)
 
@@ -633,7 +678,12 @@ To develop against a local clone, register the working tree as the marketplace i
 pip install -r ~/git/factlog-academic/requirements.txt   # pyrewire>=1.0.3,<2.0
 python3 -m factlog doctor          # checks Python 3.11+ and pyrewire
 python3 -m factlog init --target ~/wiki   # scaffold the KB layout
+python3 -m factlog use ~/wiki      # make it the active KB
 ```
+
+The `use` line matters: `init` only adopts the new KB when you have no active KB
+yet. If you already had one, skipping `use` leaves the old KB active and the new
+one merely scaffolded. (`init --target ~/wiki --activate` does both in one step.)
 
 ### Windows Python executable
 
