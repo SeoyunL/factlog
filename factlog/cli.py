@@ -563,8 +563,21 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     target = Path(args.target).expanduser().resolve()
     _init_kb(target)
-    factlog_config.write_root(target)
-    print(f"factlog init: active KB set to {target} (ingest/ask/sync default here from any directory)")
+
+    # Scaffolding a KB must not silently retarget the commands that mutate one.
+    # `init` used to overwrite the active KB unconditionally, so creating a
+    # scratch KB anywhere — another shell, a test, an agent — pointed the user's
+    # accept/reject/amend/sync at it without a word (#210). Adopt the new KB only
+    # when nothing is configured yet (the first-run convenience); otherwise leave
+    # the active KB alone and say how to switch deliberately.
+    current = factlog_config.read_root()
+    if current is None or current == str(target):
+        factlog_config.write_root(target)
+        print(f"factlog init: active KB set to {target} (ingest/ask/sync default here from any directory)")
+        return 0
+
+    print(f"factlog init: active KB left unchanged at {current}")
+    print(f"  {target} was created but is NOT active. To switch: factlog use {target}")
     return 0
 
 
@@ -1802,12 +1815,18 @@ def cmd_setup(args: argparse.Namespace) -> int:
     print("\n=== factlog setup: initialise knowledge base ===")
     target = Path(args.target).expanduser().resolve()
     kb_created = _init_kb(target)
+    previous = factlog_config.read_root()
     factlog_config.write_root(target)
     if kb_created:
         actions.append(f"created KB layout at {target}")
     else:
         actions.append(f"KB already present at {target}")
-    actions.append(f"set active KB to {target} (ingest/ask/sync default here from any directory)")
+    # setup IS the "make this my KB" command, so it does adopt the target — but
+    # replacing a different active KB must be stated, not slipped in (#210).
+    if previous is not None and previous != str(target):
+        actions.append(f"CHANGED active KB: {previous} -> {target} (was pointing elsewhere)")
+    else:
+        actions.append(f"set active KB to {target} (ingest/ask/sync default here from any directory)")
     # Optional narration language: applied only when --lang is given, so an existing
     # language survives a re-run of setup that omits the flag (write_root above
     # already preserves it). Uses the shared validate/apply path, so an empty value
