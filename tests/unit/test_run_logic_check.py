@@ -35,3 +35,46 @@ class TestRelationResultsCommaLiteral:
         facts = [_fact("A", "knows", "B")]
         rows = rlc.relation_results('relation("A", "knows", "B")?', facts)
         assert rows == [("A", "knows", "B")]
+
+
+def _row(status):
+    return {"subject": "A", "relation": "r", "object": "B", "status": status}
+
+
+class TestStatusWarnings:
+    """Status vocabulary of the logic report (#208).
+
+    `factlog reject`/`amend` retires a row as `superseded`. That is a known
+    status, so the report must stay silent about it — warning per retired row
+    made the report noisier the more review had been done. A typo must still
+    warn.
+    """
+
+    def test_superseded_is_silent(self):
+        assert rlc.status_warnings([_row("superseded")]) == []
+
+    def test_engine_and_review_statuses_are_silent(self):
+        rows = [_row(s) for s in ("confirmed", "accepted", "needs_review", "candidate")]
+        assert rlc.status_warnings(rows) == []
+
+    def test_unrecognised_status_still_warns(self):
+        warnings = rlc.status_warnings([_row("bogus")])
+        assert warnings == ["unknown status treated as non-engine input: bogus"]
+
+    def test_warns_once_per_offending_row_only(self):
+        rows = [_row("superseded"), _row("bogus"), _row("accepted")]
+        assert len(rlc.status_warnings(rows)) == 1
+
+    def test_vocabulary_follows_common(self):
+        # Pins the derive-don't-restate rule: extending common's vocabulary must
+        # extend this consumer, which is exactly what #208 broke.
+        import common
+
+        for status in common.KNOWN_STATUSES:
+            assert rlc.status_warnings([_row(status)]) == [], status
+
+    def test_every_status_the_cli_writes_is_known(self):
+        # accept/reject/amend write these; none may be reported as unknown.
+        import common
+
+        assert {"accepted", "superseded"} <= set(common.KNOWN_STATUSES)
