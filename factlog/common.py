@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import decimal
+import functools
 import json
 import os
 import re
@@ -901,6 +902,20 @@ def _closed_hierarchy(root: Path | None = None) -> tuple[dict[str, dict[str, set
     return closed, warnings
 
 
+@functools.lru_cache(maxsize=8)
+def _alias_canonicals_cached(items: tuple) -> frozenset:
+    return frozenset(v for _, v in items)
+
+
+def _alias_canonicals(aliases: dict[str, str]) -> frozenset:
+    """The canonical names in an alias map, without rebuilding the set per row.
+
+    _canonicalize runs once per fact; rebuilding set(aliases.values()) inside it made
+    detect_conflicts O(rows x aliases), and status now calls it on every run.
+    """
+    return _alias_canonicals_cached(tuple(sorted(aliases.items())))
+
+
 def _canonicalize(relation: str, aliases: dict[str, str]) -> str:
     """Return the canonical relation name when *relation* participates in the
     alias map; otherwise return *relation* verbatim (NFD-preserving).
@@ -920,7 +935,7 @@ def _canonicalize(relation: str, aliases: dict[str, str]) -> str:
     rn = unicodedata.normalize("NFC", relation)
     if rn in aliases:
         return aliases[rn]
-    if rn in set(aliases.values()):
+    if rn in _alias_canonicals(aliases):
         return rn
     return relation
 
@@ -1038,13 +1053,13 @@ def detect_conflicts(
         if len(groups) <= 1:
             continue
         values = sorted(min(raws) for raws in groups.values())
-        if _is_specialisation_chain(values, canon, hierarchy):
+        if _is_specialisation_chain(values, canon, hierarchy, typed.get(canon)):
             continue
         conflicts[(subject, canon)] = values
     return conflicts
 
 
-def _hier_key(value: str) -> str:
+def _hier_key(value: str, spec: TypedRelSpec | None = None) -> object:
     """The form a value is compared in when matching it against the hierarchy.
 
     NFC as well as canonical_value: the policy file is NFC-normalized at parse time but
@@ -1052,6 +1067,12 @@ def _hier_key(value: str) -> str:
     the fact it describes, spelled identically, did not meet, and the report blamed a
     typo that was not there.
     """
+    # The SAME key _group_key uses, so the scaler equivalence it advertises (억 ↔ 조)
+    # reaches the hierarchy too. Comparing raw strings here meant a declaration written
+    # in 조 never met a fact written in 억, even though the two are the same number and
+    # _group_key already collapses them.
+    if spec is not None:
+        return _group_key(unicodedata.normalize("NFC", value), spec)
     return canonical_value(unicodedata.normalize("NFC", value))
 
 
@@ -1059,6 +1080,7 @@ def _is_specialisation_chain(
     values: list[str],
     relation: str,
     hierarchy: dict[str, dict[str, set[str]]] | None,
+    spec: TypedRelSpec | None = None,
 ) -> bool:
     """True when every value sits on ONE declared ancestor chain for *relation*.
 
@@ -1086,12 +1108,13 @@ def _is_specialisation_chain(
         # while folding `others` with it meant a typed relation (an amount written
         # `amount(7,"억")`) never matched its own declaration, so the false conflict the
         # issue is about survived for exactly the values a hierarchy is most useful for.
-        ancestors = {
-            _hier_key(a) for a in hierarchy_ancestors(hierarchy, relation, candidate, _hier_key)
-        }
-        if not ancestors:
+        # hierarchy_ancestors keys on the raw declaration text, so the LOOKUP stays on
+        # canonical_value; only the COMPARISON folds through the typed key.
+        raw_ancestors = hierarchy_ancestors(hierarchy, relation, candidate, _hier_key)
+        if not raw_ancestors:
             continue
-        others = {_hier_key(v) for v in values if v != candidate}
+        ancestors = {_hier_key(a, spec) for a in raw_ancestors}
+        others = {_hier_key(v, spec) for v in values if v != candidate}
         if others <= ancestors:
             return True
     return False

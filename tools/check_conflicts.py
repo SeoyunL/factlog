@@ -8,9 +8,12 @@ same (subject, relation) among engine-input facts (status confirmed/accepted;
 'superseded' rows are ignored), that is a contradiction — the kind of silent rot
 a plain notes wiki accumulates. This surfaces it deterministically.
 
-Resolution is human-in-the-loop and non-destructive: mark the outdated row's
-status as 'superseded' in facts/candidates.csv (it stays for audit, drops out of
-engine input, and the conflict clears).
+Resolution is human-in-the-loop and non-destructive, through the gate rather than by
+hand-editing facts/candidates.csv: `factlog eject --fact SUBJECT RELATION OBJECT`
+retires a row (it stays for audit, drops out of engine input, and the conflict clears)
+and `factlog amend ... --set-object` corrects one. If the two values are a supertype
+and its subtype, neither is wrong -- declare the relationship in
+policy/value-hierarchy.md and both rows are kept.
 
 Exit code: 0 if no conflicts, 1 if any conflict is found.
 

@@ -120,3 +120,23 @@ def test_the_declaration_is_read_from_the_policy_file(tmp_path, monkeypatch):
     monkeypatch.setattr(fc, "POLICY_DIR", policy)
     facts = rows(("P1", "연구유형", "관찰연구"), ("P1", "연구유형", "코호트연구"))
     assert detect_conflicts(facts, SV) == {}  # hierarchy defaults to value_hierarchy()
+
+
+def test_the_typed_scaler_equivalence_reaches_the_hierarchy():
+    """_group_key collapses 억 ↔ 조; the hierarchy check must use the same key.
+
+    Comparing raw strings meant a declaration written in 조 never met a fact written in
+    억, even though the two are the same number and the grouping already treats them as
+    one value -- the same "declaration and fact never meet" failure this issue is about,
+    one level down.
+    """
+    from factlog.common import TypedRelSpec
+
+    typed = {"매출": TypedRelSpec(type="amount", alias="rev")}
+    hier = {"매출": {'amount(7,"억")': {'amount(1,"조")'}}}
+    same = rows(("P", "매출", 'amount(7,"억")'), ("P", "매출", 'amount(10000,"억")'))
+    assert detect_conflicts(same, {"매출"}, typed, hierarchy=hier) == {}
+
+    # a genuine sibling in the same units is still a conflict
+    sib = rows(("Q", "매출", 'amount(7,"억")'), ("Q", "매출", 'amount(5,"억")'))
+    assert ("Q", "매출") in detect_conflicts(sib, {"매출"}, typed, hierarchy=hier)
