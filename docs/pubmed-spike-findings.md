@@ -116,7 +116,7 @@ A descriptor-only reading of this record finds **1** major topic; the true count
 Measured basis, not spec preference:
 - Every check above — retraction markers across two `CommentsCorrections` RefTypes, PublicationType lists, MeSH major/minor across two attribute levels, ArticleId/ELocationID DOI in two places, batch omission diffing, structured abstracts — was parsed in a few ElementTree lines each. No check hit a wall that biopython would have cleared.
 - The genuinely awkward parts (majorness on two levels, DOI in two places, absence-as-signal, 429 handling) are **semantic** decisions that a client must make explicitly regardless of the XML library; biopython's `Entrez.read` would hand back nested dicts but would not make the majorness-OR or the notice-vs-retracted distinction for us. It changes the shape of the drudgery, not its amount.
-- biopython adds a heavy transitive dependency to `factlog[pubmed]` for a parse that stdlib already does. #51 addendum v2 §2.4 set the precedent: reject a wrapper library when direct control is tractable (pyalex was rejected). PubMed's schema is more nested than OpenAlex JSON, but not enough to overturn that.
+- biopython adds a heavy transitive dependency to `factlog-academic[pubmed]` for a parse that stdlib already does. #51 addendum v2 §2.4 set the precedent: reject a wrapper library when direct control is tractable (pyalex was rejected). PubMed's schema is more nested than OpenAlex JSON, but not enough to overturn that.
 
 **Caveat carried forward:** this judgement is over the seven record shapes sampled here. If #163 hits `PubmedBookArticle`, MEDLINE (non-XML) retmode, or the DTD's rarer branches, the cost balance should be re-weighed there — but on the evidence in hand, stdlib wins.
 

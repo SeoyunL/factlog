@@ -20,12 +20,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-# The command that installs the wrong package. Matched over WHITESPACE-NORMALISED
-# text, not line by line: the first version of this guard was line-based and a
-# prose line-wrap ("pip install\n'factlog[zotero]'") walked straight through it —
-# the offender it was written to catch was still in README.ko.md and the test was
-# green.
-BAD = re.compile(r"pip install\s+['\"`]?factlog\[")
+# The invariant, not the command shape. Matching "pip install ... factlog[" chased
+# an infinite set of spellings — `pip3`, `-U`, `--user`, a bash line-continuation,
+# two markdown code spans — and each one walked through. So: an extras spec on the
+# BARE name is always wrong, wherever it appears. Only `factlog-academic[...]` is
+# legitimate.
+BAD = re.compile(r"(?<!-academic)factlog\[")
 
 
 def _normalised(path: Path) -> str:
@@ -67,8 +67,8 @@ def test_nothing_tells_the_user_to_pip_install_factlog():
         if path.is_file() and BAD.search(_normalised(path))
     ]
     assert not offenders, (
-        "these files instruct `pip install factlog[...]`, which installs the unrelated PyPI "
-        "package: " + ", ".join(sorted(set(offenders)))
+        "these files name an extras spec on the BARE `factlog` distribution, which on PyPI is an "
+        "unrelated project — use `factlog-academic[...]`: " + ", ".join(sorted(set(offenders)))
     )
 
 

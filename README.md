@@ -152,7 +152,8 @@ Each bibliography integration needs one extra. Install it from **this repository
 # from a clone of this repo (what most people want)
 pip install -e '.[zotero]'
 
-# installed as a Claude Code plugin, with no clone
+# installed as a Claude Code plugin, with no clone (this variable is only set
+# inside a Claude Code session; from a plain terminal, substitute the plugin path)
 pip install -e "${CLAUDE_PLUGIN_ROOT}[zotero]"
 
 # from anywhere, no checkout

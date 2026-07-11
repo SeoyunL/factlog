@@ -344,7 +344,7 @@ factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 > **활성 KB**(`FACTLOG_ROOT > config > cwd` 로 해석된)를 보호합니다 — 활성 KB가
 > 아닌 다른 KB의 엔진 입력을 직접 편집하는 경우는 게이트의 대상이 아닙니다.
 
-##### 통합 기능의 선택 의존성
+#### 통합 기능의 선택 의존성
 
 각 서지 통합은 extra 하나가 필요합니다. **이 저장소에서** 설치하십시오.
 
@@ -358,7 +358,9 @@ factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 # 이 저장소를 클론했다면 (대부분 이 경우)
 pip install -e '.[zotero]'
 
-# 클론 없이 Claude Code 플러그인으로 설치했다면
+# 클론 없이 Claude Code 플러그인으로 설치했다면 (이 변수는 Claude Code 세션 안에서만
+# 설정됩니다. 일반 터미널에서는 /factlog 세션에서 `factlog where` 로 플러그인 경로를
+# 확인해 그 경로를 직접 넣으십시오)
 pip install -e "${CLAUDE_PLUGIN_ROOT}[zotero]"
 
 # 체크아웃 없이 어디서든
