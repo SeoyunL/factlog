@@ -78,7 +78,13 @@ class TestEngineProgram:
 
     def test_declared_relations_become_attr_rel_facts(self, kb):
         (kb / "policy" / "attribute-relations.md").write_text("정식_운영\n발행연도\n", encoding="utf-8")
-        emitted = common._attr_rel_facts()
+        # Emitted from the symbols in accepted.dl, so a declaration nothing asserts
+        # produces no fact -- the engine only needs to know about relations it sees.
+        rows = [
+            {"subject": "A", "relation": "정식_운영", "object": "2030.1", "status": "accepted"},
+            {"subject": "B", "relation": "발행연도", "object": "2020", "status": "accepted"},
+        ]
+        emitted = common._attr_rel_facts(rows)
         assert 'attr_rel("정식_운영").' in emitted
         assert 'attr_rel("발행연도").' in emitted
 
@@ -264,3 +270,68 @@ def test_a_pure_literal_is_not_an_entity(tmp_path):
     """The other half: a value that heads nothing is not an entity at all."""
     _, _, ents = _engine_and_tracer(_kb(tmp_path, [("논문A", "published_year", "2020")], "published_year\n"))
     assert "2020" not in ents
+
+
+def test_the_filter_survives_an_NFD_fact_row(tmp_path):
+    """accepted.dl stores a relation verbatim; the engine compares symbols as bytes.
+
+    Emitting attr_rel from the DECLARATION's spelling let an NFD-written fact slip past
+    `!attr_rel(R)` -- the engine kept routing paths through the literal (the #226
+    symptom) while the tracer, which normalizes, disagreed. attr_rel is emitted from
+    the symbols actually in accepted.dl, so the two agree under any normalization.
+    """
+    import unicodedata
+
+    nfd = unicodedata.normalize("NFD", "정식_운영")
+    rows = [("갑봇", "통합", "을서비스"), ("을서비스", nfd, "2030.1")]
+    eng, tracer, ents = _engine_and_tracer(_kb(tmp_path, rows, "정식_운영\n"))
+    assert ("갑봇", "2030.1") not in eng
+    assert "2030.1" not in ents
+    assert eng == tracer
+
+
+def test_a_value_reached_by_a_non_attribute_relation_is_an_ordinary_entity(tmp_path):
+    """What the policy file now promises, measured: the guarantee is about the RELATION.
+
+    No edge runs ALONG an attribute relation. But a value that also appears elsewhere is
+    an ordinary entity, and a path may run THROUGH it -- the old wording denied this and
+    was simply false.
+    """
+    rows = [
+        ("을서비스", "정식_운영", "2030.1"),
+        ("병", "참조", "2030.1"),
+        ("2030.1", "비고", "코로나유행"),
+    ]
+    eng, _, ents = _engine_and_tracer(_kb(tmp_path, rows, "정식_운영\n"))
+    assert ("을서비스", "2030.1") not in eng  # not reachable ALONG the attribute relation
+    assert ("병", "2030.1") in eng
+    assert ("병", "코로나유행") in eng  # routed THROUGH the value, and that is correct
+    assert "2030.1" in ents
+
+
+def test_a_pure_literal_cannot_be_a_count_subject(tmp_path):
+    """The other clause: `count` IS filtered by this file, for a pure literal.
+
+    The previous wording claimed count is never filtered. It is: classify_query checks
+    the count subject against entity_set.
+    """
+    import json
+    import subprocess
+
+    kb = _kb(tmp_path, [("을서비스", "정식_운영", "2030.1")], "정식_운영\n")
+    script = (
+        "import os, sys, json; sys.path.insert(0, os.getcwd());"
+        "import factlog.common as c;"
+        "f = c.load_accepted_facts();"
+        'print(json.dumps(list(c.classify_query(\'count("2030.1", "비고")?\', f))[:2]))'
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "FACTLOG_ROOT": str(kb), "PYTHONPATH": os.getcwd()},
+        check=True,
+    )
+    ok, reason = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert ok is False
+    assert reason == "entity_not_accepted"

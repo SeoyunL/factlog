@@ -507,11 +507,15 @@ explanation of its purpose.
 # relation-query object.
 #
 # Precisely, so you can rely on it:
-#   - it is not listed as an entity, and no path routes through it;
-#   - if the SAME value also heads a fact of its own (`2020 note ...`), then it is
-#     an entity by virtue of being a subject, and paths may START at it. It still
-#     cannot be reached THROUGH an attribute relation;
-#   - `count` queries are NOT filtered by this file.
+#   - no edge is drawn ALONG an attribute relation, so no path reaches the value by
+#     way of one. That is the guarantee; it is about the relation, not the value.
+#   - a value that only ever appears at the object end of attribute relations is
+#     therefore not an entity: not listed, not a path node, not a count subject.
+#   - a value that ALSO appears in any other position -- as a subject of its own
+#     fact, or as the object of a non-attribute relation -- is an ordinary entity,
+#     and paths may start at it, end at it, and run through it. Declaring the
+#     relation does not make the value invisible; it stops the attribute assertion
+#     from being treated as a dependency.
 #
 # Leave this file with no declarations if every object is a first-class entity.
 #
@@ -1724,7 +1728,17 @@ def cmd_vocab(args: argparse.Namespace) -> int:
     if show_r:
         print(f"  relations ({len(rel_counts)}):")
         for name, n in sorted(rel_counts.items(), key=lambda kv: (-kv[1], kv[0])):
-            tags = [t for t, on in (("attribute", name in attr), ("single-valued", name in sv)) if on]
+            # The same shared predicate the entity count above uses: comparing the raw
+            # declaration left vocab tagging no relation as [attribute] on an alias KB
+            # while status counted one (#226).
+            tags = [
+                t
+                for t, on in (
+                    ("attribute", common.is_attribute_relation(name, attr_forms)),
+                    ("single-valued", name in sv),
+                )
+                if on
+            ]
             # typed_relations() keys are NFC-normalized; the CSV-sourced name may be NFD.
             tname = unicodedata.normalize("NFC", name)
             if tname in typed:

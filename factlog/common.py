@@ -1257,7 +1257,10 @@ def attribute_relations() -> set[str]:
 
     Objects of these relations (dates, numbers, ordinals, ...) are excluded from
     entity_set so they do not pollute the entity vocabulary (entity listings,
-    path nodes, count subjects). They remain valid relation-query objects — see
+    path nodes, count subjects) — provided the value appears nowhere else. No edge is
+    drawn ALONG an attribute relation, which is the actual guarantee; a value that also
+    appears as a subject, or as the object of a non-attribute relation, is an ordinary
+    entity and paths may run through it. They remain valid relation-query objects — see
     value_set and classify_query — so a fact about a literal is still verifiable.
     Same file format as single-valued.md; absent file → no attribute relations
     → entity_set == value_set (fully backward compatible).
@@ -1711,9 +1714,10 @@ def entity_set(
     """First-class entities only: every subject, plus objects whose relation is
     NOT declared an attribute relation. Objects of attribute relations are
     literal values (see attribute_relations) and are excluded so they don't show
-    up as entities (entity listings) and no dependency path runs THROUGH them. A
-    value that also heads a fact of its own is still an entity by virtue of being a
-    subject; `count` is not filtered by this file. With no
+    up as entities (entity listings, path nodes, count subjects) — provided they appear
+    nowhere else. No edge is drawn ALONG an attribute relation; a value that also
+    appears as a subject, or as the object of a non-attribute relation, is an ordinary
+    entity and paths may run through it. With no
     policy/attribute-relations.md this equals value_set (backward compatible).
 
     *attribute_rels* overrides which relations count as attribute (literal-valued)
@@ -1992,9 +1996,25 @@ def is_attribute_relation(relation: str, attr_forms: set[str]) -> bool:
     return unicodedata.normalize("NFC", relation) in attr_forms
 
 
-def _attr_rel_facts() -> str:
-    """`attr_rel` facts for the declared attribute relations (empty when none)."""
-    names = sorted(attribute_relation_forms())
+def _attr_rel_facts(accepted: list[dict[str, str]] | None = None) -> str:
+    """`attr_rel` facts for the declared attribute relations (empty when none).
+
+    Emitted as the relation symbols that are ACTUALLY IN accepted.dl, not as the
+    declaration's own spelling. The engine compares symbols byte-for-byte, and
+    accepted.dl carries a row's relation verbatim (dl_atom does not normalize), so a
+    fact written NFD while the policy file is NFC slipped past `!attr_rel(R)` -- the
+    engine kept routing paths through the literal, exactly the #226 symptom, while
+    the python tracer (which does normalize) said otherwise. Matching on the stored
+    symbol keeps the two in step under any normalization, and leaves accepted.dl
+    byte-identical.
+    """
+    forms = attribute_relation_forms()
+    if not forms:
+        return ""
+    rows = load_accepted_facts() if accepted is None else accepted
+    names = sorted(
+        {row["relation"] for row in engine_input_rows(rows) if is_attribute_relation(row["relation"], forms)}
+    )
     if not names:
         return ""
     # dl_string, not an f-string: a name carrying a quote emitted `attr_rel(""x"")`
@@ -2083,7 +2103,10 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
     accepted_program = ACCEPTED_DL.read_text(encoding="utf-8")
     policy_program = load_logic_policy()
     specs = typed_relations()
-    base_program = WIRELOG_PROGRAM + _attr_rel_facts() + "\n" + policy_program + "\n" + accepted_program
+    accepted_rows = load_accepted_facts()
+    base_program = (
+        WIRELOG_PROGRAM + _attr_rel_facts(accepted_rows) + "\n" + policy_program + "\n" + accepted_program
+    )
     if specs:
         _assert_no_alias_collision(specs, base_program)
         # Fail loud BEFORE handing a float-bearing program to the engine: a
