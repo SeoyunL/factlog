@@ -2402,7 +2402,8 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
     # so a stem guess would let `eject report.docx` wrongly pull report.pptx's
     # conversion; the recorded origin name disambiguates. Falls back to a stem
     # match only when no header is present (a hand-made conversion).
-    conv_origin: dict[str, str] = {}
+    conv_origin: dict[str, str] = {}       # ref -> origin BASENAME
+    conv_origin_raw: dict[str, str] = {}   # ref -> origin as the header wrote it
     for ref, p in disk_refs.items():
         if not ref.startswith("runs/sources/"):
             continue
@@ -2426,26 +2427,52 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
                 # rebuilds sources/<subdir>/<origin> from the conversion's own
                 # mirrored subdir — stays correct for both header formats and no
                 # legacy basename header regresses.
+                # Keep BOTH: the basename (what pairing/--orphans want) and the
+                # header value as written. #214 headers may carry a sources/-
+                # relative path; discarding it forced conv_source_path to
+                # re-derive the subdir from the conversion's mirror, which only
+                # works for mirrored conversions and broke legacy flat ones (#221).
                 conv_origin[ref] = PurePosixPath(origin).name
+                conv_origin_raw[ref] = origin
 
     def conv_source_path(ref: str) -> str | None:
         """The KB-relative original a `runs/sources/` conversion was made from.
 
-        A conversion mirrors its original's subdirectory, so the origin's full path
-        is that mirrored subdir plus the basename recorded in the provenance header
-        — `runs/sources/sub/report.docx.md` -> `sources/sub/report.docx`.
+        Returns None when it CANNOT be known, so the caller falls back rather than
+        inventing one:
 
-        Reconstructing it matters: `conv_origin` holds only the BASENAME, and the
-        path branch of matches() compared that against the requested basename, so
-        `eject sub/report.docx` also matched (and DELETED) the conversion of a
-        top-level `report.docx` — the exact collision the README promises can never
-        happen (#221).
+        * header carries a path (#214) -> `sources/<header>` verbatim;
+        * header is a bare name and the conversion is MIRRORED -> the mirrored
+          subdir supplies the missing part (`runs/sources/sub/report.docx.md` ->
+          `sources/sub/report.docx`);
+        * header is a bare name and the conversion is FLAT (a pre-mirroring KB) ->
+          **unknowable**. A flat conversion may well come from a nested original
+          (README documents exactly that upgrade state), so reconstructing
+          `sources/<name>` would be a guess. Deriving it anyway made `eject
+          sub/report.html` silently match nothing on such KBs (#221 review);
+        * no readable header -> the conversion's own mirrored path + stem.
+
+        Getting this right is the whole point: comparing BASENAMES let `eject
+        sub/report.docx` delete a top-level `report.docx`'s conversion — a source
+        the user never named (#221).
         """
-        origin = conv_origin.get(ref)
-        if not origin:
-            return None
+        raw = conv_origin_raw.get(ref)
         rel_parent = PurePosixPath(ref).relative_to("runs/sources").parent
-        return str(PurePosixPath("sources") / rel_parent / origin)
+        if raw and "/" in raw:
+            return str(PurePosixPath("sources") / raw)
+        name_part = raw or PurePosixPath(ref).stem
+        candidate = str(PurePosixPath("sources") / rel_parent / name_part)
+        if candidate in disk_refs:
+            return candidate
+        if str(rel_parent) != ".":
+            # A mirrored conversion whose original is gone: the mirror still tells
+            # us where it WAS, and that is the honest answer (an orphan).
+            return candidate
+        # Flat conversion with no original of that name at the top level: this is a
+        # pre-mirroring KB whose original lives in a subdirectory the header never
+        # recorded. Reconstructing `sources/<name>` would name a file that does not
+        # exist, so say so and let the caller fall back.
+        return None
 
     def matches(ref: str, name: str) -> bool:
         name = nfc(name)
@@ -2454,12 +2481,21 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
             return True
         is_conv = ref.startswith("runs/sources/")
         if "/" in name:
-            # A path was given: the exact original is handled above; for a binary
-            # original also match the conversion it produced — but only the one
-            # whose ORIGIN IS THAT PATH. Comparing basenames made a nested request
-            # sweep up a same-named file elsewhere.
-            wanted = name if name.startswith("sources/") else f"sources/{name}"
-            return is_conv and conv_source_path(ref) == wanted
+            # A path was given. Match the original at that path, and the conversion
+            # whose ORIGIN IS THAT PATH — never a same-named file elsewhere (#221).
+            # Both sides go through PurePosixPath so `./sub/x` and `sub//x` compare
+            # equal to `sub/x` instead of missing.
+            wanted = str(PurePosixPath(name if name.startswith("sources/") else f"sources/{name}"))
+            if not is_conv:
+                return ref == wanted
+            origin = conv_source_path(ref)
+            if origin is not None:
+                return origin == wanted
+            # A pre-mirroring flat conversion with a bare-name header: the subdir was
+            # never recorded, so path and basename are all we can compare. Match by
+            # name, as this did before mirroring existed, rather than silently
+            # ejecting nothing on an un-migrated KB.
+            return conv_origin.get(ref) == PurePosixPath(name).name
         if np_.suffix:  # a bare filename with an extension
             if not is_conv:
                 return rp.name == np_.name  # an original with that filename
