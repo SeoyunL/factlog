@@ -73,8 +73,29 @@ class TestStatusWarnings:
         for status in common.KNOWN_STATUSES:
             assert rlc.status_warnings([_row(status)]) == [], status
 
+    def test_known_statuses_covers_every_declared_status_set(self):
+        # The above only pins that consumers derive from KNOWN_STATUSES — not
+        # that KNOWN_STATUSES is complete. A new `*_STATUSES` set left out of the
+        # union reintroduces #208 with every test still green. Introspect the
+        # module so adding one forces the union to be updated.
+        import common
+
+        declared = set().union(
+            *[
+                value
+                for name, value in vars(common).items()
+                if name.endswith("_STATUSES")
+                and name != "KNOWN_STATUSES"
+                and isinstance(value, (set, frozenset))
+            ]
+        )
+        assert declared <= set(common.KNOWN_STATUSES)
+
     def test_every_status_the_cli_writes_is_known(self):
-        # accept/reject/amend write these; none may be reported as unknown.
+        # accept/reject/amend write these. Restated here on purpose: cli.py sets
+        # the strings inline rather than via constants, so nothing else pins the
+        # CLI's write surface against the vocabulary. Add to this list if cli.py
+        # starts writing a new status.
         import common
 
         assert {"accepted", "superseded"} <= set(common.KNOWN_STATUSES)
