@@ -2507,7 +2507,8 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
             #
             # So do not guess. Silent under-ejection beats silent over-ejection: the
             # ref is reported afterwards (unattributable) so the user can eject it
-            # by its own name or migrate the KB with `factlog ingest --scan --force`.
+            # by its own name (ingest --scan --force does NOT migrate it -- it only adds
+            # a mirrored conversion beside the flat one and leaves the flat one).
             # Warn for a HEADERLESS flat conversion too: conv_origin has no entry for
             # it, so keying the warning on conv_origin left the commonest legacy shape
             # silently un-ejected. Compare its own name (report.md -> report.docx.md
@@ -2641,12 +2642,19 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
     # deleting the original -- its file is already gone, and its rows were retired
     # by whatever removed it.
     stranded = sorted(r for r in (unattributable - matched) if r in disk_refs)
+    # If the named original's OWN conversion was matched, this eject is complete and
+    # an unrelated flat conversion that merely shares the name is not this request's
+    # business -- blocking then would refuse a job that strands nothing.
+    if any(r.startswith("runs/sources/") for r in matched):
+        stranded = []
     if args.delete_original and stranded and orig_on_disk:
         print(
             "factlog eject: refusing --delete-original — "
             f"{len(stranded)} conversion(s) of this name cannot be attributed to the "
-            "path you gave, so deleting the original would strand their facts with no "
-            "source file. Remove the conversion(s) first, then re-run:",
+            "path you gave. One of them MAY be this original's pre-mirroring "
+            "conversion, in which case deleting the original would strand its facts "
+            "with no source file; it may equally belong to another document, in which "
+            "case ejecting it retires THAT document's facts. Decide, then re-run:",
             file=sys.stderr,
         )
         for ref in stranded:

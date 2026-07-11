@@ -17,12 +17,18 @@
 #
 #   (a)(b) a nested eject deletes the nested conversion, keeps the top-level one
 #   (c)(d) a top-level eject deletes the top-level one, keeps the nested one
-#   (e)    a LEGACY flat conversion (pre-mirroring KB) is still ejectable: its
-#          subdir was never recorded, so a path request must fall back to the name
-#          rather than silently eject nothing
+#   (e)    a flat conversion whose header records only a basename CANNOT be tied to a
+#          path (it may have come from a document outside sources/), so a path request
+#          must NOT guess -- it leaves it and names it on stderr
 #   (f)    a `./`-prefixed path is not a miss (both sides normalised)
 #   (g)    a headerless conversion is still reachable by path
 #   (h)    a path + --delete-original deletes THAT original and no other
+#   (i)    the message offers an exit that works (name the ref directly)
+#   (j)    the warning still prints when nothing else matched (it sat after an early
+#          return, so it was dead code in the commonest state)
+#   (k)    a headerless flat conversion warns too
+#   (l)    --delete-original never does the IRREVERSIBLE half of a job whose
+#          reversible half we just refused
 #
 # Usage: bash tests/test_eject_path_scope.sh
 

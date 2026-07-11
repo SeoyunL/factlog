@@ -684,7 +684,11 @@ to a path — and that state is indistinguishable from a conversion made from a 
 outside `sources/` (the `factlog ingest report.docx --target ~/wiki` form above) or
 from an original since deleted. `eject` will **not** guess: it leaves such a
 conversion in place and names it on stderr, including when the path matched nothing
-else. Remove it by naming the conversion directly — `eject runs/sources/report.md`.
+else. Remove it by naming the conversion directly — `eject runs/sources/report.md`. While
+such a conversion is still on disk and the request matched no conversion of its own,
+`--delete-original` refuses outright (exit 1, nothing deleted): deleting the original
+while leaving a conversion we could not attribute would strand that conversion's facts
+with no source file.
 (`ingest --scan --force` does *not* migrate these: it adds a mirrored conversion
 beside the flat one and leaves the flat one, and the facts citing it, in place.)
 
