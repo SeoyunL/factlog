@@ -61,3 +61,33 @@ def test_warnings_are_deterministically_ordered():
 
 def test_no_specs_means_no_warnings():
     assert typed_projection_warnings([row("A", "rank", "rank 3")], {}) == []
+
+
+def test_int64_overflow_is_reported_not_just_unparseable():
+    """The projection drops three ways; the report must know about all three.
+
+    A `number` is scaled x1000, so a value past ~9.2e15 overflows int64 and the
+    engine skips it -- and the report used to say `warnings: 0` because it only
+    checked "does not parse". This KB's own examples reach 억/조 magnitudes.
+    """
+    warns = typed_projection_warnings([row("A", "score", "10000000000000000")], SPECS)
+    assert len(warns) == 1
+    assert "int64" in warns[0]
+    assert "EXCLUDED" in warns[0]
+
+
+def test_the_report_and_the_projection_cannot_disagree():
+    """Both sides call typed_projection_outcome, so a new guard reaches both."""
+    from factlog.common import typed_projection_outcome
+
+    for value, drops in (
+        ("3rd", False),
+        ("rank 3", True),
+        ("99999999999999999999th", True),  # int64 overflow, not a parse failure
+    ):
+        spec = SPECS["rank"]
+        scalar, reason = typed_projection_outcome(row("A", "rank", value), spec)
+        assert (scalar is None) is drops, value
+        assert (reason is not None) is drops, value
+        warned = bool(typed_projection_warnings([row("A", "rank", value)], SPECS))
+        assert warned is drops, f"report and projection disagree on {value!r}"
