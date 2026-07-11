@@ -8,6 +8,8 @@ PY="${FACTLOG_PY:-${PYTHON:-python3}}"
 export PYTHONPATH="$PWD"
 fails=0
 check() { if printf '%s' "$2" | grep -qF "$3"; then echo "  ok: $1"; else echo "FAIL: $1 (missing: $3)"; fails=$((fails+1)); fi; }
+ok_j() { echo "  ok: $1"; }
+bad_j() { echo "FAIL: $1"; fails=$((fails+1)); }
 absent() { if printf '%s' "$2" | grep -qF "$3"; then echo "FAIL: $1 (unexpected: $3)"; fails=$((fails+1)); else echo "  ok: $1"; fi; }
 
 KB="$(mktemp -d)/kb"
@@ -65,6 +67,29 @@ printf '%s' "$ERR3" | grep -q "citation key 'ref' is used by" && echo "  ok: (h)
 # CSL keeps the stem as id, so non-ASCII ids stay distinct with no collision at all.
 CSL3="$(FACTLOG_ROOT="$KB3" "$PY" -m factlog export --csl 2>/dev/null)"
 { printf '%s' "$CSL3" | grep -q '한글' && printf '%s' "$CSL3" | grep -q '다른이름'; } && echo "  ok: (i) CSL keeps distinct non-ASCII ids" || { echo "FAIL: (i) CSL lost a non-ASCII id"; fails=$((fails+1)); }
+
+# --- runs/sources/ is a source root too --------------------------------------------
+# `factlog sources` lists both sources/ and runs/sources/. export walked only sources/,
+# so a citable .md placed under runs/sources/ was dropped from the bibliography with
+# exit 0 and no warning -- the same silent loss #223 is about, in the second root.
+KB4="$(mktemp -d)/kb"
+"$PY" -m factlog init --target "$KB4" >/dev/null
+printf -- '---\ntitle: Top\n---\nx\n' > "$KB4/sources/top.md"
+mkdir -p "$KB4/runs/sources"
+printf -- '---\ntitle: Hand placed in runs\nauthor: R\n---\ny\n' > "$KB4/runs/sources/hand.md"
+# a real ingest conversion carries an HTML comment header, not YAML front matter
+printf -- '<!-- ingested-by-factlog | source: doc.html | converter: pandoc -->\nbody\n' \
+  > "$KB4/runs/sources/doc.html.md"
+
+OUT4="$(FACTLOG_ROOT="$KB4" "$PY" -m factlog export --bibtex 2>/dev/null)"
+printf '%s' "$OUT4" | grep -q "Hand placed in runs" \
+  && ok_j "(j) a citable .md under runs/sources/ is exported, not dropped" \
+  || bad_j "(j) a citable runs/sources/ source was dropped silently"
+
+ERR4="$(FACTLOG_ROOT="$KB4" "$PY" -m factlog export --bibtex 2>&1 >/dev/null)"
+printf '%s' "$ERR4" | grep -q "skipped runs/sources/doc.html.md" \
+  && ok_j "(j) an ingest conversion (no front matter) is reported skipped, not dropped" \
+  || bad_j "(j) the ingest conversion was dropped without a word"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "export nested: all passed"; else echo "export nested: $fails failed"; exit 1; fi

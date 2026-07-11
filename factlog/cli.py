@@ -6216,7 +6216,13 @@ def cmd_export(args: argparse.Namespace) -> int:
     # dropped from the citation list with exit 0 and no warning (#223).
     skipped: list[str] = []
     seen_keys: dict[str, str] = {}
-    for path in _c.walk_source_dir(target / "sources", include_hidden=False):
+    # source_files walks BOTH source roots (sources/ and runs/sources/), the same set
+    # `factlog sources` lists -- globbing sources/ alone dropped a source `factlog
+    # sources` shows from the citation list with exit 0 and no warning (#223). An ingest
+    # conversion under runs/sources/ carries an HTML provenance comment, not YAML front
+    # matter, so read_front_matter returns {} and it is reported as skipped rather than
+    # dropped silently; a hand-placed .md there with real front matter IS cited.
+    for path in _c.source_files(target):
         if path.suffix.lower() != ".md":
             continue
         rel = path.relative_to(target).as_posix()
