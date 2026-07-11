@@ -254,3 +254,68 @@ class TestAsciiLocaleDoesNotCrash:
         assert "UnicodeEncodeError" not in combined, combined
         assert "Python" in combined, combined
         assert proc.returncode == 0, combined
+
+
+class TestRenameMigrationCheck:
+    """The `factlog` → `factlog-academic` rename hazard (#228).
+
+    Both distributions own the same `factlog` module AND the same `factlog` console
+    script, so pip installs them side by side without a word, and uninstalling the
+    old one deletes the shared command while pip still reports factlog-academic as
+    installed.
+
+    The first version of this diagnostic had no tests and fired in EVERY source
+    clone: `importlib.metadata` walks sys.path, and a checkout carries a leftover
+    `factlog.egg-info/` from before the rename, which it counts as an installed
+    dist. A diagnostic that cries wolf is one users learn to ignore.
+    """
+
+    def test_both_dists_installed_is_warned(self):
+        from factlog.cli import rename_migration_check
+
+        check = rename_migration_check({"factlog", "factlog-academic"}, factlog_on_path=True)
+        assert check is not None and check.severity == "WARN"
+
+    def test_only_the_new_dist_is_quiet(self):
+        from factlog.cli import rename_migration_check
+
+        assert rename_migration_check({"factlog-academic"}, factlog_on_path=True) is None
+
+    def test_the_already_broken_state_is_warned(self):
+        # The state users actually land in: they uninstalled the old dist, pip says
+        # factlog-academic is installed, and the `factlog` command is gone.
+        from factlog.cli import rename_migration_check
+
+        check = rename_migration_check({"factlog-academic"}, factlog_on_path=False)
+        assert check is not None and "factlog 명령이 없습니다" in check.title
+
+    def test_a_leftover_egg_info_is_not_an_installed_dist(self):
+        # THE false positive: a source clone's stale factlog.egg-info/ must not be
+        # counted, or the check fires for every developer.
+        from pathlib import Path
+
+        from factlog.cli import installed_distributions
+
+        class _Dist:
+            def __init__(self, name, path):
+                self.metadata = {"Name": name}
+                self._path = Path(path)
+
+        dists = [
+            _Dist("factlog", "/repo/factlog.egg-info"),
+            _Dist("factlog-academic", "/venv/lib/python3.12/site-packages/factlog_academic-0.7.0.dist-info"),
+        ]
+        assert installed_distributions(lambda: dists) == {"factlog-academic"}
+
+    def test_a_dist_without_metadata_does_not_crash_doctor(self):
+        # doctor is what you run when the environment is broken; it must not die on
+        # an unreadable distribution.
+        from pathlib import Path
+
+        from factlog.cli import installed_distributions
+
+        class _Broken:
+            metadata = None
+            _path = Path("/venv/lib/python3.12/site-packages/x.dist-info")
+
+        assert installed_distributions(lambda: [_Broken()]) == set()

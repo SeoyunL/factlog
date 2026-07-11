@@ -284,7 +284,7 @@ class OpenAlexClient:
         except ImportError as exc:  # pragma: no cover - environment without the extra
             raise OpenAlexError(
                 "httpx is required for the OpenAlex integration: "
-                "pip install 'factlog[openalex]'"
+                "pip install 'factlog-academic[openalex] @ git+https://github.com/SeoyunL/factlog-academic'"
             ) from exc
 
         user_agent = _user_agent(self._config)

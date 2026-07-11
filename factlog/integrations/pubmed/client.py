@@ -242,7 +242,8 @@ class PubMedClient:
             import httpx
         except ImportError as exc:  # pragma: no cover - environment without the extra
             raise PubMedError(
-                "httpx is required for the PubMed integration: pip install 'factlog[pubmed]'"
+                "httpx is required for the PubMed integration: "
+                "pip install 'factlog-academic[pubmed] @ git+https://github.com/SeoyunL/factlog-academic'"
             ) from exc
 
         def _send(endpoint: str, params: dict) -> _Response:

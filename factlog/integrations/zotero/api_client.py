@@ -110,7 +110,8 @@ class ZoteroClient:
             from pyzotero import zotero
         except ImportError as exc:  # pragma: no cover - environment without the extra
             raise ZoteroError(
-                "pyzotero is required for zotero-import: pip install 'factlog[zotero]'"
+                "pyzotero is required for zotero-import: "
+                "pip install 'factlog-academic[zotero] @ git+https://github.com/SeoyunL/factlog-academic'"
             ) from exc
         return zotero.Zotero("0", "user", local=True)
 

@@ -281,7 +281,75 @@ def _collect_doctor_checks() -> list[Check]:
                   ("[터미널] 경로를 고치거나 unset FACTLOG_PYTHON 하세요", perm_hint))
         )
 
+    checks.extend(_rename_migration_checks())
+
     return checks
+
+
+def installed_distributions(distributions=None) -> set[str]:
+    """Names of distributions pip actually installed.
+
+    NOT every entry importlib.metadata reports: it walks sys.path, and a source
+    checkout carries a leftover `factlog.egg-info/` from before the rename, which
+    it happily counts as an installed `factlog` dist. That made the migration
+    check fire in every developer's clone — a diagnostic that cries wolf is one
+    users learn to ignore, so trust only a real `.dist-info` under site-packages.
+
+    `distributions` is injectable so the check can be tested without a venv.
+    """
+    import importlib.metadata as _md
+
+    found: set[str] = set()
+    for dist in (distributions or _md.distributions)():
+        meta = dist.metadata
+        name = meta["Name"] if meta else None
+        path = getattr(dist, "_path", None)
+        if not name or path is None:
+            continue
+        if path.name.endswith(".dist-info") and "site-packages" in path.parts:
+            found.add(name)
+    return found
+
+
+def rename_migration_check(installed: set[str], factlog_on_path: bool) -> Check | None:
+    """The `factlog` → `factlog-academic` rename hazard (#228).
+
+    Both distributions own the same `factlog` module AND the same `factlog` console
+    script, so pip installs them side by side without a word. Two states follow, and
+    the second is the one users actually land in:
+
+    * both installed — uninstalling the old one will DELETE the shared command;
+    * only the new one installed, but no `factlog` command — that already happened,
+      and pip still cheerfully reports factlog-academic as installed.
+
+    Pure, so both states are pinned by unit tests rather than by a venv dance.
+    """
+    if "factlog" in installed and "factlog-academic" in installed:
+        return Check(
+            "WARN",
+            "옛 배포판 factlog 과 factlog-academic 이 함께 설치돼 있습니다",
+            (
+                "[터미널] pip uninstall factlog 뒤 반드시 재설치하세요 "
+                "(둘이 같은 factlog 명령을 공유하므로, 옛 것만 지우면 그 명령이 사라집니다)",
+            ),
+        )
+    if "factlog-academic" in installed and not factlog_on_path:
+        return Check(
+            "WARN",
+            "factlog-academic 은 설치돼 있는데 factlog 명령이 없습니다",
+            (
+                "[터미널] pip install -e . 로 재설치하세요 "
+                "(옛 factlog 배포판을 지울 때 공유하던 factlog 명령까지 삭제된 상태입니다)",
+            ),
+        )
+    return None
+
+
+def _rename_migration_checks() -> list[Check]:
+    import shutil
+
+    found = rename_migration_check(installed_distributions(), shutil.which("factlog") is not None)
+    return [found] if found else []
 
 
 def _render_doctor(checks: list[Check], emit_summary: bool = False, gate: str = "all") -> bool:
