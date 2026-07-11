@@ -4009,6 +4009,110 @@ def _pubmed_import_selected(chosen, outcome, *, target, config, dry_run: bool, p
     )
 
 
+def cmd_pubmed_mesh(args: argparse.Namespace) -> int:
+    """Propose canonical-alias *candidates* from a KB paper's PubMed MeSH (#173).
+
+    Reads the PMID a source recorded in its provenance ledger, fetches that
+    record's MeSH headings live, and proposes the descriptor names as candidate
+    aliases split into *major* / *minor* topics. It writes nothing to the
+    canonical vocabulary: a human (P1) decides which, if any, become aliases.
+
+    The major/minor split is the point (#53/#165): OpenAlex's flat ``mesh_terms``
+    drops qualifier-level majorness, so a pre-2010 paper's true major topic reads
+    as minor there; PubMed's own feed keeps it, and an alias mined from a *minor*
+    term is a bad alias. So a qualifier-only major descriptor is flagged as the
+    place OpenAlex would disagree.
+
+    Four outcomes, kept apart: a nonexistent slug is an *error* (exit 1); a slug
+    whose ledger records no PMID is reported as that fact, with its reason, and is
+    *not* an empty MeSH list (exit 0); a real PMID that carries no MeSH is reported
+    as an unindexed record (exit 0); a PMID PubMed did not return a record for
+    (deleted/merged) is a signal, reported on stderr (exit 1).
+    """
+    from factlog.integrations.pubmed.client import (
+        PubMedConnectionError,
+        PubMedError,
+    )
+    from factlog.integrations.pubmed.mesh_suggest import (
+        MeshSuggestError,
+        build_proposal,
+        no_pmid_line,
+        no_pmid_porcelain_line,
+        proposal_lines,
+        proposal_porcelain_lines,
+        resolve_pmid,
+    )
+    from factlog.integrations.pubmed.work_parser import (
+        PubMedParseError,
+        parse_efetch_response,
+    )
+
+    prepared = _pubmed_prepare(args, "pubmed-mesh")
+    if prepared is None:
+        return 1
+    target, config = prepared
+    porcelain = getattr(args, "porcelain", False)
+
+    # Resolve the PMID from the provenance ledger. A nonexistent slug (or a corrupt
+    # ledger) is a user error and stops here; "no PMID" is a value reported below.
+    try:
+        resolution = resolve_pmid(target, args.for_slug)
+    except MeshSuggestError as exc:
+        print(f"factlog pubmed-mesh: {exc}", file=sys.stderr)
+        return 1
+
+    if resolution.pmid is None:
+        # Reported as its own fact, with the reason, never as an empty MeSH list.
+        if porcelain:
+            print(no_pmid_porcelain_line(resolution.slug))
+        else:
+            print(no_pmid_line(resolution.slug))
+        return 0
+
+    client = _make_pubmed_client(config)
+    try:
+        # One efetch for the single PMID; the client owns the rate limiter.
+        xml = client.efetch([resolution.pmid])
+    except PubMedConnectionError as exc:
+        print(f"factlog pubmed-mesh: {exc}", file=sys.stderr)
+        return 2
+    except PubMedError as exc:
+        print(f"factlog pubmed-mesh: {exc}", file=sys.stderr)
+        return 1
+    try:
+        outcome = parse_efetch_response(xml, [resolution.pmid])
+    except PubMedParseError as exc:
+        print(f"factlog pubmed-mesh: {exc}", file=sys.stderr)
+        return 1
+
+    # Find the returned record. A deleted PMID is an empty set (no present record);
+    # a merged one comes back under a different PMID. Either way there is no MeSH to
+    # read for the requested id — a signal, surfaced, not silently a zero-MeSH.
+    work = next((w for w in outcome.works if w.pmid == resolution.pmid), None)
+    if work is None:
+        if outcome.merged:
+            new_pmid = outcome.merged[0].returned_pmid
+            print(
+                f"factlog pubmed-mesh: PMID {resolution.pmid} was merged into "
+                f"{new_pmid} upstream; re-import to follow the pointer before "
+                "reading its MeSH.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"factlog pubmed-mesh: PubMed returned no record for PMID "
+                f"{resolution.pmid} (it may be deleted). Nothing to propose.",
+                file=sys.stderr,
+            )
+        return 1
+
+    proposal = build_proposal(resolution.slug, resolution.pmid, work.mesh_headings)
+    lines = proposal_porcelain_lines(proposal) if porcelain else proposal_lines(proposal)
+    for line in lines:
+        print(line)
+    return 0
+
+
 def cmd_arxiv_check_versions(args: argparse.Namespace) -> int:
     """Is any arXiv record in the KB behind arXiv's latest? (#78/#79, §11 Step 6).
     Reads the provenance ledgers and a KB-level check-log, queries arXiv, and
@@ -5811,6 +5915,29 @@ def build_parser() -> argparse.ArgumentParser:
              "terminal); imported records still pass the sync -> review -> accept gate",
     )
     pm_search.set_defaults(func=cmd_pubmed_search)
+
+    # pubmed-mesh proposes candidate aliases from a paper's MeSH terms; it never
+    # writes, so it takes --target and --porcelain but NOT --dry-run (there is
+    # nothing to preview) — hence the args are added directly rather than via
+    # _pubmed_common, which carries --dry-run for the import path.
+    pm_mesh = sub.add_parser(
+        "pubmed-mesh",
+        help="propose canonical-alias candidates from a KB paper's PubMed MeSH "
+             "terms, split major/minor (proposals only; nothing is written)",
+    )
+    pm_mesh.add_argument(
+        "--for", dest="for_slug", required=True,
+        help="the factlog source slug whose PubMed MeSH terms to propose (the PMID "
+             "is read from the source's provenance ledger)",
+    )
+    pm_mesh.add_argument(
+        "--target", default=None, help="KB root (default: the active KB; see `factlog where`)"
+    )
+    pm_mesh.add_argument(
+        "--porcelain", action="store_true",
+        help="machine-readable output (tab-separated rows) for scripts",
+    )
+    pm_mesh.set_defaults(func=cmd_pubmed_mesh)
 
     return parser
 
