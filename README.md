@@ -314,6 +314,76 @@ factlog vocab --all        # include non-engine names (candidate/needs_review/su
 Objects of declared attribute relations are literals, not entities, so they are
 excluded from the entity list (same typing as `status`).
 
+### Auditing the value vocabulary (`tools/value_audit.py`)
+
+Relation names are curated by policy. **Values are not** — they arrive one
+extraction at a time, and nothing notices when the same thing lands twice under
+two strings. A real KB held both `IL-10` and `기타(IL-10)` as accepted facts, so
+`relation(P, "염증지표", "IL-10")?` returned 3 rows out of 4. The fourth was
+hiding behind a different string: a silent omission, which is the one failure
+mode this KB exists to prevent.
+
+```bash
+python3 tools/value_audit.py --wiki ~/wiki           # report (always exits 0)
+python3 tools/value_audit.py --wiki ~/wiki --strict  # exit non-zero on provable query leaks
+```
+
+It compares values only **within the same relation**, and every finding is a
+rule rather than a similarity guess:
+
+| Finding | Meaning |
+|---|---|
+| **split wrapper** | `기타(IL-10)` beside `IL-10` — one value filed twice. Queries are leaking now. |
+| **wrapper value** | `기타(INFLA-score)` — not queryable by its own name. |
+| **placeholder** | `기타`, `불명`, `N/A` — carries no information, hides what the source said. |
+| **spelling duplicate** | Equal after folding case/space/punctuation (`IL-8` / `il 8`). A query leak — unless the relation is an **identity** (see below), where a collision across subjects means a possible duplicate *record* instead. |
+
+**Identity relations (`policy/identity-relations.md`).** A title or a DOI names
+exactly one paper; a publication year or a study type does not. Declare the former
+here:
+
+```markdown
+# policy/identity-relations.md
+제목
+DOI
+```
+
+In an identity relation, two subjects sharing a folded value is probably two
+records of one thing — a duplicate *record*, a different repair, and `--strict`
+does not fail on it. Everywhere else, values are shared across subjects by design,
+so a collision is one value split across two spellings: a query leak, which
+`--strict` does fail on. With no declarations every relation is categorical, so a
+collision is reported as a leak — noisy rather than silent, and the report tells
+you which relation to declare.
+
+Identity is declared, never inferred — and the audit does not guess which
+relations belong here either. Deriving it from the data ("every value has one
+subject") is self-defeating: one genuine duplicate record makes the relation
+non-injective, which flips it to categorical, which makes duplicate records fail
+the gate — the exact case the classification exists to spare. A two-row KB is also
+injective by accident. Declare only relations whose value names exactly one
+subject; **never a category many subjects share**, or you permanently exempt the
+leaks this audit exists to catch.
+
+`factlog init` scaffolds the file empty. An **existing KB has no such file**, so
+every relation starts categorical and a title collision is reported as a leak —
+create `policy/identity-relations.md` and declare your identity relations (for a
+bibliography: the title and the DOI).
+
+Nothing is merged automatically. Fix with `factlog amend <subject> <relation>
+<object> --set-object <canonical>`, which rewrites the row durably (both
+`candidates.csv` and the backing `runs/*.json`).
+
+**What it does not catch.** The wrapper rules are deliberately narrow, so a clean
+report is not a proof of completeness. Undetected forms include `others: X`,
+`기타 X` (no parentheses), and `기타(X) 등`. Digits are never folded together
+(`1.5` is not `15`), and `etc` is not treated as a wrapper word — `ETC (electron
+transport chain)` is a real value.
+
+`tools/entity_audit.py` is the neighbouring check: it looks for *entity*
+fragmentation across the whole KB by a shared-token heuristic, so it is broader
+and far noisier (2275 candidates on that same KB). Use `value_audit` when you
+want precise, per-relation findings you can act on.
 ### Value hierarchy (`policy/value-hierarchy.md`)
 
 Two values of the same relation are unrelated strings unless you say otherwise.
