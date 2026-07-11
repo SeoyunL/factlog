@@ -76,5 +76,28 @@ FACTLOG_ROOT="$KB4" "$PY" -m factlog accept A knows B --dry-run >/dev/null 2>&1
 [ "$(status_of "$KB4" A)" = "candidate" ] && ok "(f) --dry-run does not touch runs/*.json" \
   || bad "(f) --dry-run wrote to runs/*.json"
 
+# a run item merge treats as PENDING (blank/unknown status -> needs_review) must be
+# flipped in runs too, or the decision vanishes on re-merge -- the same silent downgrade.
+KB6="$(mktemp -d)/kb"
+"$PY" -m factlog init --target "$KB6" >/dev/null
+printf 'a\n' > "$KB6/sources/a.md"
+printf '[{"subject":"A","relation":"knows","object":"B","source":"sources/a.md","confidence":0.9,"note":""}]' > "$KB6/runs/r1.json"
+FACTLOG_ROOT="$KB6" "$PY" tools/merge_candidates.py --wiki "$KB6" >/dev/null 2>&1
+FACTLOG_ROOT="$KB6" "$PY" -m factlog accept A knows B >/dev/null 2>&1
+[ "$(status_of "$KB6" A)" = "accepted" ] && ok "(h) a blank-status run item (merge sees pending) is flipped in runs"   || bad "(h) a blank-status run item was left pending in runs"
+rm "$KB6/facts/candidates.csv"
+FACTLOG_ROOT="$KB6" "$PY" tools/merge_candidates.py --wiki "$KB6" >/dev/null 2>&1
+[ "$(csv_status "$KB6" A)" = "accepted" ] && ok "(h) it survives re-merge"   || bad "(h) the blank-status accept was downgraded on re-merge"
+
+# a corrupt run file is warned about, not silently skipped while accept reports success
+KB7="$(mktemp -d)/kb"
+"$PY" -m factlog init --target "$KB7" >/dev/null
+printf 'a\n' > "$KB7/sources/a.md"
+printf '[{"subject":"A","relation":"knows","object":"B","source":"sources/a.md","status":"candidate","confidence":0.9,"note":""}]' > "$KB7/runs/good.json"
+FACTLOG_ROOT="$KB7" "$PY" tools/merge_candidates.py --wiki "$KB7" >/dev/null 2>&1
+printf 'not json{' > "$KB7/runs/broken.json"
+ERR="$(FACTLOG_ROOT="$KB7" "$PY" -m factlog accept A knows B 2>&1 >/dev/null)"
+printf '%s' "$ERR" | grep -q "could not read broken.json"   && ok "(i) a corrupt run file is warned about, not silently skipped"   || bad "(i) a corrupt run file was skipped silently"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "accept durable: all passed"; else echo "accept durable: $fails failed"; exit 1; fi

@@ -1096,6 +1096,8 @@ def _apply_status_to_runs(
     """
     import json
 
+    from factlog.common import KNOWN_STATUSES
+
     runs_dir = target / "runs"
     if not runs_dir.is_dir():
         return 0
@@ -1103,7 +1105,15 @@ def _apply_status_to_runs(
     for jp in sorted(runs_dir.glob("*.json")):
         try:
             data = json.loads(jp.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as exc:
+            # merge fails loudly on a corrupt run file; here, skipping it silently would
+            # let accept report success while the decision never reached the file that
+            # holds this triple -- the durability the change promises, quietly lost.
+            print(
+                f"factlog: warning — could not read {jp.name} to record the decision "
+                f"({exc}); if it holds this fact, re-run after fixing the file.",
+                file=sys.stderr,
+            )
             continue
         if not isinstance(data, list):
             continue
@@ -1118,7 +1128,13 @@ def _apply_status_to_runs(
             }
             if not all(fields.get(k) == v for k, v in filt.items()):
                 continue
-            if str(item.get("status", "")).strip() not in from_statuses:
+            st = str(item.get("status", "")).strip()
+            # Mirror merge's normalization: a blank or unrecognized status is coerced to
+            # needs_review (a PENDING status) when candidates.csv is rebuilt, so the CSV
+            # gate treats such a row as pending and flips it. If runs kept the blank, the
+            # decision would vanish on the next re-merge -- the exact silent downgrade
+            # this fix is about, in a row the extractor mis-stamped or hand-edited.
+            if st not in from_statuses and st in KNOWN_STATUSES:
                 continue
             item["status"] = new_status
             dirty = True
