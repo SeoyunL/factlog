@@ -584,10 +584,12 @@ explanation of its purpose.
 #
 # Type meanings:
 #   date     2030.1 / 2030-01-15  -> sortable yyyymmdd
-#   number   1,000 / 3.5          -> fixed-point int64, scaled ×1000 (3 decimals,
-#                                    positive only); thresholds in scaled units
+#   number   1,000 / 3.5 / -2.5   -> fixed-point int64, scaled ×1000 (3 decimals;
+#                                    negatives parse — a loss or a delta may be
+#                                    negative); thresholds in scaled units
 #                                    (e.g. `V >= 2.0` -> `V >= 2000`)
-#   ordinal  rank 3 / 3rd         -> int rank
+#   ordinal  3rd / 3위 / 제3호      -> int rank (must START with the number:
+#                                    `rank 3` does not parse)
 #   amount   100억 / 1,000원       -> integer base unit (needs a unit table)
 #
 # An `amount` line MAY carry an inline unit table; values must be positive ints:

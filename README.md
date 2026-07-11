@@ -510,7 +510,7 @@ The four types:
 
 - `date` — `2030.1` / `2030-01-15` → sortable yyyymmdd. **Engine-projectable**
   (ordering / threshold / range).
-- `ordinal` — `rank 3` / `3rd` → int rank. **Engine-projectable**.
+- `ordinal` — `3rd` / `3위` / `제3호` → int rank. The value must START with the number: `rank 3` does not parse. **Engine-projectable**.
 - `amount` — `100억` / `1,000원` → integer base unit. **Engine-projectable**.
   Needs a unit table; supply one inline at the end of the line:
   `: amount as <alias> (억=1e8, 만=1e4, 원=1)` (values must be positive ints).
