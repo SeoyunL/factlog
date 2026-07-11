@@ -9,8 +9,9 @@
 [factlog](https://github.com/semantic-reasoning/factlog). It does everything factlog
 does, and adds commands that pull scholarly bibliography directly into your knowledge
 base: [Zotero](#importing-zotero-bibliography-factlog-zotero-import),
-[OpenAlex](#importing-openalex-bibliography-factlog-openalex-), and
-[arXiv](#importing-arxiv-preprints-factlog-arxiv-).
+[OpenAlex](#importing-openalex-bibliography-factlog-openalex-),
+[arXiv](#importing-arxiv-preprints-factlog-arxiv-), and
+[PubMed](#importing-pubmed-records-factlog-pubmed-).
 
 ## What it is
 

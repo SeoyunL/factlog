@@ -17,7 +17,8 @@
 학술 연구용 배포판입니다. factlog의 모든 기능에 더해, 학술 서지를 지식베이스로 바로
 가져오는 명령어를 제공합니다 — [Zotero](#zotero-서지-가져오기-factlog-zotero-import) ·
 [OpenAlex](#openalex-서지-가져오기-factlog-openalex-) ·
-[arXiv](#arxiv-프리프린트-가져오기-factlog-arxiv-).
+[arXiv](#arxiv-프리프린트-가져오기-factlog-arxiv-) ·
+[PubMed](#pubmed-문헌-가져오기-factlog-pubmed-).
 
 ## 처음 읽는 사람을 위한 안내
 
@@ -202,7 +203,7 @@ factlog-academic은 **Claude Code 플러그인**입니다. Claude Code 세션에
 
 > 업스트림 `semantic-reasoning/factlog` 가 아니라 **이 저장소**에서 설치하십시오.
 > 업스트림 플러그인에는 서지 수집 명령이 하나도 없습니다 — `factlog zotero-import`,
-> `factlog openalex-*`, `factlog arxiv-*` 는 여기에만 있습니다.
+> `factlog openalex-*`, `factlog arxiv-*`, `factlog pubmed-*` 는 여기에만 있습니다.
 
 위 명령은 **한 줄씩 실행**하십시오. 여러 줄을 한 번에 붙여 넣으면 Claude Code가
 마켓플레이스 등록과 설치를 순서대로 처리하지 못할 수 있습니다.
