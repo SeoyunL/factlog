@@ -279,11 +279,11 @@ python3 -m factlog use ~/wiki      # 활성 KB로 지정
 | `.md`, `.markdown`, `.txt` | **직접 지원** | UTF-8 텍스트, 있는 그대로 읽음. 모든 추출 기준이 전제하는 형식입니다. |
 | 그 밖의 UTF-8 텍스트 (`.rst`, `.org`, `.csv`, 소스 코드) | 평문으로 지원 | 별도 파싱 없이 원시 텍스트로 취급. |
 | `.docx`, 바이너리 `.pdf`, `.odt`, `.epub` | **자동 변환** | `factlog ingest` 가 pandoc / textutil / pdftotext 로 텍스트로 변환합니다. |
-| `.html`, `.htm`, `.rtf` | **자동 변환** | 텍스트 기반 컨테이너입니다. 바이트는 텍스트지만 내용은 마크업이므로, 원문 그대로 읽지 않고 변환합니다. 변환본이 생기면 원본은 추출 입력에서 빠집니다. |
+| `.html`, `.htm`, `.xhtml`, `.rtf` | **자동 변환** | 텍스트 기반 컨테이너입니다. 바이트는 텍스트지만 내용은 마크업이므로, 원문 그대로 읽지 않고 변환합니다. 변환본이 생기면 원본은 추출 입력에서 빠집니다. |
 | `.hwpx` (한컴 OWPML) | **자동 변환** | 내장 추출기(외부 도구 불필요) — zip 내부 `Contents/section*.xml` 텍스트를 읽음. |
 | `.hwp` (구형 한컴, HWP 5.x) | **자동 변환** | `hwp5html`(pyhwp) → pandoc → markdown 경로, 표 보존. `pip install pyhwp` + pandoc 필요. 없으면 안내 메시지와 함께 보고. |
 | `.pptx` (PowerPoint) | **자동 변환** | 내장 추출기(외부 도구 불필요) — zip 내부 `ppt/slides/slideN.xml` 의 슬라이드 텍스트를 순서대로 읽고, 슬라이드당 한 블록으로 변환. 발표자 노트는 제외, 표 셀은 셀당 한 줄로 펼쳐짐(행/열 그룹 구조는 보존 안 됨). |
-| `.xlsx`, 이미지 | **변환 안 됨** | 내장 변환기 없음 — 안내 메시지와 함께 보고. 수동 변환 필요. |
+| `.xml`, `.svg`, `.xlsx`, 이미지 | **변환 안 됨** | 일반 변환기가 없는 마크업/바이너리 — 안내 메시지와 함께 보고. 필요한 텍스트는 수동으로 추출. `.xml`/`.svg` 는 태그가 산문으로 읽히지 않도록 추출 입력에서 빠집니다. |
 
 `factlog ingest` 는 변환된 텍스트를 KB의 **`runs/sources/`** 디렉터리(다른 생성
 런 아티팩트와 같은 위치)에 기록합니다 — 사용자의 원본이 그대로 남아 있어야 하는
@@ -336,7 +336,14 @@ cd /anywhere && factlog ingest report.pdf   # → ~/wiki/runs/sources/report.txt
 factlog eject report.pdf  # inverse of ingest: remove the conversion + retire its facts
 factlog ignore drafts/*.md   # exclude sources from sync (re-extraction)
 factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
+factlog export --bibtex   # 소스를 인용: BibTeX (또는 --csl 로 CSL-JSON)
 ```
+
+`export` 는 `sources/` **와** `runs/sources/` **아래 모든 깊이**의 `.md` 의 YAML front matter 를 읽어(`factlog sources` 가 세는 집합과 동일), `title`
+또는 `zotero_key` 를 가진 소스마다 한 항목을 낸다. 인용할 수 없는 소스(front matter 가
+없거나 두 필드가 다 없는 경우)는 조용히 빠지지 않고 stderr 에 이름이 찍힌다 — 인용 목록에서
+문헌이 소리 없이 사라지는 것이야말로 이 KB 가 막으려는 실패다. 다른 폴더의 두 소스가 같은
+파일명을 가질 수 있는데, 그때는 두 번째에 접미사가 붙은 인용 키가 부여되고 그 사실도 보고된다.
 
 > **슬래시 명령(`/factlog …`)도 활성 KB에서 동작합니다.** 다만 factlog **소스
 > 저장소 안에서** 실행하면 번들 `examples/sample-kb` 와 혼동될 수 있으니, KB
@@ -651,6 +658,23 @@ chain)` 은 실재하는 값입니다.
 `tools/entity_audit.py` 는 이웃한 점검입니다. KB 전체에서 *엔티티* 분열을 토큰 공유
 휴리스틱으로 찾으므로 범위가 넓고 훨씬 시끄럽습니다(같은 KB에서 후보 2275건). 바로
 조치할 수 있는 정밀한 관계별 발견이 필요하면 `value_audit` 을 쓰십시오.
+
+#### 관계 별칭 (`policy/relation-aliases.md`)
+
+**표면형** 관계명을 **정규형(canonical)** 에 매핑해, `게재연도` 와 `발행년도` 로 쓰인 사실을
+하나의 관계 `published_year` 로 다룹니다. 이것이 없으면 엔진은 둘을 무관한 관계로 보고, 한쪽을
+질의하면 다른 쪽에 저장된 사실을 놓칩니다(#213).
+
+```
+# policy/relation-aliases.md
+- `게재연도` -> `published_year`
+- `publication_year` -> `published_year`
+```
+
+한 줄에 매핑 하나, `raw` -> `canonical` 입니다. 여기서는 **두 이름 모두 백틱이 필수**입니다 —
+다른 정책 파일에서는 선택이지만 이 파일만 다릅니다. 화살표는 있는데 백틱이 없는 줄은 사용자가
+만들려다 잘못 쓴 매핑이므로, 조용히 넘기지 않고 stderr 에 malformed 로 보고하고 건너뜁니다.
+정규형은 다른 정책 파일에서 선언하는 이름이며, 별칭은 그 적용 전에 정규형으로 접힙니다.
 
 #### 단일값 관계 (`policy/single-valued.md`)
 
