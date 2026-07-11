@@ -1129,11 +1129,13 @@ def _apply_status_to_runs(
             if not all(fields.get(k) == v for k, v in filt.items()):
                 continue
             st = str(item.get("status", "")).strip()
-            # Mirror merge's normalization: a blank or unrecognized status is coerced to
-            # needs_review (a PENDING status) when candidates.csv is rebuilt, so the CSV
-            # gate treats such a row as pending and flips it. If runs kept the blank, the
-            # decision would vanish on the next re-merge -- the exact silent downgrade
-            # this fix is about, in a row the extractor mis-stamped or hand-edited.
+            # This runs only AFTER the CSV gate found a genuinely-pending match, so the
+            # decision is real. Mirror merge's normalization: a blank or unrecognized
+            # status is coerced to needs_review (PENDING) when candidates.csv is rebuilt,
+            # so the run item merge will treat as pending must be flipped here too --
+            # otherwise the decision vanishes on the next re-merge, the exact silent
+            # downgrade this fix is about, in a row the extractor mis-stamped or an edit
+            # left blank.
             if st not in from_statuses and st in KNOWN_STATUSES:
                 continue
             item["status"] = new_status
