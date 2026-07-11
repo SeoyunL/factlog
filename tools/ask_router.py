@@ -254,7 +254,11 @@ def evaluate_relation(draft: str, facts: list[dict[str, str]]) -> list[list[str]
                 canonical_value(arg_value(r_arg)) == canonical_value(r_val) or
                 r_val in rel_variants):
             continue
-        if not (is_variable(o_arg) or object_matches(arg_value(o_arg), row, hierarchy, canonical_value)):
+        query_relation = arg_value(r_arg) if is_quoted_string(r_arg) else None
+        if not (
+            is_variable(o_arg)
+            or object_matches(arg_value(o_arg), row, hierarchy, canonical_value, relation=query_relation)
+        ):
             continue
         rows.append([row["subject"], row["relation"], row["object"]])
     return rows

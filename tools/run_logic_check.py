@@ -11,6 +11,7 @@ from common import (
     allowed_relations,
     object_matches,
     value_hierarchy,
+    value_hierarchy_warnings,
     dependency_path,
     value_set,
     ensure_dirs,
@@ -80,7 +81,12 @@ def relation_results(
             # a broad value also returns rows filed under a narrower one (#211).
             # subject/relation are matched literally.
             if field == "object":
-                if not object_matches(want, row, hierarchy):
+                # Look the declaration up under the relation the QUERY named, not
+                # the row's stored one: declarations are written on canonical
+                # relation names, and an aliased KB stores surface variants.
+                rel_arg = args[1]
+                query_relation = arg_value(rel_arg) if rel_arg.startswith('"') and rel_arg.endswith('"') else None
+                if not object_matches(want, row, hierarchy, relation=query_relation):
                     matched = False
                     break
             elif want != row[field]:
@@ -211,6 +217,10 @@ def main() -> None:
         if not row["subject"] or not row["relation"] or not row["object"]:
             errors.append(f"incomplete fact row: {row}")
     warnings.extend(status_warnings(candidates))
+    # A mistyped or cyclic declaration is a SILENT no-op: the author believes the
+    # broader query now catches the narrower rows, and it does not. That is the
+    # quiet omission this KB exists to surface, so say it (#211).
+    warnings.extend(value_hierarchy_warnings(facts=facts))
 
     for predicate in sorted(policy_query_predicates):
         for target, reason in sorted(inferred[predicate]):

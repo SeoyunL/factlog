@@ -76,3 +76,4 @@ jobs:
         run: |
           bash tests/test_logic_check_statuses.sh
           bash tests/test_check_empty_policy.sh
+          bash tests/test_value_hierarchy_parity.sh

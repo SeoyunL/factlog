@@ -308,6 +308,46 @@ factlog vocab --all        # include non-engine names (candidate/needs_review/su
 Objects of declared attribute relations are literals, not entities, so they are
 excluded from the entity list (same typing as `status`).
 
+### Value hierarchy (`policy/value-hierarchy.md`)
+
+Two values of the same relation are unrelated strings unless you say otherwise.
+A cohort study **is** an observational study, but without a declaration
+`relation(P, "study_type", "observational")?` returns only the rows spelled
+exactly `observational` and silently misses every row filed as `cohort` — a quiet
+omission, which is the one failure mode this KB exists to prevent. In a real KB
+that query returned 6 rows out of 14.
+
+```markdown
+# policy/value-hierarchy.md
+- study_type: cohort ⊂ observational
+- study_type: cross_sectional ⊂ observational
+- target_disease: `emphysema` <: COPD
+- 연구유형: 코호트연구 ⊂ 관찰연구          # non-ASCII names work the same
+```
+
+`<:` and `<` are ASCII spellings of `⊂`. Backtick-quote a value containing a
+space, a `:` or a `<`. Ancestors are transitive (`a ⊂ b` and `b ⊂ c` means a
+query for `c` also matches an `a` row). Names are matched after Unicode NFC
+normalisation, so a policy file written on macOS still meets its facts.
+
+**Scope — where subsumption applies.** It is applied when a query's **object** is
+matched, by all three of the gate, the evaluator and the logic report, so
+`/factlog ask` and `/factlog check` cannot disagree about what a question means.
+It does **not** rewrite facts: `accepted.dl` stays a 1:1 projection of the
+accepted candidate rows, and every row keeps its own value and its own
+provenance. It is **one-way** — asking for the narrow value never returns the
+broad one. It does **not** apply to `factlog search`, `provenance`, `vocab`,
+coverage, or conflict detection, which all still match values exactly.
+
+The broad value does not need to appear in any fact — declaring it is enough for
+it to become a queryable concept.
+
+Mistakes are reported rather than left to do nothing quietly: a **cycle** is
+dropped in full (keeping it would make subsumption mutual and break the one-way
+contract), and a declaration naming a relation or value that no accepted fact
+uses is surfaced in the logic report's warnings — a typo would otherwise leave
+you believing the broad query now catches the narrow rows when it does not.
+
 ### Typed relations (`policy/typed-relations.md`)
 
 Some relations carry a literal object that should be **compared**, not just

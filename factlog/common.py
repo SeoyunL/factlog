@@ -735,71 +735,198 @@ def _relation_names_from(path: Path) -> set[str]:
 # is applied when a query's object is MATCHED; it never adds facts to
 # accepted.dl, which stays a 1:1 projection of the accepted candidate rows.
 
+# `<:` and `<` are ASCII spellings of `⊂`. Backtick-quoted names are lifted out
+# BEFORE the operator is looked for, so a value may itself contain a '<' or ':'.
 _SUBSUMES_RE = re.compile(r"^(?P<child>.+?)\s*(?:⊂|<:|<)\s*(?P<parent>.+)$")
+_BACKTICKED_RE = re.compile(r"`([^`]+)`")
 
 
-def _hierarchy_token(text: str) -> str:
-    """A value name: the `backtick`-quoted token if present, else the raw text."""
-    match = re.search(r"`([^`]+)`", text)
-    return (match.group(1) if match else text).strip()
+def _hierarchy_line(stripped: str) -> tuple[str, str, str] | None:
+    """Parse one declaration into (relation, child, parent), or None.
+
+    Backticked names are extracted first and replaced by placeholders, so the
+    ':' and '⊂' splits can never cut through a quoted value. Returns None for a
+    line that is not a declaration; the caller decides whether that is a comment
+    or a mistake worth warning about.
+    """
+    quoted: list[str] = []
+
+    def _stash(match: re.Match[str]) -> str:
+        quoted.append(match.group(1).strip())
+        return f"\x00{len(quoted) - 1}\x00"
+
+    masked = _BACKTICKED_RE.sub(_stash, stripped)
+
+    def _restore(text: str) -> str:
+        return re.sub(r"\x00(\d+)\x00", lambda m: quoted[int(m.group(1))], text).strip()
+
+    if ":" not in masked:
+        return None
+    relation_part, _, rest = masked.partition(":")
+    match = _SUBSUMES_RE.match(rest.strip())
+    if not match:
+        return None
+    relation = _restore(relation_part)
+    child = _restore(match.group("child"))
+    parent = _restore(match.group("parent"))
+    if not relation or not child or not parent:
+        return None
+    return relation, child, parent
+
+
+def _hierarchy_declarations(root: Path | None = None) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Read the policy file: (declarations, warnings-about-unparsable-lines).
+
+    Names are NFC-normalised on load, exactly as relation_aliases() does: a
+    policy file authored on macOS is NFD, accepted facts are NFC, and comparing
+    the two raw would make every declaration silently do nothing — the same quiet
+    no-op this feature exists to remove.
+    """
+    path = (root / "policy" / "value-hierarchy.md") if root else (POLICY_DIR / "value-hierarchy.md")
+    if not path.is_file():
+        return [], []
+
+    declarations: list[tuple[str, str, str]] = []
+    warnings: list[str] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = re.sub(r"^\s*[-*]\s+", "", line.strip()).strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parsed = _hierarchy_line(stripped)
+        if parsed is None:
+            warnings.append(f"value-hierarchy line {lineno} is not a declaration, ignored: {stripped}")
+            continue
+        relation, child, parent = (unicodedata.normalize("NFC", part) for part in parsed)
+        if child == parent:
+            warnings.append(f"value-hierarchy line {lineno} declares a value as its own parent, ignored: {stripped}")
+            continue
+        declarations.append((relation, child, parent))
+    return declarations, warnings
 
 
 def value_hierarchy(root: Path | None = None) -> dict[str, dict[str, set[str]]]:
     """Parse policy/value-hierarchy.md → {relation: {child_value: {ancestors}}}.
 
-    Line format (bullets and '#' comments allowed; backtick-quote a name with
-    spaces or a '<'):
+    Line format (bullets and '#' comments allowed; backtick-quote a name that
+    contains spaces, a ':' or a '<'):
 
         - 연구유형: 코호트연구 ⊂ 관찰연구
         - 대상질환: `emphysema` <: COPD
 
-    Ancestors are TRANSITIVE (a ⊂ b ⊂ c ⇒ querying c matches a). A cycle is
-    dropped rather than raised: policy is authored by hand and a bad line must
-    not take the whole logic check down — resolve_* callers surface it as a
-    parse warning instead. Absent file → {} → behaviour byte-identical to a KB
-    without the feature.
+    Ancestors are TRANSITIVE (a ⊂ b and b ⊂ c ⇒ a query for c matches an a row).
+
+    A CYCLE IS DROPPED — every value on it, not just the self-edge. Keeping a
+    cycle would make subsumption mutual (a query for the narrow value returning
+    the broad one), silently breaking the one-way contract this feature is built
+    on. The dropped values are reported by value_hierarchy_warnings, so the
+    mistake surfaces instead of quietly changing what queries mean.
+
+    Absent file → {} → behaviour byte-identical to a KB without the feature.
     """
-    path = (root / "policy" / "value-hierarchy.md") if root else (POLICY_DIR / "value-hierarchy.md")
-    if not path.is_file():
-        return {}
+    hierarchy, _ = _closed_hierarchy(root)
+    return hierarchy
+
+
+def _closed_hierarchy(root: Path | None = None) -> tuple[dict[str, dict[str, set[str]]], list[str]]:
+    declarations, warnings = _hierarchy_declarations(root)
 
     direct: dict[str, dict[str, set[str]]] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = re.sub(r"^\s*[-*]\s+", "", line.strip()).strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if ":" not in stripped:
-            continue
-        relation, _, rest = stripped.partition(":")
-        relation = _hierarchy_token(relation)
-        match = _SUBSUMES_RE.match(rest.strip())
-        if not relation or not match:
-            continue
-        child = _hierarchy_token(match.group("child"))
-        parent = _hierarchy_token(match.group("parent"))
-        if not child or not parent or child == parent:
-            continue
+    for relation, child, parent in declarations:
         direct.setdefault(relation, {}).setdefault(child, set()).add(parent)
 
-    # Transitive closure, per relation. A cycle would loop forever, so bound the
-    # walk by the number of declared values and drop anything that revisits.
     closed: dict[str, dict[str, set[str]]] = {}
     for relation, edges in direct.items():
-        table: dict[str, set[str]] = {}
+        # Ancestors of each value, by walking parents. A value that reaches
+        # itself sits on a cycle.
+        reach: dict[str, set[str]] = {}
         for child in edges:
             seen: set[str] = set()
-            frontier = set(edges.get(child, set()))
+            frontier = set(edges[child])
             while frontier:
                 node = frontier.pop()
-                if node in seen or node == child:  # self-reachable ⇒ cycle: stop
+                if node in seen:
                     continue
                 seen.add(node)
                 frontier |= edges.get(node, set()) - seen
-            if seen:
-                table[child] = seen
+            reach[child] = seen
+
+        cyclic = {child for child, ancestors in reach.items() if child in ancestors}
+        if cyclic:
+            warnings.append(
+                f"value-hierarchy: '{relation}' declares a cycle through "
+                f"{', '.join(sorted(cyclic))} — those declarations are IGNORED "
+                f"(subsumption must stay one-way)"
+            )
+        table = {
+            child: ancestors - cyclic
+            for child, ancestors in reach.items()
+            if child not in cyclic and ancestors - cyclic
+        }
         if table:
             closed[relation] = table
-    return closed
+    return closed, warnings
+
+
+def value_hierarchy_warnings(
+    root: Path | None = None,
+    facts: list[dict[str, str]] | None = None,
+) -> list[str]:
+    """Problems with the declarations themselves — unparsable lines, cycles, and
+    names that no accepted fact uses.
+
+    A typo in a declaration is a SILENT no-op: the author believes the broader
+    query now catches the narrower rows, and it does not. That is precisely the
+    quiet omission #211 is about, so the logic report says so rather than
+    leaving the author to trust a file nobody checked.
+    """
+    hierarchy, warnings = _closed_hierarchy(root)
+    if facts is None:
+        return warnings
+
+    known_relations = {row["relation"] for row in facts}
+    values_by_relation: dict[str, set[str]] = {}
+    for row in facts:
+        values_by_relation.setdefault(row["relation"], set()).add(row["object"])
+
+    for relation, table in sorted(hierarchy.items()):
+        if relation not in known_relations:
+            warnings.append(f"value-hierarchy: no accepted fact uses relation '{relation}' — declaration has no effect")
+            continue
+        values = values_by_relation.get(relation, set())
+        for child in sorted(table):
+            if child not in values:
+                warnings.append(
+                    f"value-hierarchy: no accepted '{relation}' fact has the value '{child}' — "
+                    f"declaration has no effect (typo?)"
+                )
+    return warnings
+
+
+def hierarchy_ancestors(
+    hierarchy: dict[str, dict[str, set[str]]] | None,
+    relation: str,
+    value: str,
+    normalize: Callable[[str], str] | None = None,
+) -> set[str]:
+    """Declared ancestors of `value` under `relation` (empty when undeclared).
+
+    Both keys are compared through `normalize`, so a policy file and a fact row
+    that differ only in surface spelling still meet. The RELATION passed by
+    callers is the query's relation (a canonical name) rather than the stored
+    row's, so a KB using relation aliases — where rows carry a surface variant —
+    still resolves against declarations written on the canonical name.
+    """
+    if not hierarchy:
+        return set()
+    norm = normalize or (lambda value: value)
+    want_rel, want_val = norm(relation), norm(value)
+    for declared_rel, table in hierarchy.items():
+        if norm(declared_rel) != want_rel:
+            continue
+        for child, ancestors in table.items():
+            if norm(child) == want_val:
+                return ancestors
+    return set()
 
 
 def object_matches(
@@ -807,6 +934,7 @@ def object_matches(
     row: dict[str, str],
     hierarchy: dict[str, dict[str, set[str]]] | None,
     normalize: Callable[[str], str] | None = None,
+    relation: str | None = None,
 ) -> bool:
     """Does a fact row satisfy a query asking for `query_object`?
 
@@ -814,18 +942,19 @@ def object_matches(
     it (`관찰연구` matches a row filed as `코호트연구`). Subsumption is one-way:
     asking for the narrow value never returns the broad one.
 
+    `relation` is the relation the QUERY named; pass it when the query pins a
+    relation constant, so an aliased KB (rows storing a surface variant) still
+    matches declarations written on the canonical name. Falls back to the row's
+    own relation for a variable-relation query.
+
     `normalize` folds surface spelling before comparing — ask_router matches
-    canonicalised values, so the same declaration must apply there rather than
-    being defeated by a stray space. Defaults to exact string comparison, which
-    is what the logic report uses.
+    canonicalised values, so a declaration must not be defeated by a stray space.
     """
     norm = normalize or (lambda value: value)
     want = norm(query_object)
     if norm(row["object"]) == want:
         return True
-    if not hierarchy:
-        return False
-    ancestors = hierarchy.get(row["relation"], {}).get(row["object"], set())
+    ancestors = hierarchy_ancestors(hierarchy, relation or row["relation"], row["object"], norm)
     return any(norm(ancestor) == want for ancestor in ancestors)
 
 
@@ -1865,6 +1994,7 @@ def _relation_match_count(
     query: str,
     facts: list[dict[str, str]],
     aliases: dict[str, str] | None = None,
+    hierarchy: dict[str, dict[str, set[str]]] | None = None,
 ) -> int:
     if query.startswith("relation"):
         args = _query_args(query)
@@ -1887,7 +2017,7 @@ def _relation_match_count(
         count = 0
         for row in facts:
             s_arg, r_arg, o_arg = args
-            s_val, r_val, o_val = row["subject"], row["relation"], row["object"]
+            s_val, r_val = row["subject"], row["relation"]
             if not (_is_variable(s_arg) or _canonical_value(_arg_value(s_arg)) == _canonical_value(s_val)):
                 continue
             # Relation: match exact canonical name OR any surface variant.
@@ -1895,7 +2025,16 @@ def _relation_match_count(
                     _canonical_value(_arg_value(r_arg)) == _canonical_value(r_val) or
                     r_val in canonical_variants):
                 continue
-            if not (_is_variable(o_arg) or _canonical_value(_arg_value(o_arg)) == _canonical_value(o_val)):
+            if not (
+                _is_variable(o_arg)
+                or object_matches(
+                    _arg_value(o_arg),
+                    row,
+                    hierarchy,
+                    _canonical_value,
+                    relation=_arg_value(r_arg) if _is_quoted_string(r_arg) else None,
+                )
+            ):
                 continue
             count += 1
         return count
@@ -1981,11 +2120,27 @@ def classify_query(
             _rel_aliases = relation_aliases()
             if not canonical_variants_of(_arg_value(relation), _rel_aliases):
                 return False, QUERY_RELATION_NOT_ACCEPTED, f"relation name is not accepted: {_arg_value(relation)}"
-        if not _is_variable(object_) and _canonical_value(_arg_value(object_)) not in {
-            _canonical_value(v) for v in values
-        }:
-            return False, QUERY_ENTITY_NOT_ACCEPTED, f"relation object is not an accepted entity: {_arg_value(object_)}"
-        if _relation_match_count(query, facts, _rel_aliases) == 0:
+        # The gate must know the value hierarchy too. A broader value may be a
+        # legitimate query object while appearing in NO accepted fact — that is
+        # the whole point of declaring `코호트연구 ⊂ 관찰연구`. Judged by the raw
+        # value_set alone, the gate rejected such a query (route=wiki) or, worse,
+        # called it a verified negative — asserting "no such fact" about facts the
+        # logic report was happily returning (#211). An assertion that is wrong is
+        # worse than the silent omission this feature set out to fix, so the gate,
+        # the evaluator and the report all read the same declarations.
+        _hierarchy = value_hierarchy()
+        if not _is_variable(object_):
+            _object_value = _arg_value(object_)
+            _accepted_objects = {_canonical_value(v) for v in values}
+            _declared = _canonical_value(_object_value) in {
+                _canonical_value(ancestor)
+                for table in _hierarchy.values()
+                for ancestors in table.values()
+                for ancestor in ancestors
+            }
+            if _canonical_value(_object_value) not in _accepted_objects and not _declared:
+                return False, QUERY_ENTITY_NOT_ACCEPTED, f"relation object is not an accepted entity: {_object_value}"
+        if _relation_match_count(query, facts, _rel_aliases, _hierarchy) == 0:
             return False, QUERY_FACT_ABSENT, "relation query does not match accepted facts"
         return True, QUERY_OK, "passed"
     if predicate == "path":

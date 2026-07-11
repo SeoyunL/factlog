@@ -63,13 +63,84 @@ class TestParse:
         )
         assert common.value_hierarchy(kb)["r"]["a"] == {"b", "c"}
 
-    def test_a_cycle_is_dropped_not_hung(self, kb):
-        # Hand-authored policy: a bad line must not take the logic check down.
+    def test_a_cycle_is_dropped_entirely(self, kb):
+        # Not merely "does not hang": every value on the cycle must GO. Keeping a
+        # cycle makes subsumption mutual — a query for the narrow value returns
+        # the broad one — which silently breaks the one-way contract. (The earlier
+        # version of this test asserted `"a" not in h["r"]["a"]`, which the buggy
+        # implementation also satisfied: it was always true and caught nothing.)
         (kb / "policy" / "value-hierarchy.md").write_text(
             "- r: a ⊂ b\n- r: b ⊂ a\n", encoding="utf-8"
         )
-        h = common.value_hierarchy(kb)  # must terminate
-        assert "a" not in h.get("r", {}).get("a", set())
+        assert common.value_hierarchy(kb) == {}
+
+    def test_a_longer_cycle_is_dropped_too(self, kb):
+        (kb / "policy" / "value-hierarchy.md").write_text(
+            "- r: a ⊂ b\n- r: b ⊂ c\n- r: c ⊂ a\n", encoding="utf-8"
+        )
+        assert common.value_hierarchy(kb) == {}
+
+    def test_a_dropped_cycle_is_reported(self, kb):
+        # Dropping it silently would be its own quiet failure: the author believes
+        # the declaration is in force.
+        (kb / "policy" / "value-hierarchy.md").write_text(
+            "- r: a ⊂ b\n- r: b ⊂ a\n", encoding="utf-8"
+        )
+        warnings = common.value_hierarchy_warnings(kb)
+        assert any("cycle" in w for w in warnings)
+
+    def test_an_acyclic_branch_survives_a_cycle_elsewhere(self, kb):
+        (kb / "policy" / "value-hierarchy.md").write_text(
+            "- r: a ⊂ b\n- r: b ⊂ a\n- r: x ⊂ y\n", encoding="utf-8"
+        )
+        assert common.value_hierarchy(kb) == {"r": {"x": {"y"}}}
+
+    def test_backticks_protect_an_operator_inside_a_value(self, kb):
+        # The file format promises this; the first parser split on '<' before
+        # honouring the backticks and produced silent garbage keys.
+        (kb / "policy" / "value-hierarchy.md").write_text("- r: `a<b` ⊂ c\n", encoding="utf-8")
+        assert common.value_hierarchy(kb) == {"r": {"a<b": {"c"}}}
+
+    def test_backticks_protect_a_colon_in_the_relation(self, kb):
+        (kb / "policy" / "value-hierarchy.md").write_text("- `r:x`: a ⊂ b\n", encoding="utf-8")
+        assert common.value_hierarchy(kb) == {"r:x": {"a": {"b"}}}
+
+    def test_an_nfd_policy_file_still_matches_nfc_facts(self, kb):
+        # macOS writes NFD; accepted facts are NFC. Comparing them raw made every
+        # Korean declaration a silent no-op — the exact failure #211 removes.
+        import unicodedata
+
+        (kb / "policy" / "value-hierarchy.md").write_text(
+            unicodedata.normalize("NFD", "- 연구유형: 코호트연구 ⊂ 관찰연구\n"), encoding="utf-8"
+        )
+        h = common.value_hierarchy(kb)
+        row = _row("P", "연구유형", "코호트연구")
+        assert common.object_matches("관찰연구", row, h, relation="연구유형")
+
+
+class TestDeclarationWarnings:
+    def test_a_typo_in_a_value_is_reported(self, kb):
+        # A mistyped declaration does nothing, and the author has no way to know:
+        # they declared the hierarchy and believe the broad query now catches the
+        # narrow rows. Silence here recreates the omission the feature removes.
+        (kb / "policy" / "value-hierarchy.md").write_text(
+            "- 연구유형: 코호트연국 ⊂ 관찰연구\n", encoding="utf-8"
+        )
+        facts = [_row("P", "연구유형", "코호트연구")]
+        warnings = common.value_hierarchy_warnings(kb, facts=facts)
+        assert any("코호트연국" in w for w in warnings)
+
+    def test_an_unknown_relation_is_reported(self, kb):
+        (kb / "policy" / "value-hierarchy.md").write_text("- nosuch: x ⊂ y\n", encoding="utf-8")
+        facts = [_row("P", "연구유형", "코호트연구")]
+        assert any("nosuch" in w for w in common.value_hierarchy_warnings(kb, facts=facts))
+
+    def test_a_correct_declaration_is_quiet(self, kb):
+        (kb / "policy" / "value-hierarchy.md").write_text(
+            "- 연구유형: 코호트연구 ⊂ 관찰연구\n", encoding="utf-8"
+        )
+        facts = [_row("P", "연구유형", "코호트연구")]
+        assert common.value_hierarchy_warnings(kb, facts=facts) == []
 
 
 class TestSubsumption:
