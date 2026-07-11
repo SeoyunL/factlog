@@ -122,7 +122,7 @@ else
   bad "(e) #221 is back: guessed a flat conversion's origin from its basename"
 fi
 if printf '%s' "$OUT_E" | grep -q "NOT ejecting runs/sources/report.md"; then
-  ok "(e) the un-ejected conversion is named, with a migration path"
+  ok "(e) the un-ejected conversion is named, with a working exit"
 else
   bad "(e) left the conversion behind SILENTLY — the user cannot tell"
 fi
@@ -237,6 +237,49 @@ if printf '%s' "$OUT_K" | grep -q "NOT ejecting runs/sources/report.md"; then
   ok "(k) a headerless flat conversion is named, not skipped silently"
 else
   bad "(k) left a headerless flat conversion behind SILENTLY"
+fi
+
+# --- (l) never do the IRREVERSIBLE half of a job whose reversible half we refused --
+# Deleting the original while leaving a conversion we could not attribute strands the
+# conversion's facts in accepted.dl with no source file, and --purge takes the audit
+# trail too. The user cannot get the original back. main deleted both; refusing one
+# and doing the other is worse than either.
+KB10="$(mktemp -d "$TMP_ROOT/kb.XXXXXX")/wiki"
+"$PYTHON" -m factlog init --target "$KB10" >/dev/null
+mkdir -p "$KB10/sources/sub"
+printf 'nested\n' > "$KB10/sources/sub/report.html"
+printf -- '<!-- ingested-by-factlog | source: report.html | converter: pandoc -->\nbody\n' \
+  > "$KB10/runs/sources/report.md"
+printf 'subject,relation,object,source,status,confidence,note\n' > "$KB10/facts/candidates.csv"
+printf 'FROM_CONV,rel,B,runs/sources/report.md,accepted,0.9,\n' >> "$KB10/facts/candidates.csv"
+FACTLOG_ROOT="$KB10" "$PYTHON" tools/compile_facts.py >/dev/null 2>&1
+
+RC_L=0
+OUT_L="$(FACTLOG_ROOT="$KB10" "$PYTHON" -m factlog eject sources/sub/report.html --purge --delete-original 2>&1)" || RC_L=$?
+if [ -f "$KB10/sources/sub/report.html" ]; then
+  ok "(l) the original is NOT deleted while an unattributable conversion survives"
+else
+  bad "(l) deleted the original and left the conversion — facts are stranded"
+fi
+if [ "$RC_L" -ne 0 ]; then
+  ok "(l) the refusal is a non-zero exit, not a silent half-job"
+else
+  bad "(l) exited 0 after refusing half the work"
+fi
+if printf '%s' "$OUT_L" | grep -q "refusing --delete-original"; then
+  ok "(l) the refusal says why"
+else
+  bad "(l) refused without saying why"
+fi
+
+# and the two-step way out actually completes the job
+FACTLOG_ROOT="$KB10" "$PYTHON" -m factlog eject runs/sources/report.md >/dev/null 2>&1
+RC_L2=0
+FACTLOG_ROOT="$KB10" "$PYTHON" -m factlog eject sources/sub/report.html --purge --delete-original >/dev/null 2>&1 || RC_L2=$?
+if [ ! -f "$KB10/sources/sub/report.html" ] && [ "$RC_L2" -eq 0 ]; then
+  ok "(l) removing the conversion first lets --delete-original complete"
+else
+  bad "(l) the advised two-step way out does not work — a dead end"
 fi
 
 echo "---"

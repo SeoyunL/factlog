@@ -2631,6 +2631,28 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
     orig_on_disk = [r for r in matched_sorted if not r.startswith("runs/sources/") and r in disk_refs]
     affected = [r for r in rows if match_row(r)]
 
+    # Refuse to do the IRREVERSIBLE half of a job whose reversible half we just
+    # declined. Deleting the original while leaving a conversion we could not
+    # attribute -- and the facts citing it -- would strand those facts in
+    # accepted.dl with their source file gone, and --purge would take the audit
+    # trail with it. main deleted both; this branch must not delete only the one
+    # the user cannot get back.
+    # On disk only: a conversion that is merely still CITED cannot be stranded by
+    # deleting the original -- its file is already gone, and its rows were retired
+    # by whatever removed it.
+    stranded = sorted(r for r in (unattributable - matched) if r in disk_refs)
+    if args.delete_original and stranded and orig_on_disk:
+        print(
+            "factlog eject: refusing --delete-original — "
+            f"{len(stranded)} conversion(s) of this name cannot be attributed to the "
+            "path you gave, so deleting the original would strand their facts with no "
+            "source file. Remove the conversion(s) first, then re-run:",
+            file=sys.stderr,
+        )
+        for ref in stranded:
+            print(f"    factlog eject {ref}", file=sys.stderr)
+        return 1
+
     action = "purge" if args.purge else "supersede"
     print(f"  candidates.csv: {len(affected)} row(s) to {action}")
     print(f"  runs/sources conversion(s) to delete: {len(conv_to_delete)}")
@@ -3923,7 +3945,7 @@ def cmd_pubmed_refresh(args: argparse.Namespace) -> int:
                 print(f"skipped\t{porcelain_field(check.pmid)}")
             print(f"would_check\t{len(to_check)}")
             print(f"skipped\t{len(skipped)}")
-            print("dry_run\t1")
+            print(f"dry_run\t1")
             print(f"target\t{target}")
         else:
             print(
