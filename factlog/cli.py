@@ -2474,6 +2474,10 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
         # exist, so say so and let the caller fall back.
         return None
 
+    # Flat conversions whose origin cannot be attributed to a requested PATH.
+    # Reported instead of guessed at (see the path branch of matches()).
+    unattributable: set[str] = set()
+
     def matches(ref: str, name: str) -> bool:
         name = nfc(name)
         rp, np_ = Path(ref), Path(name)
@@ -2491,11 +2495,22 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
             origin = conv_source_path(ref)
             if origin is not None:
                 return origin == wanted
-            # A pre-mirroring flat conversion with a bare-name header: the subdir was
-            # never recorded, so path and basename are all we can compare. Match by
-            # name, as this did before mirroring existed, rather than silently
-            # ejecting nothing on an un-migrated KB.
-            return conv_origin.get(ref) == PurePosixPath(name).name
+            # Origin unknowable: a FLAT conversion with a bare-name header. Falling
+            # back to a basename compare here re-created #221 — the very bug this
+            # branch exists to kill. A flat conversion's original may sit in a
+            # subdir the header never recorded (a pre-mirroring KB), but it may
+            # equally have been ingested from OUTSIDE sources/ (README documents
+            # exactly that: `factlog ingest report.docx --target ~/wiki`), or have
+            # been deleted. Those states are indistinguishable, so a basename match
+            # would delete the conversion of a document the user never named, with
+            # exit 0.
+            #
+            # So do not guess. Silent under-ejection beats silent over-ejection: the
+            # ref is reported afterwards (unattributable) so the user can eject it
+            # by its own name or migrate the KB with `factlog ingest --scan --force`.
+            if conv_origin.get(ref) == PurePosixPath(name).name:
+                unattributable.add(ref)
+            return False
         if np_.suffix:  # a bare filename with an extension
             if not is_conv:
                 return rp.name == np_.name  # an original with that filename
@@ -2578,6 +2593,17 @@ def _select_eject_sources(args, rows, disk_refs, all_refs, target, nfc):
 
     def match_row(d: dict) -> bool:
         return nfc(str(d.get("source", "")).partition("#")[0]) in matched
+
+    # Name what we deliberately did NOT match, so under-ejection is not silent.
+    for ref in sorted(unattributable - matched):
+        print(
+            f"factlog eject: NOT ejecting {ref} — it is a flat conversion whose "
+            f"provenance header records only a basename, so it cannot be attributed "
+            f"to a path. It may have been made from a different document. To remove "
+            f"it, name it directly (factlog eject {ref}); to give this KB attributable "
+            f"conversions, re-run factlog ingest --scan --force.",
+            file=sys.stderr,
+        )
 
     matched_sorted = sorted(matched)
     print(f"factlog eject (KB: {target}): {len(matched_sorted)} matched source ref(s):")

@@ -102,19 +102,29 @@ fi
 
 # ------------------------------------------------------------------ (e)
 # A pre-mirroring KB: a FLAT conversion whose header records only a basename. The
-# subdir is not recorded anywhere, so reconstructing one would be a guess — and
-# guessing made a path request silently eject nothing on such a KB.
+# subdir is not recorded anywhere, so reconstructing one would be a GUESS — and the
+# guess is unsafe, because this state is byte-identical to a conversion made from a
+# document that was never under sources/ at all (README:84 documents that ingest
+# form) or from an original since deleted. Guessing by basename is exactly what
+# #221 reported: a conversion of a document the user never named, deleted with
+# exit 0. So a path request must NOT match it — and must say so, or the
+# under-ejection is just a quieter kind of wrong.
 KB3="$(mktemp -d "$TMP_ROOT/kb.XXXXXX")/wiki"
 "$PYTHON" -m factlog init --target "$KB3" >/dev/null
 mkdir -p "$KB3/sources/sub"
 printf 'nested\n' > "$KB3/sources/sub/report.html"
-printf -- '<!-- source: report.html | converter: pandoc | date: 2026-01-01 -->\nold\n' \
+printf -- '<!-- ingested-by-factlog | source: report.html | converter: pandoc -->\nold\n' \
   > "$KB3/runs/sources/report.md"
-"$PYTHON" -m factlog eject sub/report.html --target "$KB3" >/dev/null 2>&1 || true
+OUT_E="$("$PYTHON" -m factlog eject sub/report.html --target "$KB3" 2>&1 || true)"
 if [ -f "$KB3/runs/sources/report.md" ]; then
-  bad "(e) a legacy flat conversion was left behind — an un-migrated KB cannot eject"
+  ok "(e) an unattributable flat conversion is not deleted by a path request"
 else
-  ok "(e) a legacy flat conversion is still ejectable by path"
+  bad "(e) #221 is back: guessed a flat conversion's origin from its basename"
+fi
+if printf '%s' "$OUT_E" | grep -q "NOT ejecting runs/sources/report.md"; then
+  ok "(e) the un-ejected conversion is named, with a migration path"
+else
+  bad "(e) left the conversion behind SILENTLY — the user cannot tell"
 fi
 
 # ------------------------------------------------------------------ (f)
@@ -151,6 +161,38 @@ if [ -f "$KB6/sources/report.html" ]; then
   ok "(h) --delete-original did not touch the same-named original elsewhere"
 else
   bad "(h) --delete-original deleted an original the user never named"
+fi
+
+# --- (i) the ambiguous flat conversion: origin is NOT knowable from a bare header ---
+# A flat conversion whose original was never in sources/ (README documents this:
+# `factlog ingest report.docx --target ~/wiki`) is indistinguishable from a
+# pre-mirroring legacy conversion. Guessing by basename re-created #221: a document
+# the user never named got deleted with exit 0. We must NOT match it, and must SAY SO.
+KB7="$(mktemp -d "$TMP_ROOT/kb.XXXXXX")/wiki"
+"$PYTHON" -m factlog init --target "$KB7" >/dev/null 2>&1
+mkdir -p "$KB7/sources/sub"
+printf 'nested\n' > "$KB7/sources/sub/report.md"
+# a flat conversion carrying a bare-name header, from a document outside sources/
+mkdir -p "$KB7/runs/sources"
+printf '<!-- ingested-by-factlog | source: report.md | converter: pandoc -->\nouter body\n' > "$KB7/runs/sources/report.md"
+printf 'subject,relation,object,source,status,confidence,note\n' > "$KB7/facts/candidates.csv"
+printf 'X,r,Y,sources/sub/report.md,accepted,0.9,\n' >> "$KB7/facts/candidates.csv"
+
+OUT="$(FACTLOG_ROOT="$KB7" "$PYTHON" -m factlog eject sub/report.md 2>&1)"
+if [ -f "$KB7/runs/sources/report.md" ]; then
+  ok "(i) a flat conversion of an unnamed document is NOT deleted"
+else
+  bad "(i) #221 is back: deleted a conversion the user never named"
+fi
+if printf '%s' "$OUT" | grep -q "NOT ejecting runs/sources/report.md"; then
+  ok "(i) the skipped conversion is named, so under-ejection is not silent"
+else
+  bad "(i) skipped the conversion silently"
+fi
+if printf '%s' "$OUT" | grep -q "ingest --scan --force"; then
+  ok "(i) the message says how to migrate the KB"
+else
+  bad "(i) no migration guidance"
 fi
 
 echo "---"
