@@ -558,26 +558,69 @@ def _init_kb(target) -> bool:
     return False
 
 
+def active_kb_is_usable(current: str | None) -> bool:
+    """Is the configured active KB a directory that still exists?
+
+    A config pointing at a deleted KB must not be defended: keeping it would trap
+    the user, since `init` would then refuse to adopt any new KB forever (#210).
+    """
+    if current is None:
+        return False
+    from pathlib import Path
+
+    return Path(current).is_dir()
+
+
+def init_adopts_target(current: str | None, target, activate: bool = False) -> bool:
+    """Should `init` make `target` the active KB?
+
+    Yes when nothing usable is configured (the first-run convenience), when the
+    target already IS the active KB (re-init is a no-op), or when the user asked
+    for it with --activate. Otherwise NO: scaffolding a KB must not silently
+    retarget accept/reject/amend/sync at it (#210).
+
+    Pure so it can be pinned without running the CLI.
+    """
+    if activate:
+        return True
+    if not active_kb_is_usable(current):
+        return True
+    return current == str(target)
+
+
+def setup_active_kb_action(previous: str | None, target) -> str:
+    """The summary line `setup` prints for its active-KB adoption.
+
+    `setup` IS the "make this my KB" onboarding command, so unlike `init` it does
+    adopt its target. But replacing a *different* active KB has to be stated, not
+    slipped into a success summary (#210).
+    """
+    if active_kb_is_usable(previous) and previous != str(target):
+        return f"CHANGED active KB: {previous} -> {target} (was pointing elsewhere)"
+    return f"set active KB to {target} (ingest/ask/sync default here from any directory)"
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     target = Path(args.target).expanduser().resolve()
     _init_kb(target)
 
-    # Scaffolding a KB must not silently retarget the commands that mutate one.
-    # `init` used to overwrite the active KB unconditionally, so creating a
-    # scratch KB anywhere — another shell, a test, an agent — pointed the user's
-    # accept/reject/amend/sync at it without a word (#210). Adopt the new KB only
-    # when nothing is configured yet (the first-run convenience); otherwise leave
-    # the active KB alone and say how to switch deliberately.
     current = factlog_config.read_root()
-    if current is None or current == str(target):
+    if init_adopts_target(current, target, getattr(args, "activate", False)):
         factlog_config.write_root(target)
         print(f"factlog init: active KB set to {target} (ingest/ask/sync default here from any directory)")
         return 0
 
+    # Say it on stderr too: a script that only checks the exit code would
+    # otherwise carry on ingesting into the OLD KB believing init "worked".
     print(f"factlog init: active KB left unchanged at {current}")
-    print(f"  {target} was created but is NOT active. To switch: factlog use {target}")
+    print(f"  {target} was created but is NOT active.")
+    print(f"  To switch: factlog use {target}   (or re-run init with --activate)")
+    print(
+        f"factlog init: warning — {target} was created but the active KB is still {current}",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -1821,12 +1864,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
         actions.append(f"created KB layout at {target}")
     else:
         actions.append(f"KB already present at {target}")
-    # setup IS the "make this my KB" command, so it does adopt the target — but
-    # replacing a different active KB must be stated, not slipped in (#210).
-    if previous is not None and previous != str(target):
-        actions.append(f"CHANGED active KB: {previous} -> {target} (was pointing elsewhere)")
-    else:
-        actions.append(f"set active KB to {target} (ingest/ask/sync default here from any directory)")
+    action = setup_active_kb_action(previous, target)
+    actions.append(action)
+    if action.startswith("CHANGED"):
+        # Also on stderr: buried in a success summary, a retarget is easy to miss.
+        print(f"factlog setup: warning — {action}", file=sys.stderr)
     # Optional narration language: applied only when --lang is given, so an existing
     # language survives a re-run of setup that omits the flag (write_root above
     # already preserves it). Uses the shared validate/apply path, so an empty value
@@ -5950,6 +5992,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="scaffold an empty knowledge base layout")
     init.add_argument("--target", default="~/wiki", help="knowledge base root to create")
+    init.add_argument(
+        "--activate",
+        action="store_true",
+        help="also make the new KB active, replacing the current one "
+        "(without this, init never changes an existing active KB)",
+    )
     init.set_defaults(func=cmd_init)
 
     setup = sub.add_parser(

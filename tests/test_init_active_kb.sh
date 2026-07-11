@@ -12,9 +12,15 @@
 #       convenience is kept
 #   (b) a SECOND init elsewhere leaves the active KB alone and says so
 #   (c) the KB is still scaffolded either way (init's actual job)
-#   (d) re-init of the ALREADY-active KB is a no-op, not a "left unchanged" notice
+#   (d) re-init of the ALREADY-active KB keeps it active and says so
 #   (e) `factlog use` still switches deliberately
-#   (f) `setup` adopts the target (that is its job) but ANNOUNCES the replacement
+#   (f) --activate is the explicit opt-in for scripts that DO want the new KB
+#   (g) a config pointing at a DELETED KB does not trap the user
+#
+# `setup` also touches the active KB, but it is NOT driven here: it installs
+# dependencies before reaching the KB block, so running it in CI's dependency-free
+# shell job would trigger `pip install` and reach the network. Its decision
+# function is pinned in tests/unit/test_active_kb_adoption.py instead.
 #
 # Usage: bash tests/test_init_active_kb.sh
 
@@ -72,10 +78,10 @@ fi
 
 # ------------------------------------------------------------------------ (d)
 out="$("$PYTHON" -m factlog init --target "$MINE")"
-if grep -q "left unchanged" <<<"$out"; then
-  bad "(d) re-init of the active KB wrongly reports it as left unchanged"
+if [ "$(active)" = "$MINE" ] && grep -q "active KB set to $MINE" <<<"$out"; then
+  ok "(d) re-init of the already-active KB keeps it active and confirms it"
 else
-  ok "(d) re-init of the already-active KB is not reported as a conflict"
+  bad "(d) re-init of the active KB misbehaved (active='$(active)'): $out"
 fi
 
 # ------------------------------------------------------------------------ (e)
@@ -87,19 +93,27 @@ else
 fi
 
 # ------------------------------------------------------------------------ (f)
-# setup adopts its target by design, but must not slip the replacement past the
-# user. Skip the dependency install; --target still runs the init+config path.
+# The opt-in: a script that really does want the new KB says so explicitly,
+# instead of relying on the old silent retarget.
 "$PYTHON" -m factlog use "$MINE" >/dev/null
-out="$("$PYTHON" -m factlog setup --target "$SCRATCH" 2>&1 || true)"
+"$PYTHON" -m factlog init --target "$SCRATCH" --activate >/dev/null
 if [ "$(active)" = "$SCRATCH" ]; then
-  ok "(f) setup adopts its target"
+  ok "(f) --activate adopts the new KB on request"
 else
-  bad "(f) setup did not adopt its target (got '$(active)')"
+  bad "(f) --activate did not adopt the new KB (got '$(active)')"
 fi
-if grep -q "CHANGED active KB" <<<"$out"; then
-  ok "(f) setup announces that it replaced a different active KB"
+
+# ------------------------------------------------------------------------ (g)
+# A config left pointing at a deleted KB must not make init refuse forever.
+GONE="$TMP_ROOT/gone-kb"
+"$PYTHON" -m factlog init --target "$GONE" --activate >/dev/null
+rm -rf "$GONE"
+FRESH="$TMP_ROOT/fresh-kb"
+"$PYTHON" -m factlog init --target "$FRESH" >/dev/null
+if [ "$(active)" = "$FRESH" ]; then
+  ok "(g) a deleted active KB does not trap the user"
 else
-  bad "(f) setup replaced the active KB without saying so"
+  bad "(g) init refused to adopt after the active KB was deleted (got '$(active)')"
 fi
 
 echo "---"
