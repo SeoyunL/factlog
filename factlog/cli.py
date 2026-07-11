@@ -442,6 +442,35 @@ explanation of its purpose.
 # operates_since
 # ranked
 """,
+    "policy/identity-relations.md": """\
+# Identity relations (the OBJECT identifies the SUBJECT)
+#
+# A title or a DOI names exactly one paper. A publication year or a study type
+# does not — many papers share 2023, many share "cohort study".
+#
+# The distinction changes what a VALUE COLLISION means, and `tools/value_audit.py`
+# uses it. When two values of a relation are equal after folding case, spaces and
+# punctuation:
+#
+#   * in an IDENTITY relation, two different subjects sharing it are probably two
+#     records of ONE thing — a duplicate record. A different repair, and NOT a
+#     query leak, so `value_audit --strict` does not fail on it.
+#   * in any other relation values are shared across subjects by design, so the
+#     collision is one value split across two spellings — asking for `IL-8` misses
+#     the rows filed as `il 8`. That IS a leak, and --strict fails on it.
+#
+# Declare it here rather than letting the tool guess: inferring identity from the
+# data (every value has exactly one subject) breaks precisely when a real duplicate
+# record exists, and is true by accident in a small KB.
+#
+# One relation NAME per line; '#' comments and '-' bullets are allowed; quote a
+# name containing spaces in backticks. Absent/empty file → no identity relations,
+# so every collision is reported as a leak (the safe direction).
+#
+# Example (remove the leading '# ' to activate):
+# 제목
+# DOI
+""",
     "policy/typed-relations.md": """\
 # Typed (comparable-literal) relations
 #

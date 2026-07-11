@@ -66,7 +66,7 @@ os.environ["FACTLOG_ROOT"] = factlog_config.resolve_root_from_argv("--wiki")
 
 import unicodedata  # noqa: E402
 
-from common import ENGINE_STATUSES, CANDIDATES_CSV, attribute_relations, ensure_dirs, load_facts  # noqa: E402
+from common import CANDIDATES_CSV, ENGINE_STATUSES, ensure_dirs, identity_relations, load_facts  # noqa: E402
 
 # A value that wraps another: `기타(X)`, `other(X)`, `misc (X)`, and the reversed
 # `X(기타)`. The wrapper WORD is what makes it a junk-drawer rather than a
@@ -123,49 +123,39 @@ def _match_wrapper(value: str) -> str | None:
     return None
 
 
-def _identity_relations(
-    facts: list[dict[str, str]],
-    attribute: set[str],
-) -> set[str]:
-    """Relations whose VALUE identifies its subject (a title, a DOI).
+def _looks_like_an_identity(values: dict[str, int], owners: dict[str, set[str]]) -> bool:
+    """A HINT only: does this relation behave like a title (one value, one subject)?
 
-    Two signals, both required:
-
-    * the author declared it literal-valued in `policy/attribute-relations.md`, and
-    * the data is INJECTIVE — every distinct value belongs to exactly one subject.
-
-    The declaration alone is not enough: `발행연도` is an attribute too, yet many
-    papers share a year, so treating it as identity downgraded a real `2023년` /
-    `2023 년` split to "duplicate record" — the same misclassification, just
-    smaller. The data alone is not enough either: in a KB with two facts every
-    value trivially has one owner, so injectivity would call anything identity.
-    Requiring both keeps the judgement honest on real KBs and conservative on tiny
-    ones (unproven ⇒ treated as categorical ⇒ a collision is reported as a leak).
+    Never used to classify — only to suggest declaring the relation, so the safe
+    default (undeclared ⇒ categorical ⇒ collision is a leak) does not just produce
+    noise the user cannot act on.
     """
-    owners: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for row in facts:
-        owners[row["relation"]][row["object"]].add(row["subject"])
-    return {
-        relation
-        for relation in attribute
-        if owners.get(relation) and all(len(s) == 1 for s in owners[relation].values())
-    }
+    if len(values) < 3:
+        return False
+    single = sum(1 for subjects in owners.values() if len(subjects) == 1)
+    return single >= len(values) - 1  # allow one genuine duplicate record
 
 
 def audit(
     facts: list[dict[str, str]],
-    attribute_relations: set[str] | None = None,
+    identity_relations: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """Group values by relation and apply the rules. Pure — no I/O.
 
-    In an IDENTITY relation (see `_identity_relations`) the value identifies its
-    subject, so two subjects whose values fold together are probably two records of
-    one thing — not one value split in two. In every OTHER relation values are
-    shared across subjects by design, and a folded collision between them IS the
-    query leak: asking for `IL-8` misses the rows filed as `il 8`. Judging that by
-    subject count got it exactly backwards and let the leak through --strict.
+    In an IDENTITY relation (declared in policy/identity-relations.md) the value
+    identifies its subject, so two subjects whose values fold together are probably
+    two records of one thing — not one value split in two. In every OTHER relation
+    values are shared across subjects by design, and a folded collision between
+    them IS the query leak: asking for `IL-8` misses the rows filed as `il 8`.
+
+    Identity is DECLARED, never inferred. Judging it by subject count got the
+    classification exactly backwards; deriving it from injectivity broke the moment
+    a real duplicate record existed (which made the relation non-injective, flipped
+    it to categorical, and failed the gate on the very thing the class describes).
+    Undeclared ⇒ categorical, so a collision is reported as a leak — noisy rather
+    than silent, which is the right way to be wrong here.
     """
-    identity = _identity_relations(facts, attribute_relations or set())
+    identity = identity_relations or set()
 
     by_relation: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     subjects: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -218,11 +208,21 @@ def audit(
             owners = {s for v in distinct for s in subjects[(relation, v)]}
             # See the docstring: policy decides, not the subject count.
             kind = "duplicate_record" if relation in identity and len(owners) > 1 else "split"
+            hint = ""
+            if kind == "split" and len(owners) > 1 and relation not in identity:
+                value_owners = {v: subjects[(relation, v)] for v in values}
+                if _looks_like_an_identity(values, value_owners):
+                    hint = (
+                        f"if '{relation}' identifies its subject (like a title or a DOI), "
+                        f"declare it in policy/identity-relations.md — then this reads as a "
+                        f"possible duplicate record instead of a query leak"
+                    )
             duplicates.append({
                 "relation": relation,
                 "values": " / ".join(f"{v} ({values[v]})" for v in distinct),
                 "subjects": ", ".join(sorted(owners)),
                 "kind": kind,
+                "hint": hint,
             })
 
     return {
@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = load_facts()
     facts = rows if args.all_statuses else [r for r in rows if r["status"] in ENGINE_STATUSES]
     scope = "all candidate rows" if args.all_statuses else "engine facts"
-    found = audit(facts, attribute_relations())
+    found = audit(facts, identity_relations())
 
     # A provable query leak is one value split across two strings. A folded value
     # shared by different subjects of an IDENTITY (attribute) relation is a
@@ -286,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  • {f['relation']}: {f['values']}")
             if f["kind"] == "split":
                 print(f"      subjects: {f['subjects']} — queries for one spelling miss the other")
+                if f.get("hint"):
+                    print(f"      note: {f['hint']}")
             else:
                 print(f"      DIFFERENT subjects ({f['subjects']}) share this identifying value")
                 print("      → not a spelling split: check whether these are duplicate records")

@@ -94,7 +94,7 @@ class TestSpellingDuplicate:
             _row("제목", "Omega-3 and Lung Function", "PMID_1"),
             _row("제목", "omega-3 and lung function", "PMID_2"),
         ]
-        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
+        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "duplicate_record"
         assert dup["subjects"] == "PMID_1, PMID_2"
 
@@ -139,19 +139,19 @@ class TestKindIsDecidedByPolicy:
 
     def test_categorical_collision_across_subjects_is_a_leak(self):
         facts = [_row("염증지표", "IL-8", "P1"), _row("염증지표", "il 8", "P2")]
-        dup = value_audit.audit(facts, attribute_relations=set())["duplicates"][0]
+        dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
         assert dup["kind"] == "split"
 
     def test_identity_relation_collision_across_subjects_is_a_duplicate_record(self):
         # A title identifies its paper. Two papers whose titles fold together are
         # probably two records of one thing — a different repair, and not a leak.
         facts = [_row("제목", "Omega-3 and Lung", "PMID_1"), _row("제목", "omega-3 and lung", "PMID_2")]
-        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
+        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "duplicate_record"
 
     def test_identity_relation_collision_on_one_subject_is_still_a_leak(self):
         facts = [_row("제목", "A B", "PMID_1"), _row("제목", "a  b", "PMID_1")]
-        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
+        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "split"
 
 
@@ -243,7 +243,7 @@ class TestExitCodes:
         )
 
     @staticmethod
-    def _kb(tmp_path, rows, attribute=""):
+    def _kb(tmp_path, rows, identity=""):
         import subprocess
         import sys
 
@@ -255,8 +255,8 @@ class TestExitCodes:
         (kb / "sources" / "a.md").write_text("a\n", encoding="utf-8")
         header = "subject,relation,object,source,status,confidence,note\n"
         (kb / "facts" / "candidates.csv").write_text(header + rows, encoding="utf-8")
-        if attribute:
-            (kb / "policy" / "attribute-relations.md").write_text(attribute, encoding="utf-8")
+        if identity:
+            (kb / "policy" / "identity-relations.md").write_text(identity, encoding="utf-8")
         return kb
 
     def test_a_clean_kb_exits_zero_under_strict(self, tmp_path):
@@ -276,7 +276,7 @@ class TestExitCodes:
             tmp_path,
             "PMID_1,제목,Omega-3 and Lung,sources/a.md,accepted,0.90,\n"
             "PMID_2,제목,omega-3 and lung,sources/a.md,accepted,0.90,\n",
-            attribute="제목\n",
+            identity="제목\n",
         )
         assert self._run(kb, "--strict").returncode == 0
 
@@ -297,40 +297,59 @@ class TestExitCodes:
         assert "Traceback" not in result.stderr
 
 
-class TestIdentityNeedsBothSignals:
-    """A declared literal is not automatically an identity.
+class TestIdentityIsDeclaredNotInferred:
+    """Inferring identity from the data was self-defeating.
 
-    Using `attribute-relations.md` alone as the identity proxy left the SAME
-    misclassification behind, just smaller: `발행연도` is declared literal, yet many
-    papers share a year, so a real `2023년` / `2023 년` split was downgraded to
-    "duplicate record" and waved through --strict. Identity now needs the
-    declaration AND injective data (every value owned by exactly one subject).
+    Deriving it (a relation is an identity iff every value has exactly one subject)
+    breaks precisely when a real duplicate record exists: that one duplicate makes
+    the relation non-injective, which flips it to categorical, which makes duplicate
+    records FAIL the gate — the very thing the classification exists to avoid. And
+    a two-row KB is injective by accident, so a year collision passed as a
+    "duplicate record" in exactly the small KB where an audit matters most.
+
+    So it is declared in policy/identity-relations.md. Undeclared ⇒ categorical ⇒ a
+    collision is reported as a leak: noisy rather than silent, the right way to be
+    wrong here.
     """
 
-    def test_a_shared_literal_year_is_not_an_identity(self):
+    def test_a_real_duplicate_record_does_not_flip_the_relation(self):
+        # The counterexample that killed the derived version: an unrelated pair of
+        # identical titles used to turn 제목 categorical and fail --strict.
         facts = [
-            _row("발행연도", "2023년", "P1"),
-            _row("발행연도", "2023 년", "P2"),
-            _row("발행연도", "2024년", "P3"),
-            _row("발행연도", "2024년", "P4"),  # a year is shared → not injective
+            _row("제목", "Omega-3 and Lung", "P1"),
+            _row("제목", "omega-3 and lung", "P2"),
+            _row("제목", "Shared Review Title", "P3"),
+            _row("제목", "Shared Review Title", "P4"),
         ]
-        dup = value_audit.audit(facts, attribute_relations={"발행연도"})["duplicates"][0]
+        kinds = {d["kind"] for d in value_audit.audit(facts, identity_relations={"제목"})["duplicates"]}
+        assert kinds == {"duplicate_record"}
+
+    def test_a_tiny_kb_does_not_make_a_year_an_identity(self):
+        # Two rows: every value has one owner, so the derived rule called 발행연도
+        # an identity and waved the split through.
+        facts = [_row("발행연도", "2023년", "P1"), _row("발행연도", "2023 년", "P2")]
+        dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
         assert dup["kind"] == "split"
 
-    def test_a_title_is_an_identity(self):
-        facts = [
-            _row("제목", "Omega-3 and Lung", "PMID_1"),
-            _row("제목", "omega-3 and lung", "PMID_2"),
-            _row("제목", "Something Else", "PMID_3"),
-        ]
-        dup = value_audit.audit(facts, attribute_relations={"제목"})["duplicates"][0]
+    def test_a_declared_identity_is_honoured(self):
+        facts = [_row("제목", "A Paper", "P1"), _row("제목", "a paper", "P2")]
+        dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "duplicate_record"
 
-    def test_an_undeclared_relation_is_never_an_identity(self):
-        # Injective by accident (one row each), but not declared → categorical.
-        facts = [_row("염증지표", "IL-8", "P1"), _row("염증지표", "il 8", "P2")]
-        dup = value_audit.audit(facts, attribute_relations=set())["duplicates"][0]
+    def test_an_undeclared_identity_looking_relation_is_hinted(self):
+        # The safe default must still be actionable: tell the user how to declare it
+        # rather than leaving them with a leak report they cannot resolve.
+        facts = [_row("논문명", f"Paper {i}", f"P{i}") for i in range(5)]
+        facts.append(_row("논문명", "paper 0", "P9"))
+        dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
         assert dup["kind"] == "split"
+        assert "identity-relations.md" in dup["hint"]
+
+    def test_a_categorical_relation_gets_no_such_hint(self):
+        facts = [_row("염증지표", "IL-8", "P1"), _row("염증지표", "il 8", "P2")]
+        dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
+        assert dup["kind"] == "split"
+        assert dup["hint"] == ""
 
 
 class TestThousandsSeparator:

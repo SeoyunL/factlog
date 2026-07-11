@@ -727,6 +727,28 @@ def _relation_names_from(path: Path) -> set[str]:
     return names
 
 
+def identity_relations(root: Path | None = None) -> set[str]:
+    """Relations whose OBJECT identifies its SUBJECT (policy/identity-relations.md).
+
+    A title or a DOI names exactly one paper; a publication year or a study type
+    does not. The distinction changes what a value collision MEANS: in an identity
+    relation two subjects sharing a value are probably two records of one thing; in
+    any other relation they are one value split across two spellings — a query leak.
+
+    This is DECLARED, not inferred. Deriving it from the data (a relation is an
+    identity iff every value has one subject) is self-defeating: a single genuine
+    duplicate record makes the relation non-injective, which flips it to
+    categorical, which makes duplicate records fail the gate — the very thing the
+    classification exists to avoid. A small KB is also injective by accident.
+
+    Same one-name-per-line format as attribute-relations.md. Absent file → empty
+    set → every relation is categorical, so a collision is reported as a leak (the
+    conservative direction: a false leak is noisy, a missed leak is silent).
+    """
+    path = (root / "policy" / "identity-relations.md") if root else (POLICY_DIR / "identity-relations.md")
+    return _relation_names_from(path)
+
+
 def sync_ignore_patterns(root: Path | None = None) -> list[str]:
     """Glob patterns from policy/sync-ignore.md naming sources to skip on sync.
 

@@ -332,18 +332,29 @@ rule rather than a similarity guess:
 | **placeholder** | `기타`, `불명`, `N/A` — carries no information, hides what the source said. |
 | **spelling duplicate** | Equal after folding case/space/punctuation (`IL-8` / `il 8`). A query leak — unless the relation is an **identity** (see below), where a collision across subjects means a possible duplicate *record* instead. |
 
-**Identity relations.** A relation is treated as an identity when *both* hold: it
-is declared literal-valued in `policy/attribute-relations.md`, **and** the data is
-injective — every distinct value belongs to exactly one subject. A title and a DOI
-qualify; a publication year does not (many papers share 2023), even though it is
-declared literal. In an identity relation two subjects sharing a folded value is
-probably two records of one thing. Everywhere else values are shared across
-subjects by design, so a collision is a real query leak. `--strict` fails on leaks
-only.
+**Identity relations (`policy/identity-relations.md`).** A title or a DOI names
+exactly one paper; a publication year or a study type does not. Declare the former
+here:
 
-Requiring both signals matters: the declaration alone downgraded real `2023년` /
-`2023 년` splits to "duplicate record", and injectivity alone would call anything
-an identity in a KB with two facts.
+```markdown
+# policy/identity-relations.md
+제목
+DOI
+```
+
+In an identity relation, two subjects sharing a folded value is probably two
+records of one thing — a duplicate *record*, a different repair, and `--strict`
+does not fail on it. Everywhere else, values are shared across subjects by design,
+so a collision is one value split across two spellings: a query leak, which
+`--strict` does fail on. With no declarations every relation is categorical, so a
+collision is reported as a leak — noisy rather than silent, and the report tells
+you which relation to declare.
+
+Identity is declared, never inferred. Deriving it from the data ("every value has
+one subject") is self-defeating: one genuine duplicate record makes the relation
+non-injective, which flips it to categorical, which makes duplicate records fail
+the gate — the exact case the classification exists to spare. A two-row KB is also
+injective by accident.
 
 Nothing is merged automatically. Fix with `factlog amend <subject> <relation>
 <object> --set-object <canonical>`, which rewrites the row durably (both
