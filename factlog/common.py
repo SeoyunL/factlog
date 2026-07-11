@@ -2128,6 +2128,67 @@ def decode_wirelog_value(session: EasySession, value: object) -> object:
     return value
 
 
+def typed_projection_outcome(
+    row: dict[str, str],
+    spec: TypedRelSpec,
+) -> tuple[int | None, str | None]:
+    """(scalar, drop_reason) for one row under one typed spec.
+
+    THE single place that decides whether a fact reaches its comparison predicate.
+    The projection inserts iff scalar is not None; the report warns iff drop_reason
+    is not None. They cannot disagree, which they did: the report checked only
+    "does not parse" while the projection ALSO dropped non-ints and int64 overflows,
+    so a `number` past ~9.2e15 (this KB's own examples reach 억/조 magnitudes, and
+    number is scaled x1000) vanished from every typed query while the report said
+    `warnings: 0` (#227). Add a guard here and both sides learn about it at once.
+    """
+    scalar = literal_types.normalize(spec.type, row["object"], spec.units)
+    if scalar is None:
+        return None, f"does not parse as {spec.type}"
+    # Every _TYPED_COL is an int64 column. pyrewire silently accepts a float into
+    # one (wrong comparison), so a non-int from a future normalizer must be dropped
+    # loudly, not inserted.
+    if not isinstance(scalar, int):
+        return None, f"normalized to non-int {scalar!r}, which an int64 column cannot hold"
+    if not (-(2**63) <= scalar < 2**63):
+        return None, f"= {scalar}, out of int64 range"
+    return scalar, None
+
+
+def typed_projection_warnings(
+    accepted: list[dict[str, str]],
+    specs: dict[str, TypedRelSpec] | None = None,
+) -> list[str]:
+    """Facts whose object does not parse as its relation's declared type.
+
+    Such a fact is silently dropped from the typed side-relation, so a comparison
+    predicate never sees it — and the logic report said `warnings: 0` while the
+    projection wrote the reason to stderr, where a piped run loses it (#227).
+    README calls that report "the verifiable report" and the deterministic gate
+    says to show it verbatim before concluding anything. A fact vanishing from a
+    typed query with the report claiming nothing is wrong is the exact silent
+    omission this KB exists to prevent.
+
+    Pure, so the report can compute it without running the engine.
+    """
+    specs = typed_relations() if specs is None else specs
+    if not specs:
+        return []
+    warnings: list[str] = []
+    for row in sorted(accepted, key=lambda r: (r["relation"], r["subject"], r["object"])):
+        spec = specs.get(row["relation"])
+        if spec is None or spec.type not in _TYPED_COL:
+            continue
+        _, reason = typed_projection_outcome(row, spec)
+        if reason is not None:
+            warnings.append(
+                f"typed-relations: {row['subject']} / {row['relation']} / {row['object']} "
+                f"{reason} — the fact is EXCLUDED from {spec.alias} comparisons "
+                f"(it stays a normal relation fact)"
+            )
+    return warnings
+
+
 def _project_typed_relations(session, specs, accepted) -> None:
     """Insert each parseable typed-relation object into its int64 side-relation,
     deterministically ordered so the run is reproducible (#116 invariant 3). A
@@ -2151,29 +2212,11 @@ def _project_typed_relations(session, specs, accepted) -> None:
         spec = specs.get(row["relation"])
         if spec is None or spec.type not in _TYPED_COL:
             continue
-        scalar = literal_types.normalize(spec.type, row["object"], spec.units)
+        scalar, reason = typed_projection_outcome(row, spec)
         if scalar is None:
             print(
                 f"typed-relations: {row['object']!r} for {row['relation']!r} "
-                f"({row['subject']!r}) does not parse as {spec.type}; loading untyped",
-                file=sys.stderr,
-            )
-            continue
-        # Defensive: every _TYPED_COL is an int64 column. pyrewire silently
-        # accepts a float into an int64 column (wrong comparison), so if a
-        # future normalizer ever leaks a non-int, skip + warn loudly rather
-        # than insert a silently-wrong value.
-        if not isinstance(scalar, int):
-            print(
-                f"typed-relations: {row['object']!r} for {row['relation']!r} "
-                f"({row['subject']!r}) normalized to non-int {scalar!r}; skipping",
-                file=sys.stderr,
-            )
-            continue
-        if not (-(2**63) <= scalar < 2**63):
-            print(
-                f"typed-relations: {row['object']!r} for {row['relation']!r} "
-                f"({row['subject']!r}) = {scalar} out of int64 range; skipping",
+                f"({row['subject']!r}) {reason}; loading untyped",
                 file=sys.stderr,
             )
             continue
