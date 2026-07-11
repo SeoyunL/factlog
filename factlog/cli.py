@@ -6228,7 +6228,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     import json
     from pathlib import Path
 
-    from factlog.bibtex import is_annotation_source, read_front_matter, to_bibtex
+    from factlog.bibtex import is_annotation_source, read_front_matter, safe_cite_key, to_bibtex
     from factlog.csl import to_csl
 
     if getattr(args, "bibtex", False) == getattr(args, "csl", False):
@@ -6241,14 +6241,54 @@ def cmd_export(args: argparse.Namespace) -> int:
     if not _require_kb(target, "export"):
         return 1
 
+    from factlog import common as _c  # noqa: PLC0415
+
     sources = []
-    for path in sorted((target / "sources").glob("*.md")):
+    # walk_source_dir, not glob("*.md"): the glob saw only the TOP level, so a source in
+    # a subdirectory -- which `factlog sources` lists and `sync` extracts from -- was
+    # dropped from the citation list with exit 0 and no warning (#223).
+    skipped: list[str] = []
+    seen_keys: dict[str, str] = {}
+    # source_files walks BOTH source roots (sources/ and runs/sources/), the same set
+    # `factlog sources` lists -- globbing sources/ alone dropped a source `factlog
+    # sources` shows from the citation list with exit 0 and no warning (#223). An ingest
+    # conversion under runs/sources/ carries an HTML provenance comment, not YAML front
+    # matter, so read_front_matter returns {} and it is reported as skipped rather than
+    # dropped silently; a hand-placed .md there with real front matter IS cited.
+    for path in _c.source_files(target):
+        if path.suffix.lower() != ".md":
+            continue
+        rel = path.relative_to(target).as_posix()
         fm = read_front_matter(path)
-        if not fm or is_annotation_source(fm):
+        if not fm:
+            skipped.append(f"{rel} (no YAML front matter)")
+            continue
+        if is_annotation_source(fm):
             continue
         if not (fm.get("zotero_key") or fm.get("title")):
+            skipped.append(f"{rel} (front matter has neither title nor zotero_key)")
             continue
-        sources.append((path.stem, fm))
+        # Dedup on the key that is actually EMITTED, not on the stem. BibTeX sanitizes
+        # the key (safe_cite_key collapses non-ASCII to "ref"), so 한글.md and 다른이름.md
+        # -- different stems -- both emit `@misc{ref,` and one silently wins in every
+        # BibTeX processor. `a.b` and `a-b` collide the same way. CSL keeps the stem as
+        # the id, so there the stem IS the emitted key.
+        emitted = safe_cite_key(path.stem) if not args.csl else path.stem
+        if emitted in seen_keys:
+            n = 2
+            while f"{emitted}-{n}" in seen_keys:
+                n += 1
+            print(
+                f"factlog export: citation key {emitted!r} is used by {seen_keys[emitted]} "
+                f"and {rel}; {rel} is exported as {emitted}-{n}",
+                file=sys.stderr,
+            )
+            emitted = f"{emitted}-{n}"
+        seen_keys[emitted] = rel
+        sources.append((emitted, fm))
+
+    for note in skipped:
+        print(f"factlog export: skipped {note}", file=sys.stderr)
 
     if args.csl:
         text = json.dumps([to_csl(fm, stem) for stem, fm in sources], ensure_ascii=False, indent=2)
