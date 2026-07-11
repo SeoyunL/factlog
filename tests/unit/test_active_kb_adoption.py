@@ -48,6 +48,14 @@ class TestInitAdoption:
         # instead of depending on the old silent behaviour.
         assert init_adopts_target(str(existing), other, activate=True) is True
 
+    def test_activate_over_a_different_kb_is_announced(self, existing, other):
+        # Opting in is not a licence to be silent. `init --activate` shares
+        # setup's wording, so it names the KB it displaced instead of moving the
+        # active KB without a word — the very thing #210 is about.
+        action = setup_active_kb_action(str(existing), other)
+        assert action.startswith("CHANGED active KB")
+        assert str(existing) in action
+
     def test_deleted_active_kb_does_not_trap_the_user(self, tmp_path, other):
         # A config pointing at a KB that no longer exists must not be defended —
         # otherwise init could never adopt anything again.

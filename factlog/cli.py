@@ -609,7 +609,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     current = factlog_config.read_root()
     if init_adopts_target(current, target, getattr(args, "activate", False)):
         factlog_config.write_root(target)
-        print(f"factlog init: active KB set to {target} (ingest/ask/sync default here from any directory)")
+        # --activate is an opt-in, not a licence to be silent: replacing a KB the
+        # user was working in has to name what it displaced, exactly as setup does.
+        # Otherwise `init --target X --activate` (which the README suggests) moves
+        # the active KB without a word — the very thing #210 is about.
+        action = setup_active_kb_action(current, target)
+        print(f"factlog init: {action}")
+        if action.startswith("CHANGED"):
+            print(f"factlog init: warning — {action}", file=sys.stderr)
         return 0
 
     # Say it on stderr too: a script that only checks the exit code would

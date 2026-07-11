@@ -78,8 +78,8 @@ fi
 
 # ------------------------------------------------------------------------ (d)
 out="$("$PYTHON" -m factlog init --target "$MINE")"
-if [ "$(active)" = "$MINE" ] && grep -q "active KB set to $MINE" <<<"$out"; then
-  ok "(d) re-init of the already-active KB keeps it active and confirms it"
+if [ "$(active)" = "$MINE" ] && grep -q "set active KB to $MINE" <<<"$out" && ! grep -q "CHANGED" <<<"$out"; then
+  ok "(d) re-init of the already-active KB keeps it active, with no scary CHANGED notice"
 else
   bad "(d) re-init of the active KB misbehaved (active='$(active)'): $out"
 fi
@@ -96,11 +96,17 @@ fi
 # The opt-in: a script that really does want the new KB says so explicitly,
 # instead of relying on the old silent retarget.
 "$PYTHON" -m factlog use "$MINE" >/dev/null
-"$PYTHON" -m factlog init --target "$SCRATCH" --activate >/dev/null
+out="$("$PYTHON" -m factlog init --target "$SCRATCH" --activate 2>"$TMP_ROOT/err")"
 if [ "$(active)" = "$SCRATCH" ]; then
   ok "(f) --activate adopts the new KB on request"
 else
   bad "(f) --activate did not adopt the new KB (got '$(active)')"
+fi
+# Opting in is not a licence to be silent: say what was displaced, like setup does.
+if grep -q "CHANGED active KB" <<<"$out" && grep -q "CHANGED active KB" "$TMP_ROOT/err"; then
+  ok "(f) --activate names the KB it displaced (stdout and stderr)"
+else
+  bad "(f) --activate replaced the active KB without naming what it displaced"
 fi
 
 # ------------------------------------------------------------------------ (g)
