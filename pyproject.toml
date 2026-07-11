@@ -3,7 +3,12 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "factlog"
+# Distribution name. NOT "factlog": that name is taken on PyPI by an unrelated
+# 2013 project ("File ACTivity LOGger"), so `pip install 'factlog[zotero]'` used
+# to install THAT package — and since the extra does not exist there, pip only
+# warned and exited 0, leaving the user with a wrong package and none of the
+# integration dependencies (#228).
+name = "factlog-academic"
 version = "0.7.0"
 description = "A Claude Code plugin that turns markdown sources into verifiable, source-backed facts: the LLM extracts, a Datalog/wirelog engine verifies."
 readme = "README.md"

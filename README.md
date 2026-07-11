@@ -107,6 +107,27 @@ factlog ignore drafts/*.md   # exclude sources from sync (re-extraction)
 factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 ```
 
+### Optional integration dependencies
+
+Each bibliography integration needs one extra. Install it from **this repository**.
+
+> The bare name `factlog` on PyPI belongs to an unrelated 2013 project ("File
+> ACTivity LOGger"). Asking pip for that name installs **that** package — and since
+> it has no such extras, pip merely warns and exits 0, so you get a success message,
+> a package you never wanted, and none of the dependencies. Always install from the
+> URL below (or from a clone).
+
+```bash
+# from anywhere
+pip install 'factlog-academic[zotero] @ git+https://github.com/SeoyunL/factlog-academic'
+
+# or, from a clone of this repo
+pip install -e '.[zotero]'
+```
+
+Swap `zotero` for `openalex`, `arxiv`, or `pubmed`. `pip install -e '.[zotero,arxiv]'`
+installs several at once.
+
 ### Importing Zotero bibliography (`factlog zotero-import`)
 
 If you already manage your literature in Zotero, you can migrate collections,
@@ -117,7 +138,7 @@ Migrated items are still **candidates** and pass the `sync → review → accept
 gate. The Zotero originals are never modified (read-only).
 
 This needs Zotero 7's **Local API** (enable it under Settings → Advanced; it
-listens on port 23119) and `pip install 'factlog[zotero]'`.
+listens on port 23119) and the `zotero` extra ([see above](#optional-integration-dependencies)).
 
 ```bash
 factlog zotero-import --collection "Systematic Review"   # migrate a collection
@@ -146,7 +167,7 @@ You can search and import literature from the open bibliographic database
 [OpenAlex](https://openalex.org), widen the citation graph by one hop, and
 re-check the metadata of records you already imported. Imported items, like
 Zotero's, are still **candidates** and pass the `sync → review → accept` gate.
-This needs `pip install 'factlog[openalex]'`, and OpenAlex is **unauthenticated**
+This needs the `openalex` extra ([see above](#optional-integration-dependencies)), and OpenAlex is **unauthenticated**
 — no API key or account.
 
 ```bash
@@ -194,7 +215,7 @@ read only from a user-level file).
 You can import papers from the preprint repository [arXiv](https://arxiv.org) by
 id, or search and import them, and check whether a record you imported is still
 the latest version. Imported items are still **candidates** and pass the
-`sync → review → accept` gate. This needs `pip install 'factlog[arxiv]'`, and the
+`sync → review → accept` gate. This needs the `arxiv` extra ([see above](#optional-integration-dependencies)), and the
 arXiv API is **unauthenticated** — no API key or account. There is no credit
 budget either — instead factlog keeps to arXiv's recommended 3-second delay
 between requests on its own (a courtesy that is not enforced).
@@ -264,7 +285,7 @@ You can search and import biomedical records from [PubMed](https://pubmed.ncbi.n
 (NCBI E-utilities) by PMID, re-check whether a record's metadata or retraction
 status has drifted, and turn a paper's PubMed MeSH terms into vocabulary
 proposals. Imported items are still **candidates** and pass the
-`sync → review → accept` gate. This needs `pip install 'factlog[pubmed]'`.
+`sync → review → accept` gate. This needs the `pubmed` extra ([see above](#optional-integration-dependencies)).
 
 ```bash
 factlog pubmed-search --query "immune checkpoint" --mesh "Neoplasms" --limit 25

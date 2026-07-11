@@ -174,7 +174,8 @@ class ArxivClient:
             import httpx
         except ImportError as exc:  # pragma: no cover - environment without the extra
             raise ArxivError(
-                "httpx is required for the arXiv integration: pip install 'factlog[arxiv]'"
+                "httpx is required for the arXiv integration: "
+                "pip install 'factlog-academic[arxiv] @ git+https://github.com/SeoyunL/factlog-academic'"
             ) from exc
 
         user_agent = _user_agent(self._config)
@@ -221,7 +222,7 @@ class ArxivClient:
         except ImportError as exc:  # pragma: no cover - environment without the extra
             raise ArxivError(
                 "feedparser is required for the arXiv integration: "
-                "pip install 'factlog[arxiv]'"
+                "pip install 'factlog-academic[arxiv] @ git+https://github.com/SeoyunL/factlog-academic'"
             ) from exc
 
         parsed = feedparser.parse(text)

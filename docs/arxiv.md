@@ -10,7 +10,7 @@
 ## 사전 준비
 
 ```bash
-pip install 'factlog[arxiv]'
+pip install 'factlog-academic[arxiv] @ git+https://github.com/SeoyunL/factlog-academic'
 ```
 
 `httpx` 와 `feedparser` 둘이 추가됩니다(Atom 응답을 파싱합니다). arXiv API는 **인증이

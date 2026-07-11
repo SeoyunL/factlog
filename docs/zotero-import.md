@@ -27,7 +27,7 @@ curl http://localhost:23119/api/users/0/collections   # JSON 배열이면 정상
 pyzotero 의존성은 선택 설치입니다:
 
 ```bash
-pip install 'factlog[zotero]'
+pip install 'factlog-academic[zotero] @ git+https://github.com/SeoyunL/factlog-academic'
 ```
 
 ## 사용법
