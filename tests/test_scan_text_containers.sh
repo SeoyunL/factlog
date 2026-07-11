@@ -43,20 +43,34 @@ printf '<html><body><p>hi</p></body></html>\n' > "$KB/sources/page.html"
 printf 'plain prose\n' > "$KB/sources/note.md"
 printf 'this is plain text, not really a pdf\n' > "$KB/sources/fake.pdf"
 
-# Skip on converter ABSENCE, decided BEFORE the run — not on its result. Deriving
-# "no converter" from "nothing was converted" would make the buggy code look like
-# a skip, which is exactly how a guard goes quiet.
-if ! command -v pandoc >/dev/null 2>&1 && ! command -v textutil >/dev/null 2>&1; then
-  echo "SKIP: neither pandoc nor textutil is available; HTML cannot be converted here"
-  exit 0
-fi
+# Converter availability gates ONLY the pins that need a converter, and is decided
+# BEFORE the run. A blanket skip would take the guards that need no converter
+# ((b), (d), (e)) down with it — the same "a quiet guard is a dead guard" trap, in
+# a different shape.
+have_html=0; command -v pandoc >/dev/null 2>&1 && have_html=1
+have_rtf=0;  { command -v textutil >/dev/null 2>&1 || command -v pandoc >/dev/null 2>&1; } && have_rtf=1
 
+printf '{\\rtf1\\ansi hello}\n' > "$KB/sources/memo.rtf"
 "$PYTHON" -m factlog ingest --scan --target "$KB" >/dev/null 2>&1 || true
 
-if find "$KB/runs/sources" -name 'page.html.*' | grep -q .; then
-  ok "(a) --scan converted the HTML container"
+if [ "$have_html" = 1 ]; then
+  if find "$KB/runs/sources" -name 'page.html.*' | grep -q .; then
+    ok "(a) --scan converted the HTML container"
+  else
+    bad "(a) --scan skipped the HTML container — its markup goes into extraction as prose"
+  fi
 else
-  bad "(a) --scan skipped the HTML container — its markup goes into extraction as prose"
+  echo "SKIP: pandoc absent; cannot pin HTML conversion"
+fi
+
+if [ "$have_rtf" = 1 ]; then
+  if find "$KB/runs/sources" -name 'memo.rtf.*' | grep -q .; then
+    ok "(a) --scan converted the RTF container"
+  else
+    bad "(a) --scan skipped the RTF container — its control words go into extraction"
+  fi
+else
+  echo "SKIP: neither textutil nor pandoc; cannot pin RTF conversion"
 fi
 
 if find "$KB/runs/sources" -name 'fake.pdf.*' | grep -q .; then
@@ -69,6 +83,21 @@ if find "$KB/runs/sources" -name 'note.md.*' | grep -q .; then
   bad "(d) a plain .md was needlessly converted"
 else
   ok "(d) a plain .md is still not a conversion job"
+fi
+
+# ------------------------------------------------------------------ (c)
+# A REAL binary must still convert — the exception must not have narrowed --scan.
+if command -v textutil >/dev/null 2>&1; then
+  printf 'real\n' > "$TMP_ROOT/r.txt"
+  textutil -convert docx "$TMP_ROOT/r.txt" -output "$KB/sources/real.docx" 2>/dev/null || true
+  "$PYTHON" -m factlog ingest --scan --target "$KB" >/dev/null 2>&1 || true
+  if find "$KB/runs/sources" -name 'real.docx.*' | grep -q .; then
+    ok "(c) a real binary is still converted"
+  else
+    bad "(c) a real binary stopped converting"
+  fi
+else
+  echo "SKIP: textutil absent; cannot build a real .docx fixture"
 fi
 
 # ------------------------------------------------------------------ (e) (f)

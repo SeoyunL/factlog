@@ -191,7 +191,11 @@ INGEST_CONVERTERS: dict[str, list[tuple]] = {
     ".epub": [("pandoc", ".md", _conv_pandoc)],
     ".html": [("pandoc", ".md", _conv_pandoc), ("textutil", ".txt", _conv_textutil)],
     ".htm": [("pandoc", ".md", _conv_pandoc), ("textutil", ".txt", _conv_textutil)],
-    ".rtf": [("textutil", ".txt", _conv_textutil)],
+    # textutil first (macOS, handles legacy code pages), pandoc as the portable
+    # fallback — it reads RTF too. With textutil alone, a Linux/Windows user got a
+    # permanent "run factlog ingest --scan" warning for a command that could never
+    # convert anything, and the RTF control words kept going into extraction (#222).
+    ".rtf": [("textutil", ".txt", _conv_textutil), ("pandoc", ".md", _conv_pandoc)],
     ".pdf": [("pdftotext", ".txt", _conv_pdftotext)],
     ".hwpx": [("factlog-hwpx", ".md", _conv_hwpx)],
     ".hwp": [("factlog-hwp", ".md", _conv_hwp)],
