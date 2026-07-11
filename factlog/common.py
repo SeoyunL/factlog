@@ -1895,6 +1895,39 @@ def decode_wirelog_value(session: EasySession, value: object) -> object:
     return value
 
 
+def typed_projection_warnings(
+    accepted: list[dict[str, str]],
+    specs: dict[str, TypedRelSpec] | None = None,
+) -> list[str]:
+    """Facts whose object does not parse as its relation's declared type.
+
+    Such a fact is silently dropped from the typed side-relation, so a comparison
+    predicate never sees it — and the logic report said `warnings: 0` while the
+    projection wrote the reason to stderr, where a piped run loses it (#227).
+    README calls that report "the verifiable report" and the deterministic gate
+    says to show it verbatim before concluding anything. A fact vanishing from a
+    typed query with the report claiming nothing is wrong is the exact silent
+    omission this KB exists to prevent.
+
+    Pure, so the report can compute it without running the engine.
+    """
+    specs = typed_relations() if specs is None else specs
+    if not specs:
+        return []
+    warnings: list[str] = []
+    for row in sorted(accepted, key=lambda r: (r["relation"], r["subject"], r["object"])):
+        spec = specs.get(row["relation"])
+        if spec is None or spec.type not in _TYPED_COL:
+            continue
+        if literal_types.normalize(spec.type, row["object"], spec.units) is None:
+            warnings.append(
+                f"typed-relations: {row['subject']} / {row['relation']} / {row['object']} "
+                f"does not parse as {spec.type} — the fact is EXCLUDED from "
+                f"{spec.alias} comparisons (it stays a normal relation fact)"
+            )
+    return warnings
+
+
 def _project_typed_relations(session, specs, accepted) -> None:
     """Insert each parseable typed-relation object into its int64 side-relation,
     deterministically ordered so the run is reproducible (#116 invariant 3). A
