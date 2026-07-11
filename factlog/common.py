@@ -2194,6 +2194,52 @@ def dependency_graph(
     return graph
 
 
+def path_query_rows(
+    args: list[str],
+    facts: list[dict[str, str]],
+    pairs: set[tuple[str, str]],
+) -> list[list[str]]:
+    """Rows answering a `path` query, whether its arguments are constants or variables.
+
+    THE shared answer, so the report and the ask router cannot disagree. They did: the
+    report only handled two quoted constants, so `path("A", X)?` produced no result
+    line at all, the result list came back empty, and main's fallback printed
+    `no facts/query.dl found` about a file that was right there -- while ask answered
+    the same question with two rows (#220). #213 unified relation and count this way;
+    path was left behind.
+
+    Two constants yield the TRACE (the route), a variable yields one row per matching
+    reachable pair -- the same shapes the two callers already rendered.
+    """
+    if len(args) != 2:
+        return []
+    # `pairs` is required: it is the ENGINE's path/2. Defaulting to a python closure
+    # over the accepted facts would leave a second source of truth in the tree, and the
+    # two would drift -- which is the bug this function exists to end. Both callers (the
+    # report and the ask router) run the engine and pass its answer.
+    reachable = pairs
+    if all(is_quoted_string(a) for a in args):
+        start, target = arg_value(args[0]), arg_value(args[1])
+        if (start, target) not in reachable:
+            return []
+        route = dependency_path(facts, start, target)
+        # Reachable per the truth set but with no route through the accepted facts: a
+        # policy rule in logic-policy.extra.dl put the edge there. Report the pair, not
+        # a false "(not found)".
+        return [route] if route else [[start, target]]
+    # The SAME variable twice means a join, not two independent wildcards: `path(X, X)?`
+    # asks which nodes lie on a cycle, and answering it with every reachable pair was
+    # simply a wrong answer.
+    same_var = is_variable(args[0]) and is_variable(args[1]) and args[0] == args[1]
+    return [
+        [start, target]
+        for (start, target) in sorted(reachable)
+        if (is_variable(args[0]) or arg_value(args[0]) == start)
+        and (is_variable(args[1]) or arg_value(args[1]) == target)
+        and (not same_var or start == target)
+    ]
+
+
 def dependency_path(
     facts: list[dict[str, str]],
     start: str,
