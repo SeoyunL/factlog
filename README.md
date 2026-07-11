@@ -106,7 +106,7 @@ So if you version-control your KB:
 | `pages/`, `decisions/` | optional | regenerated on every merge |
 | `runs/sources/` | no | text conversions, regenerable with `factlog ingest --scan` |
 | `source-provenance/` | **yes** | per-source provenance sidecars from `zotero`/`openalex`/`arxiv`/`pubmed` import — a paper's ledger (DOI, retraction status, cross-ids) |
-| `check-log/` | **yes** | when the tool last checked each arXiv/PubMed paper; `--older-than` skips a paper based on this, so dropping it re-checks everything |
+| `check-log/` | **yes** | when the tool last checked each arXiv/PubMed/OpenAlex paper; `--older-than` skips a paper based on this, so dropping it re-checks everything |
 | `merge-candidates/` | **yes** | the pair ledger `merge_candidates` uses to preserve human decisions across a rebuild |
 
 The last three appear only once you use the bibliography commands; a plain KB never
@@ -336,9 +336,11 @@ status has drifted, and turn a paper's PubMed MeSH terms into vocabulary
 proposals. Imported items are still **candidates** and pass the
 `sync → review → accept` gate. This needs the `pubmed` extra ([see above](#optional-integration-dependencies)).
 
-**A contact email is required** — unlike OpenAlex and arXiv, every `pubmed-*` command
-fails until you set `client.email`, because NCBI throttles or blocks unidentified
-traffic. Put it in `~/.config/factlog/pubmed.toml` (or the KB's
+**A contact email is required** — unlike OpenAlex and arXiv, any `pubmed-*` command
+that sends an NCBI request (`pubmed-import`, `-search`, `-refresh`, `-mesh`,
+`-acknowledge-retraction`) fails until you set `client.email`, because NCBI throttles or
+blocks unidentified traffic. (`pubmed-backfill-provenance` sends nothing and needs no
+email.) Put it in `~/.config/factlog/pubmed.toml` (or the KB's
 `policy/pubmed-config.toml`):
 
 ```toml
