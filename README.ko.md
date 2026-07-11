@@ -654,10 +654,11 @@ published_year
 나열하지 않은 관계는 한 subject 에 여러 object 를 가질 수 있으며, `cites` 나 `mentions`
 같은 관계에는 그게 옳은 기본값이다.
 
-같은 (subject, 단일값 관계) 에 서로 다른 object 두 개가 단언되면 `factlog check` 와
-`finalize` 가 `CONFLICT` 를 보고하고, 사람이 해소할 때까지 컴파일을 거부한다 — 행을 물리려면
-`factlog eject --fact SUBJECT RELATION OBJECT`, 값을 고치려면 `factlog amend ...
---set-object`. `facts/candidates.csv` 를 손으로 고치는 것은 이 KB 가 세운 사람 게이트를
+같은 (subject, 단일값 관계) 에 서로 다른 object 두 개가 단언되면 `CONFLICT` 로 보고되고,
+사람이 해소할 때까지 KB 는 컴파일을 거부한다. 모순을 **보는** 방법은 `factlog status`
+(`conflicts: N`), `tools/check_conflicts.py` (각 모순과 해소 단계를 출력), 또는 Claude Code
+안에서 `/factlog check`. **해소**는 행을 물리려면 `factlog eject --fact SUBJECT RELATION
+OBJECT`, 값을 고치려면 `factlog amend SUBJECT RELATION OBJECT --set-object NEW`. `facts/candidates.csv` 를 손으로 고치는 것은 이 KB 가 세운 사람 게이트를
 우회하므로 하지 않는다. 두 값이 상위-하위유형이라면 어느 쪽도 틀리지 않았다 — 다음 절을 보라.
 
 #### 값 계층 (`policy/value-hierarchy.md`)

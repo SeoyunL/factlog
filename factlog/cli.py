@@ -503,11 +503,18 @@ explanation of its purpose.
 #
 # This is what turns a contradiction into an ERROR instead of two facts sitting
 # quietly side by side. If two distinct objects are asserted for the same
-# (subject, single-valued relation), `factlog check` and `finalize` report a
-# CONFLICT and refuse to compile until a human resolves it -- with
-# `factlog eject --fact SUBJECT RELATION OBJECT` (retire a row) or
-# `factlog amend ... --set-object` (correct one), never by hand-editing
-# facts/candidates.csv.
+# (subject, single-valued relation) it is reported as a CONFLICT and the KB
+# refuses to compile until a human resolves it.
+#
+# To SEE conflicts:
+#   factlog status              -> `conflicts: N`
+#   tools/check_conflicts.py    -> each conflict, and the resolution steps
+#   /factlog check              -> the same, inside Claude Code
+#
+# To RESOLVE one (never by hand-editing facts/candidates.csv, which bypasses the
+# gate this KB is built around):
+#   factlog eject --fact SUBJECT RELATION OBJECT    retire a row
+#   factlog amend SUBJECT RELATION OBJECT --set-object NEW    correct one
 #
 # If the two values are a supertype and its subtype (a cohort study IS an
 # observational study), neither is wrong: declare the relationship in

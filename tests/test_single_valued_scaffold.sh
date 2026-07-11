@@ -21,6 +21,19 @@ export XDG_CONFIG_HOME="$(mktemp -d)"
 grep -q "eject --fact" "$KB/policy/single-valued.md" \
   && ok "(b) it names the human-gate command, not a candidates.csv hand-edit" \
   || bad "(b) no gate command in the scaffold"
+
+# Every `factlog <sub>` the scaffold names must EXIST. Grepping for a string proves the
+# text is there, not that the advice works -- and this file shipped `factlog check`,
+# which is a Claude Code slash command, not a CLI subcommand. Pointing users at
+# something that does not exist is the very complaint #224 was filed about.
+for SUB in $(grep -oE '(^|[^/])factlog [a-z-]+' "$KB/policy/single-valued.md" \
+             | sed -E 's/.*factlog //' | sort -u); do
+  if "$PY" -m factlog "$SUB" --help >/dev/null 2>&1; then
+    ok "(b) 'factlog $SUB' is a real command"
+  else
+    bad "(b) the scaffold names 'factlog $SUB', which does not exist"
+  fi
+done
 grep -q "value-hierarchy.md" "$KB/policy/single-valued.md" \
   && ok "(b) it points at the hierarchy when the values are a supertype/subtype" \
   || bad "(b) no hierarchy pointer"
