@@ -336,20 +336,21 @@ class TestIdentityIsDeclaredNotInferred:
         dup = value_audit.audit(facts, identity_relations={"제목"})["duplicates"][0]
         assert dup["kind"] == "duplicate_record"
 
-    def test_an_undeclared_identity_looking_relation_is_hinted(self):
-        # The safe default must still be actionable: tell the user how to declare it
-        # rather than leaving them with a leak report they cannot resolve.
-        facts = [_row("논문명", f"Paper {i}", f"P{i}") for i in range(5)]
-        facts.append(_row("논문명", "paper 0", "P9"))
+    def test_no_per_relation_identity_guess_is_made(self):
+        # The audit does not tell you WHICH relation is an identity. Guessing was
+        # the inference it deliberately dropped, and it came back wrong through the
+        # advice channel: a marker shared by five subjects still earned "declare
+        # 염증지표 as an identity" — which, if followed, permanently exempts the very
+        # leak this audit exists to catch. Findings carry no such verdict.
+        facts = [_row("염증지표", "IL-6", f"P{i}") for i in range(5)]
+        facts += [
+            _row("염증지표", "il 6", "P9"),
+            _row("염증지표", "TNF-α", "P1"),
+            _row("염증지표", "CRP", "P2"),
+        ]
         dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
         assert dup["kind"] == "split"
-        assert "identity-relations.md" in dup["hint"]
-
-    def test_a_categorical_relation_gets_no_such_hint(self):
-        facts = [_row("염증지표", "IL-8", "P1"), _row("염증지표", "il 8", "P2")]
-        dup = value_audit.audit(facts, identity_relations=set())["duplicates"][0]
-        assert dup["kind"] == "split"
-        assert dup["hint"] == ""
+        assert "hint" not in dup
 
 
 class TestThousandsSeparator:
@@ -376,3 +377,39 @@ class TestSuffixWrapperBoundary:
     def test_a_junk_suffix_is_still_a_wrapper(self):
         found = value_audit.audit([_row("염증지표", "TGF-β(기타)", "P1")])
         assert found["wrappers"][0]["inner"] == "TGF-β"
+
+
+class TestIdentityPolicyFile:
+    """policy/identity-relations.md: the parser and the init scaffold."""
+
+    def test_an_absent_file_declares_nothing(self, tmp_path):
+        import common
+
+        (tmp_path / "policy").mkdir()
+        assert common.identity_relations(tmp_path) == set()
+
+    def test_names_bullets_comments_and_backticks(self, tmp_path):
+        import common
+
+        (tmp_path / "policy").mkdir()
+        (tmp_path / "policy" / "identity-relations.md").write_text(
+            "# a comment\n제목\n- DOI\n- `paper title`\n\n", encoding="utf-8"
+        )
+        assert common.identity_relations(tmp_path) == {"제목", "DOI", "paper title"}
+
+    def test_init_scaffolds_the_file(self, tmp_path):
+        import subprocess
+        import sys
+
+        kb = tmp_path / "kb"
+        subprocess.run(
+            [sys.executable, "-m", "factlog", "init", "--target", str(kb)],
+            check=True, capture_output=True,
+        )
+        scaffold = kb / "policy" / "identity-relations.md"
+        assert scaffold.is_file()
+        # Scaffolded EMPTY of declarations: the safe default is "every relation is
+        # categorical", so a collision is reported rather than silently exempted.
+        import common
+
+        assert common.identity_relations(kb) == set()

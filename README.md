@@ -350,11 +350,19 @@ so a collision is one value split across two spellings: a query leak, which
 collision is reported as a leak — noisy rather than silent, and the report tells
 you which relation to declare.
 
-Identity is declared, never inferred. Deriving it from the data ("every value has
-one subject") is self-defeating: one genuine duplicate record makes the relation
+Identity is declared, never inferred — and the audit does not guess which
+relations belong here either. Deriving it from the data ("every value has one
+subject") is self-defeating: one genuine duplicate record makes the relation
 non-injective, which flips it to categorical, which makes duplicate records fail
 the gate — the exact case the classification exists to spare. A two-row KB is also
-injective by accident.
+injective by accident. Declare only relations whose value names exactly one
+subject; **never a category many subjects share**, or you permanently exempt the
+leaks this audit exists to catch.
+
+`factlog init` scaffolds the file empty. An **existing KB has no such file**, so
+every relation starts categorical and a title collision is reported as a leak —
+create `policy/identity-relations.md` and declare your identity relations (for a
+bibliography: the title and the DOI).
 
 Nothing is merged automatically. Fix with `factlog amend <subject> <relation>
 <object> --set-object <canonical>`, which rewrites the row durably (both

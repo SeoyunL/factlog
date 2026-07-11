@@ -123,19 +123,6 @@ def _match_wrapper(value: str) -> str | None:
     return None
 
 
-def _looks_like_an_identity(values: dict[str, int], owners: dict[str, set[str]]) -> bool:
-    """A HINT only: does this relation behave like a title (one value, one subject)?
-
-    Never used to classify — only to suggest declaring the relation, so the safe
-    default (undeclared ⇒ categorical ⇒ collision is a leak) does not just produce
-    noise the user cannot act on.
-    """
-    if len(values) < 3:
-        return False
-    single = sum(1 for subjects in owners.values() if len(subjects) == 1)
-    return single >= len(values) - 1  # allow one genuine duplicate record
-
-
 def audit(
     facts: list[dict[str, str]],
     identity_relations: set[str] | None = None,
@@ -208,21 +195,11 @@ def audit(
             owners = {s for v in distinct for s in subjects[(relation, v)]}
             # See the docstring: policy decides, not the subject count.
             kind = "duplicate_record" if relation in identity and len(owners) > 1 else "split"
-            hint = ""
-            if kind == "split" and len(owners) > 1 and relation not in identity:
-                value_owners = {v: subjects[(relation, v)] for v in values}
-                if _looks_like_an_identity(values, value_owners):
-                    hint = (
-                        f"if '{relation}' identifies its subject (like a title or a DOI), "
-                        f"declare it in policy/identity-relations.md — then this reads as a "
-                        f"possible duplicate record instead of a query leak"
-                    )
             duplicates.append({
                 "relation": relation,
                 "values": " / ".join(f"{v} ({values[v]})" for v in distinct),
                 "subjects": ", ".join(sorted(owners)),
                 "kind": kind,
-                "hint": hint,
             })
 
     return {
@@ -286,8 +263,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  • {f['relation']}: {f['values']}")
             if f["kind"] == "split":
                 print(f"      subjects: {f['subjects']} — queries for one spelling miss the other")
-                if f.get("hint"):
-                    print(f"      note: {f['hint']}")
             else:
                 print(f"      DIFFERENT subjects ({f['subjects']}) share this identifying value")
                 print("      → not a spelling split: check whether these are duplicate records")
@@ -302,6 +277,20 @@ def main(argv: list[str] | None = None) -> int:
         print("\nPLACEHOLDER — carries no information; hides what the source said:")
         for f in found["placeholders"]:
             print(f"  • {f['relation']}: '{f['value']}' ({f['rows']} row(s))")
+
+    # One general pointer, not a per-relation verdict. Guessing which relation is
+    # an identity was the inference this tool deliberately dropped, and it came back
+    # wrong through the advice channel: a marker shared by five subjects still got
+    # "declare 염증지표 as an identity", which — if followed — would permanently
+    # exempt the very leak this audit exists to catch. Name the file; let the human
+    # decide which relations belong in it.
+    if any(f["kind"] == "split" and len(f["subjects"].split(", ")) > 1 for f in found["duplicates"]):
+        print(
+            "\nnote: a spelling duplicate across DIFFERENT subjects is reported as a leak "
+            "unless the relation is declared in policy/identity-relations.md. Declare only "
+            "relations whose value names exactly one subject (a title, a DOI) — never a "
+            "category many subjects share."
+        )
 
     if not any(found.values()):
         print("  no value-hygiene problems found")
