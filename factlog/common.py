@@ -727,6 +727,108 @@ def _relation_names_from(path: Path) -> set[str]:
     return names
 
 
+# --- value hierarchy (policy/value-hierarchy.md) -----------------------------
+# Declares that one OBJECT value of a relation is a kind of another — e.g. a
+# cohort study is an observational study. Without it, `연구유형 = 관찰연구` and
+# `연구유형 = 코호트연구` are unrelated strings, so asking for the broader value
+# silently misses every row filed under a narrower one (#211). The declaration
+# is applied when a query's object is MATCHED; it never adds facts to
+# accepted.dl, which stays a 1:1 projection of the accepted candidate rows.
+
+_SUBSUMES_RE = re.compile(r"^(?P<child>.+?)\s*(?:⊂|<:|<)\s*(?P<parent>.+)$")
+
+
+def _hierarchy_token(text: str) -> str:
+    """A value name: the `backtick`-quoted token if present, else the raw text."""
+    match = re.search(r"`([^`]+)`", text)
+    return (match.group(1) if match else text).strip()
+
+
+def value_hierarchy(root: Path | None = None) -> dict[str, dict[str, set[str]]]:
+    """Parse policy/value-hierarchy.md → {relation: {child_value: {ancestors}}}.
+
+    Line format (bullets and '#' comments allowed; backtick-quote a name with
+    spaces or a '<'):
+
+        - 연구유형: 코호트연구 ⊂ 관찰연구
+        - 대상질환: `emphysema` <: COPD
+
+    Ancestors are TRANSITIVE (a ⊂ b ⊂ c ⇒ querying c matches a). A cycle is
+    dropped rather than raised: policy is authored by hand and a bad line must
+    not take the whole logic check down — resolve_* callers surface it as a
+    parse warning instead. Absent file → {} → behaviour byte-identical to a KB
+    without the feature.
+    """
+    path = (root / "policy" / "value-hierarchy.md") if root else (POLICY_DIR / "value-hierarchy.md")
+    if not path.is_file():
+        return {}
+
+    direct: dict[str, dict[str, set[str]]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = re.sub(r"^\s*[-*]\s+", "", line.strip()).strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if ":" not in stripped:
+            continue
+        relation, _, rest = stripped.partition(":")
+        relation = _hierarchy_token(relation)
+        match = _SUBSUMES_RE.match(rest.strip())
+        if not relation or not match:
+            continue
+        child = _hierarchy_token(match.group("child"))
+        parent = _hierarchy_token(match.group("parent"))
+        if not child or not parent or child == parent:
+            continue
+        direct.setdefault(relation, {}).setdefault(child, set()).add(parent)
+
+    # Transitive closure, per relation. A cycle would loop forever, so bound the
+    # walk by the number of declared values and drop anything that revisits.
+    closed: dict[str, dict[str, set[str]]] = {}
+    for relation, edges in direct.items():
+        table: dict[str, set[str]] = {}
+        for child in edges:
+            seen: set[str] = set()
+            frontier = set(edges.get(child, set()))
+            while frontier:
+                node = frontier.pop()
+                if node in seen or node == child:  # self-reachable ⇒ cycle: stop
+                    continue
+                seen.add(node)
+                frontier |= edges.get(node, set()) - seen
+            if seen:
+                table[child] = seen
+        if table:
+            closed[relation] = table
+    return closed
+
+
+def object_matches(
+    query_object: str,
+    row: dict[str, str],
+    hierarchy: dict[str, dict[str, set[str]]] | None,
+    normalize: Callable[[str], str] | None = None,
+) -> bool:
+    """Does a fact row satisfy a query asking for `query_object`?
+
+    True on an exact match, or when the row's object is a declared descendant of
+    it (`관찰연구` matches a row filed as `코호트연구`). Subsumption is one-way:
+    asking for the narrow value never returns the broad one.
+
+    `normalize` folds surface spelling before comparing — ask_router matches
+    canonicalised values, so the same declaration must apply there rather than
+    being defeated by a stray space. Defaults to exact string comparison, which
+    is what the logic report uses.
+    """
+    norm = normalize or (lambda value: value)
+    want = norm(query_object)
+    if norm(row["object"]) == want:
+        return True
+    if not hierarchy:
+        return False
+    ancestors = hierarchy.get(row["relation"], {}).get(row["object"], set())
+    return any(norm(ancestor) == want for ancestor in ancestors)
+
+
 def sync_ignore_patterns(root: Path | None = None) -> list[str]:
     """Glob patterns from policy/sync-ignore.md naming sources to skip on sync.
 

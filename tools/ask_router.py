@@ -81,8 +81,10 @@ from common import (  # noqa: E402
     load_facts,
     load_logic_policy,
     logic_policy_md_has_rules,
+    object_matches,
     policy_predicates,
     relation_aliases,
+    value_hierarchy,
     run_wirelog,
 )
 from factlog import literal_types  # noqa: E402
@@ -226,7 +228,11 @@ def evaluate_relation(draft: str, facts: list[dict[str, str]]) -> list[list[str]
     When the relation argument is a quoted canonical name (one whose
     surface_variants set is non-empty), a fact row matches if its relation
     field equals the canonical name OR is in that variant set — so a canonical
-    query returns all surface-variant rows. Subject/object matching is unchanged.
+    query returns all surface-variant rows. Subject matching is unchanged.
+
+    The object honours policy/value-hierarchy.md: a query for a broad value also
+    returns rows filed under a declared narrower one (#211), so `/factlog ask`
+    and the logic report cannot disagree about what a question means.
     Returns the matching [subject, relation, object] rows. Does not touch
     facts/query.dl.
     """
@@ -234,20 +240,21 @@ def evaluate_relation(draft: str, facts: list[dict[str, str]]) -> list[list[str]
     if len(args) != 3:
         return []
     s_arg, r_arg, o_arg = args
+    hierarchy = value_hierarchy()
     # Pre-compute surface variants when the relation arg is a quoted canonical.
     rel_variants: set[str] = set()
     if is_quoted_string(r_arg):
         rel_variants = canonical_variants_of(arg_value(r_arg), relation_aliases())
     rows: list[list[str]] = []
     for row in facts:
-        s_val, r_val, o_val = row["subject"], row["relation"], row["object"]
+        s_val, r_val = row["subject"], row["relation"]
         if not (is_variable(s_arg) or canonical_value(arg_value(s_arg)) == canonical_value(s_val)):
             continue
         if not (is_variable(r_arg) or
                 canonical_value(arg_value(r_arg)) == canonical_value(r_val) or
                 r_val in rel_variants):
             continue
-        if not (is_variable(o_arg) or canonical_value(arg_value(o_arg)) == canonical_value(o_val)):
+        if not (is_variable(o_arg) or object_matches(arg_value(o_arg), row, hierarchy, canonical_value)):
             continue
         rows.append([row["subject"], row["relation"], row["object"]])
     return rows

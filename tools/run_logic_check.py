@@ -9,6 +9,8 @@ from common import (
     KNOWN_STATUSES,
     QUERY_PREDICATES,
     allowed_relations,
+    object_matches,
+    value_hierarchy,
     dependency_path,
     value_set,
     ensure_dirs,
@@ -58,7 +60,11 @@ def query_lines() -> list[str]:
 # mis-count as 4 args and report as "0 rows".
 
 
-def relation_results(line: str, facts: list[dict[str, str]]) -> list[tuple[str, str, str]]:
+def relation_results(
+    line: str,
+    facts: list[dict[str, str]],
+    hierarchy: dict[str, dict[str, set[str]]] | None = None,
+) -> list[tuple[str, str, str]]:
     args = query_args(line)
     if len(args) != 3:
         return []
@@ -67,7 +73,17 @@ def relation_results(line: str, facts: list[dict[str, str]]) -> list[tuple[str, 
     for row in facts:
         matched = True
         for arg, field in zip(args, fields, strict=True):
-            if arg.startswith('"') and arg.endswith('"') and arg_value(arg) != row[field]:
+            if not (arg.startswith('"') and arg.endswith('"')):
+                continue  # a variable binds anything
+            want = arg_value(arg)
+            # The object position honours policy/value-hierarchy.md, so asking for
+            # a broad value also returns rows filed under a narrower one (#211).
+            # subject/relation are matched literally.
+            if field == "object":
+                if not object_matches(want, row, hierarchy):
+                    matched = False
+                    break
+            elif want != row[field]:
                 matched = False
                 break
         if matched:
@@ -122,7 +138,12 @@ def policy_result_line(predicate: str, line: str, inferred: dict[str, set[tuple[
     return f"{predicate} results: {len(rows)} rows{suffix}"
 
 
-def evaluate_queries(facts: list[dict[str, str]], inferred: dict[str, set[tuple[str, ...]]], policy_query_predicates: set[str]) -> list[str]:
+def evaluate_queries(
+    facts: list[dict[str, str]],
+    inferred: dict[str, set[tuple[str, ...]]],
+    policy_query_predicates: set[str],
+    hierarchy: dict[str, dict[str, set[str]]] | None = None,
+) -> list[str]:
     results: list[str] = []
     for line in query_lines():
         predicate = line.split("(", 1)[0]
@@ -136,7 +157,7 @@ def evaluate_queries(facts: list[dict[str, str]], inferred: dict[str, set[tuple[
                 value = " -> ".join(trace) if trace else "(not found)"
                 results.append(f"path {constants[0]} -> {constants[1]}: {value}")
         elif line.startswith("relation"):
-            rows = relation_results(line, facts)
+            rows = relation_results(line, facts, hierarchy)
             args = query_args(line)
             result_values: list[str] = []
             for subject, relation, object_ in rows:
@@ -227,7 +248,10 @@ def main() -> None:
     report.extend([f"- {item}" for item in policy_items] or ["- no generated policy predicates"])
     report.append("")
     report.append("Query evaluation:")
-    report.extend([f"- {item}" for item in evaluate_queries(facts, inferred, policy_query_predicates)] or ["- no facts/query.dl found"])
+    report.extend(
+        [f"- {item}" for item in evaluate_queries(facts, inferred, policy_query_predicates, value_hierarchy())]
+        or ["- no facts/query.dl found"]
+    )
 
     text = "\n".join(report) + "\n"
     out = FACTS_DIR / "logic_report.txt"

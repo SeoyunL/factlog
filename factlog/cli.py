@@ -442,6 +442,33 @@ explanation of its purpose.
 # operates_since
 # ranked
 """,
+    "policy/value-hierarchy.md": """\
+# Value hierarchy (one OBJECT value is a kind of another)
+#
+# Without this, two values of the same relation are unrelated strings. A cohort
+# study IS an observational study, but `relation(P, "연구유형", "관찰연구")?`
+# would return only the rows spelled exactly "관찰연구" and silently miss every
+# row filed as "코호트연구" — a quiet omission, which is the one thing this KB
+# exists to prevent.
+#
+# Format, one declaration per line ('#' comments and '-' bullets allowed;
+# backtick-quote a value containing spaces or a '<'):
+#
+#   <relation>: <narrower value> ⊂ <broader value>
+#
+# '<:' and '<' are accepted as ASCII spellings of '⊂'. Ancestors are transitive
+# (a ⊂ b and b ⊂ c means a query for c also matches a).
+#
+# Subsumption applies when a query's OBJECT is matched — asking for the broader
+# value returns the narrower rows too. It is one-way: asking for the narrower
+# value never returns the broader one. Facts are never rewritten; accepted.dl
+# stays a 1:1 projection of the accepted candidate rows.
+#
+# Example (remove the leading '# ' to activate):
+# 연구유형: 코호트연구 ⊂ 관찰연구
+# 연구유형: 단면연구 ⊂ 관찰연구
+# 대상질환: emphysema <: COPD
+""",
     "policy/typed-relations.md": """\
 # Typed (comparable-literal) relations
 #
