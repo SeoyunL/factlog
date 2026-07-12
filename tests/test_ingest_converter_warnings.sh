@@ -42,9 +42,14 @@ while [ $# -gt 0 ]; do
     *) [ -z "$src" ] && src="$1"; shift;;
   esac
 done
-printf 'converted body text that is not empty\n' > "$dst"
+# an "emptywarn" source produces NO text (empty body) *and* a warning — the
+# narrow overlap of converted-but-empty and converted-with-warnings.
 case "$src" in
-  *garble*) printf '[WARNING] Unsupported code page 949. Text will likely be garbled.\n' >&2;;
+  *emptywarn*) : > "$dst";;
+  *) printf 'converted body text that is not empty\n' > "$dst";;
+esac
+case "$src" in
+  *garble*|*emptywarn*) printf '[WARNING] Unsupported code page 949. Text will likely be garbled.\n' >&2;;
 esac
 exit 0
 STUB
@@ -103,6 +108,20 @@ printf '%s' "$cleanout" | grep -qiE "converted-with-warnings" \
 printf '%s' "$cleanout" | grep -E "^factlog ingest: [0-9]+ converted" | grep -qE "^factlog ingest: 1 converted" \
   && ok "(d) a clean conversion is counted as a normal converted" \
   || bad "(d) a clean conversion was not counted as converted: $cleanout"
+
+# ---------------------------------------------------------------------------
+# (e) empty AND warning: empty wins the count bucket (the louder signal), but the
+#     converter's warning is STILL echoed — the encoding warning must not be
+#     re-swallowed just because the body also came out empty.
+# ---------------------------------------------------------------------------
+printf 'binary-ish epub bytes\n' > "$KB/sources/emptywarn.epub"
+ewout="$("${FACTLOG[@]}" ingest "$KB/sources/emptywarn.epub" --target "$KB" 2>&1)"
+printf '%s' "$ewout" | grep -qiE "converted-but-empty" \
+  && ok "(e) empty+warning is counted as converted-but-empty (empty wins the bucket)" \
+  || bad "(e) empty+warning lost the empty signal: $ewout"
+printf '%s' "$ewout" | grep -qF "Unsupported code page 949" \
+  && ok "(e) the converter warning is still echoed on an empty conversion (not re-swallowed)" \
+  || bad "(e) empty+warning SWALLOWED the warning (the #239 bug in the overlap): $ewout"
 
 # ---------------------------------------------------------------------------
 # Summary
