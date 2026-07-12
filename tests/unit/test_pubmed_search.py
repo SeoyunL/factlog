@@ -173,6 +173,14 @@ class TestParseEsearch:
         r = parse_esearch(_esearch(top_error="Invalid db name"))
         assert r.top_level_error == "Invalid db name"
 
+    def test_parse_esearch_still_captures_output_message_verbatim(self):
+        # The parser stays a faithful reduction of the response: it records what NCBI
+        # sent. Judging what counts as a diagnostic is the policy layer's job, not the
+        # parser's (#271).
+        r = parse_esearch(_LIVE_VALID_MESH_ZERO)
+        assert r.warnings == (("OutputMessage", "No items found."),)
+        assert r.count == 0
+
     def test_unparseable_body_is_reported_not_raised(self):
         r = parse_esearch("this is not xml <")
         assert r.top_level_error is not None
@@ -180,6 +188,26 @@ class TestParseEsearch:
 
 
 # -- the silent-zero guard --------------------------------------------------
+
+# What NCBI actually sends for *every* zero: the count, and boilerplate.
+_NCBI_ZERO_BOILERPLATE = [("OutputMessage", "No items found.")]
+
+# A live capture: `sepsis` + a valid MeSH descriptor `Sepsis` + year 1810 — a real
+# filter that legitimately narrows to zero. Kept as the raw body NCBI returned so the
+# guard is asserted against what PubMed sends, not against a synthetic shape that
+# omits the boilerplate every zero carries (#271).
+_LIVE_VALID_MESH_ZERO = (
+    "<eSearchResult><Count>0</Count><RetMax>0</RetMax><RetStart>0</RetStart><IdList/>"
+    "<TranslationSet><Translation>     <From>sepsis</From>     "
+    '<To>"sepsis"[MeSH Terms] OR "sepsis"[All Fields]</To>    </Translation>'
+    "<Translation>     <From>Sepsis[MeSH Terms]</From>     "
+    '<To>"sepsis"[MeSH Terms]</To>    </Translation></TranslationSet>'
+    '<QueryTranslation>("sepsis"[MeSH Terms] OR "sepsis"[All Fields]) AND '
+    '"sepsis"[MeSH Terms] AND 1810/01/01:1810/12/31[Date - Publication]'
+    "</QueryTranslation><WarningList><OutputMessage>No items found.</OutputMessage>"
+    "</WarningList></eSearchResult>"
+)
+
 
 class TestSilentZeroGuard:
     def test_nonexistent_mesh_term_surfaces_phrase_not_found(self):
@@ -195,17 +223,51 @@ class TestSilentZeroGuard:
         lines = silent_zero_report(r)
         assert any("foo bar" in ln for ln in lines)
 
-    def test_filtered_zero_without_a_pubmed_signal_is_still_surfaced(self):
-        # A nonexistent MeSH term can produce a warning-less zero; naming the filter
-        # is the floor guard so it never reads as an honest empty set.
-        r = parse_esearch(_esearch(count=0))
+    def test_filtered_zero_names_the_filter_through_ncbi_boilerplate(self):
+        # Every real zero carries `OutputMessage: No items found.` The filter line must
+        # still fire through it, and the boilerplate itself must never be echoed —
+        # it says nothing "Found 0 results." did not already say.
+        r = parse_esearch(_esearch(count=0, warnings=_NCBI_ZERO_BOILERPLATE))
         lines = silent_zero_report(r, year="2020", mesh=["Foo"])
-        assert lines
-        assert "'Foo'" in lines[0] and "'2020'" in lines[0]
+        assert any("'Foo'" in ln and "'2020'" in ln for ln in lines)
+        assert not any("OutputMessage" in ln for ln in lines)
+
+    def test_valid_mesh_filtered_zero_names_the_filter(self):
+        # The live NCBI body for a *valid* MeSH term filtered to zero: no diagnostic
+        # signal, only boilerplate. The filter must still be named (#271).
+        r = parse_esearch(_LIVE_VALID_MESH_ZERO)
+        lines = silent_zero_report(r, year="1810", mesh=["Sepsis"])
+        assert any("'Sepsis'" in ln and "'1810'" in ln for ln in lines)
+        assert not any("OutputMessage" in ln or "No items found" in ln for ln in lines)
+
+    def test_nonexistent_mesh_zero_surfaces_both_the_signal_and_the_filter(self):
+        # A nonexistent MeSH term gives PhraseNotFound *and* the boilerplate. Both the
+        # diagnostic and the filter line are owed, diagnostic first.
+        r = parse_esearch(_esearch(
+            count=0,
+            errors=[("PhraseNotFound", "notamesh")],
+            warnings=_NCBI_ZERO_BOILERPLATE,
+        ))
+        lines = silent_zero_report(r, mesh=["notamesh"])
+        assert "nonexistent MeSH term" in lines[0]
+        assert any("a filter was applied" in ln for ln in lines)
+        assert not any("OutputMessage" in ln for ln in lines)
+
+    def test_output_message_is_never_echoed(self):
+        # A nonsense query with no filter: PubMed volunteers QuotedPhraseNotFound and
+        # the boilerplate. The diagnostic is surfaced; the boilerplate never is.
+        r = parse_esearch(_esearch(
+            count=0,
+            warnings=[("QuotedPhraseNotFound", '"zzz qqq"')] + _NCBI_ZERO_BOILERPLATE,
+        ))
+        lines = silent_zero_report(r)
+        assert any("zzz qqq" in ln for ln in lines)
+        assert not any("OutputMessage" in ln for ln in lines)
 
     def test_honest_empty_set_stays_silent(self):
-        # Zero results, no filter, no PubMed signal: a plain "0 results" is honest.
-        r = parse_esearch(_esearch(count=0))
+        # Zero results, no filter, no diagnostic signal — only the boilerplate every
+        # zero carries: a plain "0 results" is honest and must stay quiet.
+        r = parse_esearch(_esearch(count=0, warnings=_NCBI_ZERO_BOILERPLATE))
         assert silent_zero_report(r) == []
 
     def test_nonzero_count_with_a_pubmed_warning_still_surfaces_it(self):
