@@ -231,13 +231,18 @@ if router search "자료" | grep -qF '자료는'; then ok "CJK substring tolerat
 rm -f "$KB/sources/ko.md"
 
 # --- Phase 2: path (positive render / variable) + policy + decisions ---
-ppos="$(router render 'path("Acme API", "FastAPI")?')"
-if printf '%s' "$ppos" | grep -qF "VERIFIED — engine" && printf '%s' "$ppos" | grep -qF "Acme API, FastAPI"; then ok "path positive renders the dependency path as an engine answer"; else bad "path positive not rendered"; fi
-check_field "path with a variable enumerates reachable pairs" evaluate 'path("Acme API", T)?' count 2
-
-# policy-predicate evaluation needs pyrewire (run_wirelog); guard so CI without
-# pyrewire skips rather than fails. Compile a tiny policy first.
+# Path render/evaluate AND policy-predicate evaluation all go through run_wirelog,
+# which needs pyrewire. Guard the whole block so the no-dependency CI shell-harness
+# job skips these rather than failing: without the engine a path query returns
+# nothing, which is a SKIP here, not a bug. (The two path assertions used to sit
+# outside this guard, so that CI job — which installs no pyrewire — failed on
+# "path positive not rendered" and "path ... enumerates reachable pairs".)
 if "$PYTHON" -c "import pyrewire; raise SystemExit(0 if tuple(int(x) for x in pyrewire.__version__.split('.')[:3]) >= (1,0,1) else 1)" >/dev/null 2>&1; then
+  ppos="$(router render 'path("Acme API", "FastAPI")?')"
+  if printf '%s' "$ppos" | grep -qF "VERIFIED — engine" && printf '%s' "$ppos" | grep -qF "Acme API, FastAPI"; then ok "path positive renders the dependency path as an engine answer"; else bad "path positive not rendered"; fi
+  check_field "path with a variable enumerates reachable pairs" evaluate 'path("Acme API", T)?' count 2
+
+  # policy-predicate evaluation needs pyrewire (run_wirelog). Compile a tiny policy first.
   printf '# policy\n## Rules\n- [usage_chain] 어떤 항목이 `uses` 관계를 가지면 검토(review)가 필요하다.\n' > "$KB/policy/logic-policy.md"
   ( cd "$PLUGIN_ROOT" && FACTLOG_ROOT="$KB" "$PYTHON" tools/generate_logic_policy.py >/dev/null 2>&1 )
   check_field "policy predicate routes engine" validate 'requires_review(E, R)?' route engine
