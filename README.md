@@ -13,6 +13,84 @@ base: [Zotero](#importing-zotero-bibliography-factlog-zotero-import),
 [arXiv](#importing-arxiv-preprints-factlog-arxiv-), and
 [PubMed](#importing-pubmed-records-factlog-pubmed-).
 
+## Why you'd want this
+
+Ask an LLM to organize your literature and it does two things you won't notice:
+it **invents** what isn't there (a plausible citation, a confident number), and it
+**silently drops** what is (a paper that never comes back in the results). Both
+failures are quiet — the answer looks complete either way.
+
+factlog makes that silent loss *structurally* hard. The LLM only ever proposes; a
+deterministic engine decides what is true; every accepted fact carries its source;
+and a question with no verified answer says so instead of guessing. Two real cases
+from actual knowledge bases:
+
+- A query for `IL-10` returned **3 rows out of 4**. The fourth was filed as
+  `기타(IL-10)` and hid behind a different string — a silent omission
+  `tools/value_audit.py` now flags.
+- A query for `observational` study designs returned **6 out of 14**. The other
+  8 were filed as `cohort`, a subtype the engine did not know was one until
+  `policy/value-hierarchy.md` declared it.
+
+In a plain notes wiki, or a chat where you paste PDFs into an LLM, you would never
+learn those rows were missing.
+
+**Who it's for:** researchers running literature or systematic reviews — Zotero
+users, grad students, anyone already in Claude Code who needs their document
+claims to be *checkable*, not merely plausible.
+
+### See it in 30 seconds
+
+A verified answer names its source, and there is no answer without one:
+
+```text
+$ /factlog ask "who develops Claude Code?"
+VERIFIED — engine
+query: relation("Claude Code", "developed_by", D)?
+rows: 1
+  - Claude Code, developed_by, Anthropic  (sources: 1, extraction conf: 0.99)
+    ← sources/example.md#what-is-claude-code
+```
+
+Ask something the sources do not support and you get a *verified negative*, not a
+confident guess:
+
+```text
+$ /factlog ask "who develops factlog?"
+VERIFIED — engine
+rows: 0
+no such fact (verified negative)
+```
+
+Assert two contradictory values for a fact that can hold only one, and the KB
+refuses to compile until a human resolves it — instead of letting both sit quietly
+side by side:
+
+```text
+$ factlog status
+  conflicts:  1 (over 1 single-valued relation(s))
+
+$ python3 tools/check_conflicts.py --wiki ~/wiki
+CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic, OpenAI
+  Resolve with the human gate, not by hand-editing facts/candidates.csv.
+```
+
+### vs. just asking an LLM
+
+|  | ChatGPT / NotebookLM / Elicit on your PDFs | factlog |
+|---|---|---|
+| **Invents a fact or citation** | can — fluently and confidently | won't — the LLM only proposes; a deterministic engine decides |
+| **Silently drops a source** | can — a missing paper reads as "no result" | won't — a verified answer names its source, or says "verified negative" |
+| **Contradictions** | coexist unnoticed | a single-valued conflict blocks compile until a human resolves it |
+| **Human sign-off** | none | every fact passes an explicit `accept` gate before it becomes engine input |
+
+Being honest about limits is part of the design, not an afterthought: this README
+spells out what the audits *do not* catch (see
+[Auditing the value vocabulary](#auditing-the-value-vocabulary-toolsvalue_auditpy))
+and where the model is only *guided*, not forced
+([Determinism & limitations](#determinism--limitations)). A clean report is
+evidence, not a proof of completeness — and factlog says so out loud.
+
 ## What it is
 
 factlog-academic is a [Claude Code](https://code.claude.com) **plugin** that installs the

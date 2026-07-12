@@ -20,6 +20,83 @@
 [arXiv](#arxiv-프리프린트-가져오기-factlog-arxiv-) ·
 [PubMed](#pubmed-문헌-가져오기-factlog-pubmed-).
 
+## 왜 필요한가
+
+LLM에게 문헌 정리를 시키면 당신이 눈치채지 못하는 두 가지 일이 일어납니다. 없는 것을
+**지어내고**(그럴듯한 인용, 자신 있는 숫자), 있는 것을 **조용히 빠뜨립니다**(검색 결과에
+끝내 돌아오지 않는 논문). 두 실패 모두 조용해서, 답은 어느 쪽이든 완전해 보입니다.
+
+factlog는 그 조용한 누락을 *구조적으로* 어렵게 만듭니다. LLM은 제안만 하고, 결정론적
+엔진이 무엇이 참인지 정하며, accepted된 사실은 저마다 출처를 달고, 검증된 답이 없는
+질문은 추측하는 대신 없다고 말합니다. 실제 지식베이스에서 나온 두 사례:
+
+- `IL-10` 질의가 **4개 중 3개**만 반환했습니다. 네 번째는 `기타(IL-10)`로 적혀 다른
+  문자열 뒤에 숨어 있었죠 — `tools/value_audit.py`가 이제 잡아내는 조용한 누락입니다.
+- `관찰연구`(observational) 질의가 **14편 중 6편**만 반환했습니다. 나머지 8편은
+  `코호트`(하위유형)로 적혀 있었고, `policy/value-hierarchy.md`가 선언하기 전까지 엔진은
+  그게 관찰연구의 하위유형인 줄 몰랐습니다.
+
+평범한 노트 위키나, PDF를 LLM 채팅에 던져 넣는 방식으로는 그 행들이 빠졌다는 사실을
+결코 알 수 없습니다.
+
+**누구를 위한 도구인가:** 문헌 리뷰·체계적 문헌고찰(systematic review)을 하는 연구자 —
+Zotero로 서지를 관리하거나 **한글(.hwp/.hwpx)로 문서를 쓰는** 연구자, 대학원생, 이미
+Claude Code를 쓰며 자기 문서의 주장이 *검증 가능*하길 바라는 모든 사람.
+
+### 30초 만에 보기
+
+검증된 답은 출처를 밝히고, 출처 없는 답은 없습니다:
+
+```text
+$ /factlog ask "Claude Code는 누가 개발했나?"
+VERIFIED — engine
+query: relation("Claude Code", "developed_by", D)?
+rows: 1
+  - Claude Code, developed_by, Anthropic  (sources: 1, extraction conf: 0.99)
+    ← sources/example.md#what-is-claude-code
+```
+
+소스가 뒷받침하지 않는 걸 물으면, 자신 있는 추측이 아니라 *검증된 부정*이 돌아옵니다:
+
+```text
+$ /factlog ask "factlog는 누가 개발했나?"
+VERIFIED — engine
+rows: 0
+no such fact (verified negative)
+```
+
+하나만 가질 수 있는 사실에 상충하는 두 값을 주장하면, 둘을 조용히 나란히 두는 대신
+사람이 해결할 때까지 KB가 컴파일을 거부합니다:
+
+```text
+$ factlog status
+  conflicts:  1 (over 1 single-valued relation(s))
+
+$ python3 tools/check_conflicts.py --wiki ~/wiki
+CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic, OpenAI
+  Resolve with the human gate, not by hand-editing facts/candidates.csv.
+```
+
+### 그냥 LLM에게 묻는 것과 비교
+
+|  | 내 PDF를 ChatGPT / NotebookLM / Elicit에 | factlog |
+|---|---|---|
+| **사실·인용 지어내기** | 함 — 유창하고 자신 있게 | 안 함 — LLM은 제안만, 결정론 엔진이 판정 |
+| **출처를 조용히 빠뜨림** | 함 — 빠진 논문이 "결과 없음"처럼 보임 | 안 함 — 검증된 답은 출처를 밝히거나 "검증된 부정"이라 말함 |
+| **모순** | 눈치 못 챈 채 공존 | 단일값 모순은 사람이 풀 때까지 컴파일 차단 |
+| **사람의 승인** | 없음 | 모든 사실이 엔진 입력이 되기 전 명시적 `accept` 게이트를 거침 |
+
+> **한글 문헌을 다룬다면.** factlog는 `.hwp`(HWP 5.x)·`.hwpx`(한컴 OWPML)를 1급으로
+> 변환하고(`.hwpx`는 외부 도구 없이 내장 추출), 관계·값 이름을 한글 그대로 씁니다 —
+> `연구유형: 코호트연구 ⊂ 관찰연구`, `게재연도`, `염증지표` 처럼. 이 정도의 HWP
+> 파이프라인을 갖춘 한국어 연구자용 문헌 검증 도구는 드뭅니다. 자세히는 아래
+> [소스 파일 형식](#소스-파일-형식) 참고.
+
+정직함은 나중에 덧붙인 게 아니라 설계의 일부입니다: 이 문서는 감사가 *무엇을 못 잡는지*
+([값 어휘 감사](#값-어휘-감사-toolsvalue_auditpy))와 모델이 어디까지 *강제되지 않고
+유도만 되는지*([결정론과 한계](#결정론과-한계))를 분명히 적습니다. 깨끗한 리포트는
+증거일 뿐 완전성의 증명이 아니며, factlog는 그걸 소리 내어 말합니다.
+
 ## 처음 읽는 사람을 위한 안내
 
 ### 개요
