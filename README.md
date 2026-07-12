@@ -13,6 +13,24 @@ base: [Zotero](#importing-zotero-bibliography-factlog-zotero-import),
 [arXiv](#importing-arxiv-preprints-factlog-arxiv-), and
 [PubMed](#importing-pubmed-records-factlog-pubmed-).
 
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2)
+
+## Contents
+
+- [Why you'd want this](#why-youd-want-this)
+- [What it is](#what-it-is)
+- [How it works](#how-it-works)
+- [Requirements](#requirements) · [Install](#install)
+- [Quickstart](#quickstart)
+- [Versioning your KB](#versioning-your-kb)
+- [Concepts](#concepts) — statuses, the gate, ledger vs front matter, the active KB
+- [Source file formats](#source-file-formats) and the full command/policy reference
+- [Usage](#usage)
+- [Determinism & limitations](#determinism--limitations)
+- [License](#license)
+
 ## Why you'd want this
 
 Ask an LLM to organize your literature and it does two things you won't notice:
@@ -130,6 +148,217 @@ review_required  →  Claude repairs (gated)  →  decisions/correction_trace.md
 
 </details>
 
+## Requirements
+
+- Python **3.11+** (required by the engine dependency `pyrewire`)
+- **pyrewire 1.0.3+** (`pip install -r requirements.txt`)
+- Claude Code CLI
+
+## Install
+
+factlog-academic is a **Claude Code plugin**. Install it from this repo's marketplace in a Claude Code session:
+
+```
+/plugin marketplace add https://github.com/SeoyunL/factlog-academic
+/plugin install factlog@seoyunl
+/reload-plugins
+/factlog setup                     # one-shot: deps + doctor + init, in-session
+```
+
+> Install from **this** repo, not from upstream `semantic-reasoning/factlog`. The
+> upstream plugin ships none of the bibliography commands — `factlog zotero-import`,
+> `factlog openalex-*`, `factlog arxiv-*`, and `factlog pubmed-*` exist only here.
+
+Run these commands **one line at a time**. If you paste multiple plugin commands
+at once, Claude Code may try to process the marketplace registration and install
+out of order.
+
+After a successful install, the new `/factlog ...` commands may not be loaded in
+the current session yet. Run `/reload-plugins` after `/plugin install`, then run
+`/factlog setup`.
+
+
+### Local install (development)
+
+To develop against a local clone, register the working tree as the marketplace instead:
+
+```
+/plugin marketplace add ~/git/factlog-academic
+/plugin install factlog@seoyunl
+/reload-plugins
+/factlog setup
+```
+
+### What `/factlog setup` does
+
+`setup` collapses the previously-separate post-install steps into a single command. Equivalently, by hand:
+
+```bash
+pip install -r ~/git/factlog-academic/requirements.txt   # pyrewire>=1.0.3,<2.0
+python3 -m factlog doctor          # checks Python 3.11+ and pyrewire
+python3 -m factlog init --target ~/wiki   # scaffold the KB layout
+python3 -m factlog use ~/wiki      # make it the active KB
+```
+
+The `use` line matters: `init` only adopts the new KB when you have no active KB
+yet. If you already had one, skipping `use` leaves the old KB active and the new
+one merely scaffolded. (`init --target ~/wiki --activate` does both in one step.)
+
+### Windows Python executable
+
+On Windows, the `python3` command can point to the Microsoft Store stub instead
+of a real Python executable. In that state, `python` or `py` may work while the
+plugin's bundled scripts fail.
+
+Check these first:
+
+```powershell
+python3 --version
+python --version
+py -0p
+```
+
+If `python3 --version` only prints `Python`, fails, or opens Microsoft Store,
+tell factlog which Python to use. For a venv:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e <path-to-factlog-repo>
+$env:FACTLOG_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
+```
+
+The plugin hooks and skill commands use
+`${CLAUDE_PLUGIN_ROOT}/tools/factlog_python.sh`, which resolves Python 3.11+ in
+this order: `$FACTLOG_PYTHON`, `python3`, `python`, then `py`.
+
+If your Python is externally managed (PEP 668), pip will refuse to install into it; `setup` prints venv guidance instead of forcing the install. Create and activate a venv, then re-run `setup`:
+
+```bash
+python3 -m venv ~/.factlog-venv && source ~/.factlog-venv/bin/activate
+python3 -m factlog setup --target ~/wiki
+```
+
+## Quickstart
+
+From an empty folder to a verified, source-backed answer in one session. (Longer
+walk-throughs: [examples/sample-kb](examples/sample-kb/README.md) and
+[docs/getting-started-verify.md](docs/getting-started-verify.md).)
+
+```bash
+factlog init --target ~/wiki      # scaffold the KB (sources/, facts/, policy/, …)
+cp notes.md ~/wiki/sources/       # drop documents in; binaries are converted on sync
+```
+
+Then, in a Claude Code session, extract candidate facts (this is the one LLM step):
+
+```text
+/factlog sync                     # Claude reads sources/ and writes candidate facts
+```
+
+Back in the terminal you are the gate — nothing becomes engine input until you accept it:
+
+```text
+$ factlog review
+factlog review (KB: ~/wiki): 1 pending fact(s), 1 row(s)
+  Acme / uses / FastAPI
+    ← sources/notes.md  [candidate, conf 0.90]
+  decide with: factlog accept <subject> <relation> <object>   (or: factlog reject ...)
+
+$ factlog accept Acme uses FastAPI
+factlog accept (KB: ~/wiki): 1 pending row(s) → accepted
+  Acme / uses / FastAPI  [candidate → accepted]  ← sources/notes.md
+factlog accept: 1 candidate row(s) → accepted, 1 runs/*.json row(s) updated; accepted.dl recompiled
+factlog review: note — pages/ may be stale; run /factlog sync to regenerate them.
+```
+
+Now ask. The answer is the engine's, and it names its source:
+
+```text
+/factlog ask "what does Acme use?"
+VERIFIED — engine
+query: relation("Acme", "uses", O)?
+rows: 1
+  - Acme, uses, FastAPI (sources: 1, extraction conf: 0.90)
+    ← sources/notes.md
+```
+
+That is the whole loop — **extract → review → accept → ask**. Everything below is
+detail on each step.
+
+## Versioning your KB
+
+The single most important operational habit: **commit `runs/*.json` and `facts/`.**
+Losing them loses data no re-run can recover.
+
+A KB has **two** irreplaceable records, and they are not the same file:
+
+- **`runs/*.json` holds the facts.** `facts/candidates.csv` is rebuilt from it on
+  every merge, so losing `runs/` erases every fact that is not re-extracted.
+- **`facts/candidates.csv` holds the human decisions.** `factlog accept` / `reject`
+  write the `accepted` / `superseded` status **there and nowhere else**. Delete it
+  and a re-merge quietly demotes every accepted fact back to `candidate`.
+
+So if you version-control your KB:
+
+| Path | Commit it? | Why |
+|---|---|---|
+| `sources/` | **yes** | your originals |
+| `runs/*.json` | **yes** | the extracted facts themselves |
+| `facts/` | **yes — never regenerate** | the human accept/reject decisions live only here |
+| `policy/` | **yes** | the rules you wrote (logic policy, questions, typed relations, …) |
+| `pages/`, `decisions/` | optional | regenerated on every merge |
+| `runs/sources/` | no | text conversions, regenerable with `factlog ingest --scan` |
+| `source-provenance/` | **yes** | per-source provenance sidecars from `zotero`/`openalex`/`arxiv`/`pubmed` import — a paper's ledger (DOI, retraction status, cross-ids) |
+| `check-log/` | **yes** | when the tool last checked each arXiv/PubMed/OpenAlex paper; `--older-than` skips a paper based on this, so dropping it re-checks everything |
+| `merge-candidates/` | **yes** | the pair ledger `merge_candidates` uses to preserve human decisions across a rebuild |
+
+The last three appear only once you use the bibliography commands; a plain KB never
+grows them.
+
+`merge_candidates` now refuses any rebuild that would delete a fact a human has
+ruled on, so a lost `runs/` can no longer erase a KB silently — but the data still
+has to exist somewhere.
+
+This also changes one habit: **deleting a `runs/*.json` to undo an extraction no
+longer silently drops its accepted facts.** Retire them through the gate first —
+`factlog eject --fact SUBJECT RELATION OBJECT` — or pass `--allow-delete` if the
+loss is what you want. (`factlog reject` will not do it: it only retires rows that
+are still pending.)
+
+## Concepts
+
+A few terms recur throughout. Definitions once, here.
+
+**Fact statuses.** Every extracted fact carries a status. Only two are engine
+input; the rest are stages before or after the human gate.
+
+| Status | Meaning | Engine input? |
+|---|---|---|
+| `candidate` | extracted by the LLM, not yet reviewed | no |
+| `needs_review` | extraction flagged it for a human decision | no |
+| `accepted` | a human accepted it (`factlog accept`) | **yes** |
+| `confirmed` | same tier as `accepted` — a pre-blessed fact (the diagram's word, and what a seeded KB uses) | **yes** |
+| `superseded` | retired by a human (`factlog reject` / `eject`), kept for audit | no |
+
+`accepted` and `confirmed` are **one tier** — the code treats both as engine input
+(`ENGINE_STATUSES = {confirmed, accepted}`). `factlog accept` writes `accepted`;
+`confirmed` is the equivalent spelling used by the how-it-works diagram and by
+seeded sample data. Neither is more trusted than the other.
+
+**The gate.** The human `accept`/`reject` step. `/factlog sync` only ever produces
+*candidates*; a fact becomes engine input only after it passes the gate. This is
+factlog's trust boundary — the model proposes, a human disposes.
+
+**Active KB.** The KB that bare `factlog` subcommands target when you omit
+`--target`, recorded by `factlog setup` / `factlog use`. See
+[Active KB](#active-kb-target-the-set-up-kb-from-anywhere).
+
+**Ledger vs front matter.** A bibliography import writes two things: the source's
+YAML **front matter** (`sources/*.md`, human-editable) and a per-paper
+**ledger** under `source-provenance/` (DOI, retraction status, cross-ids — the
+record `--auto-update` may touch, never `sources/*.md`). The distinction matters
+for the determinism boundary in each integration below.
+
 ## Source file formats
 
 `/factlog sync` extracts facts by reading each file under `sources/` **as text,
@@ -171,43 +400,6 @@ extraction reads.
 factlog ingest report.docx --target ~/wiki   # → ~/wiki/runs/sources/report.docx.md (pandoc)
 factlog ingest --scan --target ~/wiki        # auto-convert every binary under sources/
 ```
-
-### `runs/*.json` is the source of truth — commit it
-
-A KB has **two** irreplaceable records, and they are not the same file:
-
-- **`runs/*.json` holds the facts.** `facts/candidates.csv` is rebuilt from it on
-  every merge, so losing `runs/` erases every fact that is not re-extracted.
-- **`facts/candidates.csv` holds the human decisions.** `factlog accept` / `reject`
-  write the `accepted` / `superseded` status **there and nowhere else**. Delete it
-  and a re-merge quietly demotes every accepted fact back to `candidate`.
-
-So if you version-control your KB:
-
-| Path | Commit it? | Why |
-|---|---|---|
-| `sources/` | **yes** | your originals |
-| `runs/*.json` | **yes** | the extracted facts themselves |
-| `facts/` | **yes — never regenerate** | the human accept/reject decisions live only here |
-| `policy/` | **yes** | the rules you wrote (logic policy, questions, typed relations, …) |
-| `pages/`, `decisions/` | optional | regenerated on every merge |
-| `runs/sources/` | no | text conversions, regenerable with `factlog ingest --scan` |
-| `source-provenance/` | **yes** | per-source provenance sidecars from `zotero`/`openalex`/`arxiv`/`pubmed` import — a paper's ledger (DOI, retraction status, cross-ids) |
-| `check-log/` | **yes** | when the tool last checked each arXiv/PubMed/OpenAlex paper; `--older-than` skips a paper based on this, so dropping it re-checks everything |
-| `merge-candidates/` | **yes** | the pair ledger `merge_candidates` uses to preserve human decisions across a rebuild |
-
-The last three appear only once you use the bibliography commands; a plain KB never
-grows them.
-
-`merge_candidates` now refuses any rebuild that would delete a fact a human has
-ruled on, so a lost `runs/` can no longer erase a KB silently — but the data still
-has to exist somewhere.
-
-This also changes one habit: **deleting a `runs/*.json` to undo an extraction no
-longer silently drops its accepted facts.** Retire them through the gate first —
-`factlog eject --fact SUBJECT RELATION OBJECT` — or pass `--allow-delete` if the
-loss is what you want. (`factlog reject` will not do it: it only retires rows that
-are still pending.)
 
 ### Active KB (target the set-up KB from anywhere)
 
@@ -888,97 +1080,6 @@ With no config set, behavior is unchanged (uses the current directory).
 drop in `sources/` are converted automatically (idempotently — unchanged files
 are skipped). If a binary has no `runs/sources/` conversion, `merge_candidates.py`
 warns so the silent non-ingestion is visible.
-
-## Requirements
-
-- Python **3.11+** (required by the engine dependency `pyrewire`)
-- **pyrewire 1.0.3+** (`pip install -r requirements.txt`)
-- Claude Code CLI
-
-## Install
-
-factlog-academic is a **Claude Code plugin**. Install it from this repo's marketplace in a Claude Code session:
-
-```
-/plugin marketplace add https://github.com/SeoyunL/factlog-academic
-/plugin install factlog@seoyunl
-/reload-plugins
-/factlog setup                     # one-shot: deps + doctor + init, in-session
-```
-
-> Install from **this** repo, not from upstream `semantic-reasoning/factlog`. The
-> upstream plugin ships none of the bibliography commands — `factlog zotero-import`,
-> `factlog openalex-*`, `factlog arxiv-*`, and `factlog pubmed-*` exist only here.
-
-Run these commands **one line at a time**. If you paste multiple plugin commands
-at once, Claude Code may try to process the marketplace registration and install
-out of order.
-
-After a successful install, the new `/factlog ...` commands may not be loaded in
-the current session yet. Run `/reload-plugins` after `/plugin install`, then run
-`/factlog setup`.
-
-`setup` runs `doctor`, installs the engine dependency (`pyrewire`), scaffolds the KB, and re-checks the environment — in one command.
-
-### Local install (development)
-
-To develop against a local clone, register the working tree as the marketplace instead:
-
-```
-/plugin marketplace add ~/git/factlog-academic
-/plugin install factlog@seoyunl
-/reload-plugins
-/factlog setup
-```
-
-### What `/factlog setup` does
-
-`setup` collapses the previously-separate post-install steps into a single command. Equivalently, by hand:
-
-```bash
-pip install -r ~/git/factlog-academic/requirements.txt   # pyrewire>=1.0.3,<2.0
-python3 -m factlog doctor          # checks Python 3.11+ and pyrewire
-python3 -m factlog init --target ~/wiki   # scaffold the KB layout
-python3 -m factlog use ~/wiki      # make it the active KB
-```
-
-The `use` line matters: `init` only adopts the new KB when you have no active KB
-yet. If you already had one, skipping `use` leaves the old KB active and the new
-one merely scaffolded. (`init --target ~/wiki --activate` does both in one step.)
-
-### Windows Python executable
-
-On Windows, the `python3` command can point to the Microsoft Store stub instead
-of a real Python executable. In that state, `python` or `py` may work while the
-plugin's bundled scripts fail.
-
-Check these first:
-
-```powershell
-python3 --version
-python --version
-py -0p
-```
-
-If `python3 --version` only prints `Python`, fails, or opens Microsoft Store,
-tell factlog which Python to use. For a venv:
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e <path-to-factlog-repo>
-$env:FACTLOG_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
-```
-
-The plugin hooks and skill commands use
-`${CLAUDE_PLUGIN_ROOT}/tools/factlog_python.sh`, which resolves Python 3.11+ in
-this order: `$FACTLOG_PYTHON`, `python3`, `python`, then `py`.
-
-If your Python is externally managed (PEP 668), pip will refuse to install into it; `setup` prints venv guidance instead of forcing the install. Create and activate a venv, then re-run `setup`:
-
-```bash
-python3 -m venv ~/.factlog-venv && source ~/.factlog-venv/bin/activate
-python3 -m factlog setup --target ~/wiki
-```
 
 ## Usage
 
