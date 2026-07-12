@@ -33,8 +33,8 @@ factlog는 그 조용한 누락을 *구조적으로* 어렵게 만듭니다. LLM
 - `IL-10` 질의가 **4개 중 3개**만 반환했습니다. 네 번째는 `기타(IL-10)`로 적혀 다른
   문자열 뒤에 숨어 있었죠 — `tools/value_audit.py`가 이제 잡아내는 조용한 누락입니다.
 - `관찰연구`(observational) 질의가 **14편 중 6편**만 반환했습니다. 나머지 8편은
-  `코호트`(하위유형)로 적혀 있었고, `policy/value-hierarchy.md`가 선언하기 전까지 엔진은
-  그게 관찰연구의 하위유형인 줄 몰랐습니다.
+  하위유형(예: `코호트`)으로 적혀 있었고, `policy/value-hierarchy.md`가 선언하기
+  전까지 엔진은 그게 관찰연구로 세어진다는 걸 몰랐습니다.
 
 평범한 노트 위키나, PDF를 LLM 채팅에 던져 넣는 방식으로는 그 행들이 빠졌다는 사실을
 결코 알 수 없습니다.
@@ -52,17 +52,20 @@ $ /factlog ask "Claude Code는 누가 개발했나?"
 VERIFIED — engine
 query: relation("Claude Code", "developed_by", D)?
 rows: 1
-  - Claude Code, developed_by, Anthropic  (sources: 1, extraction conf: 0.99)
+  - Claude Code, developed_by, Anthropic (sources: 1, extraction conf: 0.99)
     ← sources/example.md#what-is-claude-code
 ```
 
-소스가 뒷받침하지 않는 걸 물으면, 자신 있는 추측이 아니라 *검증된 부정*이 돌아옵니다:
+소스가 뒷받침하지 않는 걸 물으면, 자신 있는 추측이 아니라 *검증된 부정*이 돌아옵니다 —
+게다가 진짜 사실이 다른 관계 아래 숨어 있을 수 있음까지 짚어 줍니다:
 
 ```text
 $ /factlog ask "factlog는 누가 개발했나?"
 VERIFIED — engine
+query: relation("factlog", "developed_by", D)?
 rows: 0
 no such fact (verified negative)
+note: no verified 'developed_by' for 'factlog', but 'factlog' has 3 fact(s) under other relations (possible predicate mismatch): is_a, performs
 ```
 
 하나만 가질 수 있는 사실에 상충하는 두 값을 주장하면, 둘을 조용히 나란히 두는 대신
@@ -70,11 +73,15 @@ no such fact (verified negative)
 
 ```text
 $ factlog status
-  conflicts:  1 (over 1 single-valued relation(s))
+  conflicts:  1 (over 1 single-valued relation(s))  ⚠ run tools/check_conflicts.py for the resolution steps
 
 $ python3 tools/check_conflicts.py --wiki ~/wiki
-CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic, OpenAI
-  Resolve with the human gate, not by hand-editing facts/candidates.csv.
+check_conflicts: 1 conflict(s) found
+  CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic, OpenAI
+  Resolve with the human gate, not by hand-editing facts/candidates.csv:
+    factlog eject --fact SUBJECT RELATION OBJECT   retire an accepted row
+    factlog amend SUBJECT RELATION OBJECT --set-object NEW   correct a value
+  ...
 ```
 
 ### 그냥 LLM에게 묻는 것과 비교
@@ -89,7 +96,7 @@ CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic,
 > **한글 문헌을 다룬다면.** factlog는 `.hwp`(HWP 5.x)·`.hwpx`(한컴 OWPML)를 1급으로
 > 변환하고(`.hwpx`는 외부 도구 없이 내장 추출), 관계·값 이름을 한글 그대로 씁니다 —
 > `연구유형: 코호트연구 ⊂ 관찰연구`, `게재연도`, `염증지표` 처럼. 이 정도의 HWP
-> 파이프라인을 갖춘 한국어 연구자용 문헌 검증 도구는 드뭅니다. 자세히는 아래
+> 파이프라인을 갖춘 한국어 연구자용 문헌 검증 도구는 많지 않습니다. 자세히는 아래
 > [소스 파일 형식](#소스-파일-형식) 참고.
 
 정직함은 나중에 덧붙인 게 아니라 설계의 일부입니다: 이 문서는 감사가 *무엇을 못 잡는지*

@@ -29,8 +29,8 @@ from actual knowledge bases:
   `기타(IL-10)` and hid behind a different string — a silent omission
   `tools/value_audit.py` now flags.
 - A query for `observational` study designs returned **6 out of 14**. The other
-  8 were filed as `cohort`, a subtype the engine did not know was one until
-  `policy/value-hierarchy.md` declared it.
+  8 were filed as a subtype (e.g. `cohort`) the engine did not know counted as
+  observational until `policy/value-hierarchy.md` declared it.
 
 In a plain notes wiki, or a chat where you paste PDFs into an LLM, you would never
 learn those rows were missing.
@@ -48,18 +48,21 @@ $ /factlog ask "who develops Claude Code?"
 VERIFIED — engine
 query: relation("Claude Code", "developed_by", D)?
 rows: 1
-  - Claude Code, developed_by, Anthropic  (sources: 1, extraction conf: 0.99)
+  - Claude Code, developed_by, Anthropic (sources: 1, extraction conf: 0.99)
     ← sources/example.md#what-is-claude-code
 ```
 
 Ask something the sources do not support and you get a *verified negative*, not a
-confident guess:
+confident guess — and it even points out where a real fact might be hiding under
+a different relation:
 
 ```text
 $ /factlog ask "who develops factlog?"
 VERIFIED — engine
+query: relation("factlog", "developed_by", D)?
 rows: 0
 no such fact (verified negative)
+note: no verified 'developed_by' for 'factlog', but 'factlog' has 3 fact(s) under other relations (possible predicate mismatch): is_a, performs
 ```
 
 Assert two contradictory values for a fact that can hold only one, and the KB
@@ -68,11 +71,15 @@ side by side:
 
 ```text
 $ factlog status
-  conflicts:  1 (over 1 single-valued relation(s))
+  conflicts:  1 (over 1 single-valued relation(s))  ⚠ run tools/check_conflicts.py for the resolution steps
 
 $ python3 tools/check_conflicts.py --wiki ~/wiki
-CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic, OpenAI
-  Resolve with the human gate, not by hand-editing facts/candidates.csv.
+check_conflicts: 1 conflict(s) found
+  CONFLICT: single-valued 'developed_by' on 'Claude Code' has 2 values: Anthropic, OpenAI
+  Resolve with the human gate, not by hand-editing facts/candidates.csv:
+    factlog eject --fact SUBJECT RELATION OBJECT   retire an accepted row
+    factlog amend SUBJECT RELATION OBJECT --set-object NEW   correct a value
+  ...
 ```
 
 ### vs. just asking an LLM
