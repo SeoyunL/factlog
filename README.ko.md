@@ -20,6 +20,19 @@
 [arXiv](#arxiv-프리프린트-가져오기-factlog-arxiv-) ·
 [PubMed](#pubmed-문헌-가져오기-factlog-pubmed-).
 
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2)
+
+## 목차
+
+- [왜 필요한가](#왜-필요한가)
+- [처음 읽는 사람을 위한 안내](#처음-읽는-사람을-위한-안내) — 개요 · KB 구조 · 신뢰 경계 · 사용 사례
+- [설치](#설치) · [빠른 시작](#빠른-시작)
+- [상세 레퍼런스](#상세-레퍼런스) — 소스 형식 · 서지 가져오기 · 정책 파일 · 명령 전체
+- [결정론과 한계](#결정론과-한계)
+- [라이선스](#라이선스)
+
 ## 왜 필요한가
 
 LLM에게 문헌 정리를 시키면 당신이 눈치채지 못하는 두 가지 일이 일어납니다. 없는 것을
@@ -181,11 +194,27 @@ factlog에는 두 종류의 사실이 있습니다.
 
 - **candidate(후보)** — 문서에서 추출된 *주장*일 뿐입니다. `sync` 는 후보를 만들어
   낼 뿐, 그 자체로 신뢰할 수 있는 사실을 만들지는 **않습니다**.
-- **accepted(승인됨)** — 사람이 후보를 검토해 받아들인 사실입니다. **오직 accepted
+- **accepted(승인됨)** — 사람이 후보를 검토해 받아들인 사실입니다. **사람이 승인한
   사실만 엔진의 입력**이 되고, 질문에 대한 답변의 근거가 됩니다.
 
+모든 추출 사실은 상태(status)를 갖습니다. 엔진 입력이 되는 건 딱 두 상태뿐이고,
+나머지는 사람의 게이트 앞뒤 단계입니다.
+
+| 상태 | 뜻 | 엔진 입력? |
+|---|---|---|
+| `candidate` | LLM이 추출, 아직 미검토 | 아니오 |
+| `needs_review` | 추출이 사람 판단 필요로 표시 | 아니오 |
+| `accepted` | 사람이 승인함 (`factlog accept`) | **예** |
+| `confirmed` | `accepted` 와 같은 티어 — 미리 확정된 사실(동작 다이어그램의 표기, 시드 KB가 씀) | **예** |
+| `superseded` | 사람이 폐기(`factlog reject`/`eject`), 감사용 보존 | 아니오 |
+
+`accepted` 와 `confirmed` 는 **한 티어**입니다 — 코드가 둘 다 엔진 입력으로 취급합니다
+(`ENGINE_STATUSES = {confirmed, accepted}`). `factlog accept` 는 `accepted` 를 쓰고,
+`confirmed` 는 같은 뜻의 다른 표기(다이어그램·시드 데이터가 사용)일 뿐, 어느 쪽이 더
+신뢰되는 게 아닙니다.
+
 이 사람의 검토 단계가 factlog의 **신뢰 경계**입니다. 모델이 만들어 낸 것은 무엇이든
-사람이 accepted로 확정하기 전까지는 후보일 뿐입니다.
+사람이 accepted(또는 confirmed)로 확정하기 전까지는 후보일 뿐입니다.
 
 > **처음이라면** `/factlog sync` 다음에 뭘 할지 막히기 쉽습니다. 명령만으로 끝까지 가는
 > 최소 경로(파일 편집·Datalog 없이)는 [docs/getting-started-verify.md](docs/getting-started-verify.md)
@@ -347,6 +376,51 @@ python3 -m factlog use ~/wiki      # 활성 KB로 지정
 `use` 줄이 중요합니다. `init`은 활성 KB가 아직 없을 때만 새 KB를 채택합니다. 이미
 활성 KB가 있는데 `use`를 빠뜨리면, 옛 KB가 활성인 채로 남고 새 KB는 만들어지기만
 합니다. (`init --target ~/wiki --activate` 로 한 번에 처리할 수도 있습니다.)
+
+### 빠른 시작
+
+빈 폴더에서 검증된, 출처 있는 답변까지 한 세션으로. (더 긴 튜토리얼:
+[examples/sample-kb](examples/sample-kb/README.md),
+[docs/getting-started-verify.md](docs/getting-started-verify.md).)
+
+```bash
+factlog init --target ~/wiki      # KB 스캐폴딩 (sources/, facts/, policy/, …)
+cp notes.md ~/wiki/sources/       # 문서를 넣습니다; 바이너리는 sync 때 변환됩니다
+```
+
+그다음 Claude Code 세션에서 후보 사실을 추출합니다(유일한 LLM 단계):
+
+```text
+/factlog sync                     # Claude가 sources/ 를 읽어 후보 사실을 씁니다
+```
+
+터미널로 돌아오면 당신이 게이트입니다 — 승인하기 전까지 아무것도 엔진 입력이 되지 않습니다:
+
+```text
+$ factlog review
+factlog review (KB: ~/wiki): 1 pending fact(s), 1 row(s)
+  Acme / uses / FastAPI
+    ← sources/notes.md  [candidate, conf 0.90]
+  decide with: factlog accept <subject> <relation> <object>   (or: factlog reject ...)
+
+$ factlog accept Acme uses FastAPI
+factlog accept (KB: ~/wiki): 1 pending row(s) → accepted
+  Acme / uses / FastAPI  [candidate → accepted]  ← sources/notes.md
+factlog accept: 1 candidate row(s) → accepted, 1 runs/*.json row(s) updated; accepted.dl recompiled
+```
+
+이제 물어봅니다. 답은 엔진의 것이고, 출처를 밝힙니다:
+
+```text
+/factlog ask "Acme는 무엇을 쓰나?"
+VERIFIED — engine
+query: relation("Acme", "uses", O)?
+rows: 1
+  - Acme, uses, FastAPI (sources: 1, extraction conf: 0.90)
+    ← sources/notes.md
+```
+
+이게 전체 루프입니다 — **추출 → 검토 → 승인 → 질문**. 아래는 각 단계의 상세입니다.
 
 ## 상세 레퍼런스
 
