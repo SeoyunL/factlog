@@ -2870,6 +2870,18 @@ def classify_query(
     # entities, so those keep using entity_set.
     values = value_set(facts)
     relations = allowed_relations(facts)
+    # Gate membership compared through the SAME fold the matcher uses
+    # (relation_row_matches -> _canonical_value), so a query constant and an
+    # NFD-stored fact meet in the GATE exactly as they do in the MATCHER. Without
+    # this the two disagreed: an NFD fact matched the row but the gate called the
+    # constant "not accepted" (route=wiki), breaking the gate/matcher parity #213
+    # guarantees for NFD-authored facts (#296). Folded in the gate ONLY — the set
+    # builders (entity_set/value_set/allowed_relations) stay raw so the engine
+    # emitter, dependency_graph, vocab and display provenance are byte-unchanged.
+    # (path stays raw on BOTH sides — self-consistent there — and is out of scope,
+    # tracked as #299.)
+    entities_c = {canonical_value(e) for e in entities}
+    relations_c = {canonical_value(r) for r in relations}
     if predicate == "review_required":
         if len(args) != 1 or len(_quoted_constants(query)) != 1:
             return False, QUERY_MALFORMED, "review_required must include the original question string"
@@ -2880,7 +2892,7 @@ def classify_query(
         if not all(_is_valid_arg(arg) for arg in args):
             return False, QUERY_MALFORMED, "relation arguments must be variables or quoted strings"
         subject, relation, object_ = args
-        if not _is_variable(subject) and _arg_value(subject) not in entities:
+        if not _is_variable(subject) and canonical_value(_arg_value(subject)) not in entities_c:
             return False, QUERY_ENTITY_NOT_ACCEPTED, f"relation subject is not an accepted entity: {_arg_value(subject)}"
         # Read relation_aliases() at most once per relation query and hand it to
         # _relation_match_count below: the canonical-acceptance check here and the
@@ -2889,7 +2901,7 @@ def classify_query(
         # accepted.dl, so which queries can trigger its raise-on-malformed-file is
         # unchanged (a variable/known-variant relation never reads it here).
         _rel_aliases: dict[str, str] | None = None
-        if not _is_variable(relation) and _arg_value(relation) not in relations:
+        if not _is_variable(relation) and canonical_value(_arg_value(relation)) not in relations_c:
             # A declared canonical name (one whose surface_variants is non-empty)
             # counts as accepted even though the canonical itself may not appear
             # literally in accepted.dl — the stored facts use surface variants.
@@ -2947,9 +2959,9 @@ def classify_query(
         if not all(_is_valid_arg(arg) for arg in args):
             return False, QUERY_MALFORMED, "count arguments must be variables or quoted strings"
         subject, relation = args
-        if not _is_variable(subject) and _arg_value(subject) not in entities:
+        if not _is_variable(subject) and canonical_value(_arg_value(subject)) not in entities_c:
             return False, QUERY_ENTITY_NOT_ACCEPTED, f"count subject is not an accepted entity: {_arg_value(subject)}"
-        if not _is_variable(relation) and _arg_value(relation) not in relations:
+        if not _is_variable(relation) and canonical_value(_arg_value(relation)) not in relations_c:
             # A declared canonical name (one whose surface_variants is non-empty)
             # counts as accepted even though the canonical itself may not appear
             # literally in accepted.dl — the stored facts use surface variants.
@@ -2961,7 +2973,7 @@ def classify_query(
             return False, QUERY_BAD_ARITY, "policy query must have entity and reason arguments"
         if not all(_is_valid_arg(arg) for arg in args):
             return False, QUERY_MALFORMED, "policy query arguments must be variables or quoted strings"
-        if not _is_variable(args[0]) and _arg_value(args[0]) not in entities:
+        if not _is_variable(args[0]) and canonical_value(_arg_value(args[0])) not in entities_c:
             return False, QUERY_ENTITY_NOT_ACCEPTED, f"policy query entity is not accepted: {_arg_value(args[0])}"
         return True, QUERY_OK, "passed"
     return False, QUERY_UNSUPPORTED, "unsupported query"
