@@ -274,7 +274,7 @@ def evaluate_queries(
     return results
 
 
-def main() -> None:
+def main() -> int | None:
     ensure_dirs()
     facts = load_accepted_facts()
     candidates = load_facts()
@@ -372,6 +372,13 @@ def main() -> None:
     out = FACTS_DIR / "logic_report.txt"
     out.write_text(text, encoding="utf-8")
     print(text)
+    # A logic-check error (arity/predicate/incomplete-row) is a hard failure the
+    # freshness gate must see: the report is written and printed first so the
+    # verbatim artifact still exists, then a non-zero exit stops the pipeline.
+    # Warnings and policy findings are informational and never fail the check.
+    if errors:
+        return 1
+    return None
 
 
 if __name__ == "__main__":
