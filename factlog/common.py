@@ -2572,21 +2572,37 @@ def policy_string_literals(text: str) -> list[str]:
     return _scan_policy(text)[1]
 
 def decode_wirelog_value(session: EasySession, value: object) -> object:
-    """Resolve a wirelog integer ID back to its interned symbol string.
+    """Pass an already-decoded wirelog value through unchanged.
 
-    Uses the private ``session._intern`` table exposed by pyrewire's EasySession.
-    This is a private API (underscore-prefixed), intentionally pinned to
-    ``pyrewire>=1.0.3,<2.0`` in pyproject.toml to guard against breakage if the
-    internals change in a future major release.  The <2.0 upper bound in
-    requirements.txt mirrors this constraint.
+    The engine's schema is THE single authority on what a column means.
+    ``EasySession.step()`` decodes each row against the ``.decl`` types before we
+    ever see it (``_decode_row``): a ``symbol`` column arrives as ``str``, an
+    ``int64`` column as ``int``. Measured on pyrewire 1.0.3, the program
 
-    Python 3.11+ is required (the engine dependency ``pyrewire`` needs 3.11+;
-    see ``requires-python`` in pyproject.toml).  The ``X | Y`` unions and
-    ``tuple[...]`` annotations used here need 3.10+, which the 3.11 floor
-    satisfies.
+        .decl low_rank(subject: symbol, r: int64)
+        low_rank(S, R) :- priority_rank(S, R), R < 5.
+
+    emits ``('alpha', 3)`` -- ``'alpha'`` is ALREADY ``str``, ``3`` is ALREADY the
+    right ``int``.
+
+    So this layer must not guess. It used to re-decode by looking only at the
+    VALUE (``isinstance(value, int) and session._intern.contains_id(value)``), a
+    type-blind second pass over a row the schema had already typed. It could not
+    help -- a symbol column is already ``str``, so the ``isinstance`` never fired
+    -- and it could only harm: a genuine ``int64`` scalar small enough to be a
+    valid intern id was rewritten into whatever symbol held that id, so a report
+    printed ``low_rank: alpha (beta)`` where the truth was ``low_rank: alpha (3)``
+    (#323). ``bool`` being an ``int`` subclass meant ``True`` was looked up as id
+    1 by the same mistake; that dies here too.
+
+    The ``pyrewire>=1.0.3,<2.0`` pin in pyproject.toml (mirrored in
+    requirements.txt) is what makes this schema decoding load-bearing: the >=1.0.3
+    floor is where ``step()`` types rows for us, and the <2.0 ceiling keeps a major
+    release from changing that contract under us unnoticed.
+
+    Kept as a function, not inlined, so the "the engine already decoded this" rule
+    has ONE place to live and to be re-checked against a new engine release.
     """
-    if isinstance(value, int) and session._intern.contains_id(value):
-        return session._intern.lookup(value)
     return value
 
 
