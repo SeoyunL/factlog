@@ -947,6 +947,26 @@ def _canonicalize(relation: str, aliases: dict[str, str]) -> str:
     return relation
 
 
+def resolve_relation(name: str, aliases: dict[str, str]) -> str:
+    """THE alias probe: the canonical name *name* maps to, or *name* itself when it
+    is not a declared alias key.
+
+    The alias map is keyed by NFC names (``relation_aliases`` normalizes on load),
+    so the lookup MUST fold NFC first — an NFD-authored name would otherwise miss
+    the map, fall through to its raw self, and re-create the per-axis "unfolded
+    alias" split this converges away. #307/#310/#314/#324/#325 were each one more
+    call site remembering (or forgetting) the fold on its own; routing every raw
+    ``aliases.get(...)`` probe through here makes the fold un-forgettable (#343).
+
+    Distinct from ``_canonicalize``: this is the bare probe — a drop-in for
+    ``aliases.get(name, name)`` — used where a caller wants "the query name this
+    row answers to". It does NOT special-case a name that is itself a canonical
+    value; callers needing that membership keep using ``_canonicalize`` /
+    ``_alias_canonicals``.
+    """
+    return aliases.get(unicodedata.normalize("NFC", name), name)
+
+
 def _group_key(obj: str, spec: TypedRelSpec | None) -> tuple:
     """Return the equivalence key an *object* string is grouped under.
 
@@ -1192,7 +1212,7 @@ def value_hierarchy_warnings(
     aliases = relation_aliases(root)
 
     def _canon_rel(name: str) -> str:
-        return _canonical_value(aliases.get(unicodedata.normalize("NFC", name), name))
+        return _canonical_value(resolve_relation(name, aliases))
 
     values_by_relation: dict[str, set[str]] = {}
     for row in facts:
@@ -1201,7 +1221,13 @@ def value_hierarchy_warnings(
         )
 
     for relation, table in sorted(hierarchy.items()):
-        key = _canonical_value(relation)
+        # Resolve the DECLARED relation name through the same alias axis as the
+        # facts (via _canon_rel -> resolve_relation), not just _canonical_value: a
+        # hierarchy declared on an alias RAW name (`연구유형`, not the canonical
+        # `study_type`) otherwise keys itself under its surface name, misses the
+        # facts indexed by canonical name, and a live declaration is condemned as
+        # "no effect" (#344 — #211 inverted, independent of NFC/NFD).
+        key = _canon_rel(relation)
         if key not in values_by_relation:
             warnings.append(f"value-hierarchy: no accepted fact uses relation '{relation}' — declaration has no effect")
             continue
@@ -1337,7 +1363,7 @@ def relation_row_matches(
         variants = canonical_variants_of(_arg_value(r_arg), aliases)
         if not (
             _canonical_value(_arg_value(r_arg)) == _canonical_value(row["relation"])
-            or row["relation"] in variants
+            or unicodedata.normalize("NFC", row["relation"]) in variants
         ):
             return False
 
@@ -1346,7 +1372,7 @@ def relation_row_matches(
     # Declarations are written on CANONICAL relation names; rows may store a
     # surface variant. Look up under the name the QUERY used, falling back to the
     # row's own canonicalised name for a variable-relation query.
-    query_relation = _arg_value(r_arg) if not _is_variable(r_arg) else aliases.get(row["relation"], row["relation"])
+    query_relation = _arg_value(r_arg) if not _is_variable(r_arg) else resolve_relation(row["relation"], aliases)
     return object_matches(_arg_value(o_arg), row, hierarchy, _canonical_value, relation=query_relation)
 
 
