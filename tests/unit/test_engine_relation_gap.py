@@ -164,6 +164,45 @@ class TestWitnessContract:
 
 
 @pytest.mark.skipif(not _HAVE_ENGINE, reason="pyrewire not installed")
+class TestWitnessCatchesFixpointDrop:
+    """The witness's whole reason for existing over a parse-time count: it reflects the
+    POST-FIXPOINT extent. A relation rule-head makes pyrewire flip relation to IDB and drop
+    every accepted fact AT THE FIXPOINT (compile rc=0) -- a parse-time reader
+    (preview_inline_facts) still counts the inline facts and misses it, but the witness,
+    projected from relation after the fixpoint, goes EMPTY. #305's guard rejects this exact
+    program at policy load; here we feed the poisoned program STRAIGHT to the engine (the
+    seam that guard closes) to pin, on a real engine, that the witness would catch a
+    fixpoint drop from any unknown cause that reproduces it."""
+
+    def test_a_rule_head_fixpoint_drop_empties_the_witness(self, tmp_path):
+        kb = _kb(tmp_path)
+        script = (
+            "import factlog.common as c\n"
+            "from pyrewire import EasySession\n"
+            "from collections import defaultdict\n"
+            "acc = c.ACCEPTED_DL.read_text()\n"
+            "rows = c.load_accepted_facts()\n"
+            "def witness(prog):\n"
+            "    s = EasySession(prog)\n"
+            "    for r in rows:\n"
+            "        s.intern(r['subject']); s.intern(r['relation']); s.intern(r['object'])\n"
+            "    inf = defaultdict(set)\n"
+            "    for name, row, diff in s.step():\n"
+            "        if diff > 0:\n"
+            "            inf[name].add(tuple(str(c.decode_wirelog_value(s, v)) for v in row))\n"
+            "    s.close()\n"
+            "    return len(inf.get('relation_alive', set()))\n"
+            "healthy = witness(c.WIRELOG_PROGRAM + chr(10) + acc)\n"
+            "poison = c.WIRELOG_PROGRAM + chr(10) + 'relation(X,\"d\",Y) :- relation(Y,\"e\",X).' + chr(10) + acc\n"
+            "print(healthy, witness(poison))\n"
+        )
+        out = _run(kb, script)
+        healthy, poisoned = out.stdout.split()
+        assert int(healthy) > 0, out.stdout + out.stderr   # a live engine populates the witness
+        assert int(poisoned) == 0, out.stdout + out.stderr  # the fixpoint drop empties it
+
+
+@pytest.mark.skipif(not _HAVE_ENGINE, reason="pyrewire not installed")
 class TestNoRegressionOnDuplicates:
     """A KB whose candidates carry duplicate rows (deduped at compile) must not trip the
     gap -- the engine still holds the deduped relation atoms, so the witness is live."""
