@@ -301,6 +301,42 @@ def evaluate_queries(
     return results
 
 
+def engine_relation_gap(
+    facts: list[dict[str, str]],
+    inferred: dict[str, set[tuple[str, ...]]],
+) -> str | None:
+    """An error string when disk has facts but the ENGINE holds no relation atoms.
+
+    The report's ``engine facts`` line counts the facts on DISK (load_accepted_facts),
+    so it cannot see the engine's own input silently emptying underneath it -- the exact
+    blind spot behind the vacuous-pass in #305 (report said ``engine facts: 7`` while the
+    engine evaluated over nothing). ``inferred["relation_alive"]`` is the engine's
+    POST-FIXPOINT relation extent: a witness IDB (``relation_alive(S) :- relation(S,R,O)``
+    in WIRELOG_PROGRAM) that surfaces as a step() delta, so its emptiness means the engine
+    genuinely holds no relation atoms -- whether they were dropped at parse time or at the
+    fixpoint. When disk holds N>0 rows yet the witness is empty, some cause quietly
+    swallowed the engine input. This is the LAST NET: #305's guard rejects the known
+    causes (relation rule-head / .decl re-declaration) loudly at policy load, and this
+    catches whatever unknown cause slips past by comparing the two independent readers.
+
+    Deliberately conservative -- only the TOTAL-emptying (0) case fires, so a healthy KB
+    never trips it (no count-mismatch false alarms). NB: ``relation_alive`` is keyed on
+    the subject alone, so its cardinality is the count of DISTINCT subjects, not of facts
+    -- used ONLY for the ``== 0`` test, never compared for equality with ``len(facts)``.
+    A pure function: no I/O, never raises.
+    """
+    if not facts:
+        return None
+    if len(inferred.get("relation_alive", set())) == 0:
+        return (
+            f"engine input gap: {len(facts)} accepted fact(s) on disk but the engine "
+            "holds 0 relation atoms — something silently emptied the engine input. "
+            "Recompile with `factlog check`; if it persists, the accepted.dl the engine "
+            "reads disagrees with the facts on disk."
+        )
+    return None
+
+
 def main() -> int | None:
     ensure_dirs()
     facts = load_accepted_facts()
@@ -320,6 +356,12 @@ def main() -> int | None:
     for row in candidates:
         if not row["subject"] or not row["relation"] or not row["object"]:
             errors.append(f"incomplete fact row: {row}")
+    # Last net for a silently-emptied engine input (#308): disk has facts but the
+    # engine parsed 0 relation atoms. A hard error so the #283 exit gate stops the
+    # pipeline instead of reporting a vacuous "no contradictions" over nothing.
+    gap = engine_relation_gap(facts, inferred)
+    if gap:
+        errors.append(gap)
     warnings.extend(status_warnings(candidates))
     # A mistyped or cyclic declaration is a SILENT no-op: the author believes the
     # broader query now catches the narrower rows, and it does not. That is the

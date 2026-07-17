@@ -1593,7 +1593,7 @@ _TYPED_REL_RE = re.compile(
 )
 # Built-in engine predicates. `attr_rel` joined them with #226: a policy file
 # declaring its own `attr_rel` used to work and now collides with the program.
-_TYPED_RESERVED = {"relation", "edge", "path", "attr_rel"}
+_TYPED_RESERVED = {"relation", "edge", "path", "attr_rel", "relation_alive"}
 
 
 def _try(fn):
@@ -1888,6 +1888,11 @@ def _assert_no_canonical_head(policy_text: str) -> None:
         "attr_rel": "attribute-relations.md",
         "edge": "the engine's edge/2 rule",
         "path": "the engine's path/2 rule",
+        # The #308 witness IDB. A policy that heads it (rule or .decl) would UNION fake
+        # tuples into the extent the engine-input-gap check reads, masking a real empty
+        # engine (a false negative on the last net). It is engine-declared like edge/path,
+        # so a policy has no legitimate reason to head it.
+        "relation_alive": "the engine's relation_alive/1 witness rule",
     }
     # Drop comment lines, strip quoted literals, then split into logical
     # STATEMENTS on clause-terminating '.' rather than per physical line. A period
@@ -2463,11 +2468,19 @@ WIRELOG_PROGRAM = """
 .decl attr_rel(rel: symbol)
 .decl edge(start: symbol, target: symbol)
 .decl path(start: symbol, target: symbol)
+.decl relation_alive(subject: symbol)
 
 edge(S, O) :- relation(S, R, O), !attr_rel(R).
 path(S, O) :- edge(S, O).
 path(S, O) :- edge(S, M), path(M, O).
+relation_alive(S) :- relation(S, R, O).
 """
+# relation_alive is the #308 WITNESS: an IDB projection of relation, so it surfaces as a
+# step() delta (relation itself is EDB and never does) and reflects the engine's
+# POST-FIXPOINT relation extent. inferred["relation_alive"] empty <=> the engine holds no
+# relation atoms, whatever emptied them (a parse-time drop OR a fixpoint drop). Compared
+# against the disk fact count in run_logic_check.engine_relation_gap, it is the last net
+# for a silently-emptied engine input beyond what #305's policy-load guard rejects.
 
 
 def attribute_relation_forms(
