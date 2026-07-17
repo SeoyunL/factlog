@@ -10,7 +10,7 @@ from common import (
     KNOWN_STATUSES,
     canonical_value,
     declared_ancestors,
-    is_variable,
+    is_valid_arg,
     relation_aliases,
     relation_row_matches,
     policy_row_matches,
@@ -145,7 +145,7 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         # two verdicts on one line diverged (#321; #319 was the same omission in the
         # count branch). Run before the entity warning below so a bare token never
         # reaches the quoted-constant check.
-        if not all(is_variable(a) or is_quoted_string(a) for a in args):
+        if not all(is_valid_arg(a) for a in args):
             errors.append(f"policy query arguments must be variables or quoted strings: {line}")
             return errors, warnings
         # `is_quoted_string`, not an inline `startswith('"') and endswith('"')`: the
@@ -171,7 +171,7 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         # matcher, so `count("A", 'rel')?` used to pass this validator and render
         # "count results: 0 (distinct objects)" -- and zero is documented as a VERIFIED
         # answer -- for a line the ask gate rejects as malformed (#319).
-        if not all(is_variable(a) or is_quoted_string(a) for a in args):
+        if not all(is_valid_arg(a) for a in args):
             errors.append(f"count arguments must be variables or quoted strings: {line}")
             return errors, warnings
         # A well-formed count falls through to the shared vocabulary loop, exactly as
@@ -188,7 +188,7 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         # A bare token is neither a variable nor a quoted constant. The matcher used
         # to treat it as a wildcard, so the report printed "0 rows" — a verified
         # negative — for a query the gate calls malformed (#213). Say it is broken.
-        if not all(is_variable(a) or is_quoted_string(a) for a in args):
+        if not all(is_valid_arg(a) for a in args):
             errors.append(f"relation arguments must be variables or quoted strings: {line}")
             return errors, warnings
     if predicate == "path":
@@ -199,7 +199,7 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         if len(args) != 2:
             errors.append(f"path query must have start and target arguments: {line}")
             return errors, warnings
-        if not all(is_variable(a) or is_quoted_string(a) for a in args):
+        if not all(is_valid_arg(a) for a in args):
             errors.append(f"path arguments must be variables or quoted strings: {line}")
             return errors, warnings
     for constant in quoted_constants(line):
@@ -289,7 +289,7 @@ def evaluate_queries(
             # for a query validate_query (and the ask gate) reject as malformed
             # (#284). Same criterion as validate_query's path branch (L165, L168);
             # run before path_query_rows so malformed args never reach it.
-            if len(args) != 2 or not all(is_variable(a) or is_quoted_string(a) for a in args):
+            if len(args) != 2 or not all(is_valid_arg(a) for a in args):
                 results.append("path query malformed — see Errors above")
                 continue
             # The ENGINE decides what is reachable; python only renders the route. The
@@ -326,7 +326,7 @@ def evaluate_queries(
             # bare-token query used to print "relation results: 0 rows" -- a VERIFIED
             # NEGATIVE -- for a query the gate rejects as malformed (#284).
             args = query_args(line)
-            if len(args) != 3 or not all(is_variable(a) or is_quoted_string(a) for a in args):
+            if len(args) != 3 or not all(is_valid_arg(a) for a in args):
                 results.append("relation query malformed — see Errors above")
                 continue
             rows = relation_results(line, facts, hierarchy)
@@ -360,7 +360,7 @@ def evaluate_queries(
             # (L255) branches. The old `if len(args) == 2:` appended nothing on bad
             # arity, and let a bare token through to the matcher -- which reads it as a
             # wildcard -- so a malformed count rendered a VERIFIED zero (#319).
-            if len(args) != 2 or not all(is_variable(a) or is_quoted_string(a) for a in args):
+            if len(args) != 2 or not all(is_valid_arg(a) for a in args):
                 results.append("count query malformed — see Errors above")
                 continue
             # Same canonicalisation as the relation branch and as ask's count

@@ -3038,12 +3038,19 @@ def _quoted_constants(line: str) -> list[str]:
 #   arg_value(arg)         -> a quoted literal's value (JSON-decoded) or the bare arg
 #   is_quoted_string(arg)  -> True if arg is a quoted string literal
 #   is_variable(arg)       -> True if arg is a Datalog variable (capitalised)
+#   is_valid_arg(arg)      -> True if arg is a variable or a quoted string literal
 #   quoted_constants(line) -> every "..." literal in a line
 query_args = _query_args
 arg_value = _arg_value
 canonical_value = _canonical_value
 is_quoted_string = _is_quoted_string
 is_variable = _is_variable
+# The named argument-shape predicate the gate composes at four sites
+# (classify_query's relation/path/count/policy branches). Exposed publicly so the
+# report can call it too, instead of re-inlining `_is_variable or _is_quoted_string`
+# at each query branch -- that inline discipline had already dropped the guard from
+# count once (#319). One shared predicate makes the omission unrepresentable (#345).
+is_valid_arg = _is_valid_arg
 quoted_constants = _quoted_constants
 
 

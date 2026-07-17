@@ -258,6 +258,26 @@ class TestPolicyQueryArgumentFormGuard:
         assert ok is False and reason == "malformed", (reason, report_errors)
 
 
+class TestReportSharesGateArgGuard:
+    """#345: the report calls the gate's OWN argument-shape predicate, not an inline
+    re-composition of `is_variable or is_quoted_string` at each branch. The inline
+    discipline had already dropped the guard from count once (#319); a shared object
+    makes the omission unrepresentable, so the two verdicts cannot drift by name.
+    """
+
+    def test_report_is_valid_arg_is_the_gate_predicate(self):
+        import common
+
+        assert rlc.is_valid_arg is common._is_valid_arg
+        assert common.is_valid_arg is common._is_valid_arg
+
+    def test_the_shared_predicate_still_decides_shape(self):
+        assert rlc.is_valid_arg('"Alice"') is True
+        assert rlc.is_valid_arg("X") is True
+        assert rlc.is_valid_arg("'Alice'") is False
+        assert rlc.is_valid_arg("alice") is False
+
+
 class TestUnverifiedVocabularyRender:
     """A relation/count query naming a subject or relation-name outside the
     accepted vocabulary is rendered "unverified", not a verified "0 rows" (#347).
