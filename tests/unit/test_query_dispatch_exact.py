@@ -48,14 +48,19 @@ class TestUnknownPredicateIsNotMisdispatched:
         assert "unknown query predicate — see Errors above" in results
 
 
-class TestConflictStaysSilent:
-    """`conflict` is in QUERY_PREDICATES but has no evaluation branch (pre-existing,
-    intentional). The unknown branch is a conditional elif precisely so conflict is
-    not swept into an else and mislabelled "see Errors above" for an absent error."""
+class TestConflictIsUnknownPredicate:
+    """#306 removed `conflict` from QUERY_PREDICATES: it is a policy-derived
+    predicate, not a static one, and with no evaluation branch it used to slip
+    through validate_query (errors: 0) while producing no result line — a lone
+    `conflict(...)?` then drew the report's "none produced a result — see Errors
+    above" fallback pointing at an empty Errors section. Now an undeclared
+    `conflict` is an unknown predicate on both pipelines, so evaluate_queries
+    renders the same unknown line it does for any other unknown predicate. (This
+    supersedes #294's TestConflictStaysSilent, which pinned the buggy silence.)"""
 
-    def test_conflict_produces_no_line(self, monkeypatch):
+    def test_conflict_is_flagged_unknown(self, monkeypatch):
         results = _evaluate(monkeypatch, ['conflict("A", "B")?'])
-        assert results == []
+        assert "unknown query predicate — see Errors above" in results
 
 
 class TestWellFormedRenderUnchanged:
