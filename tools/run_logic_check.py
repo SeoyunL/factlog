@@ -390,9 +390,15 @@ def main() -> int | None:
         if not pending:
             report.append("- facts/query.dl is empty (no queries to evaluate)")
         else:
+            # Point at Errors only when there IS one. The Errors section is rendered
+            # solely when `errors` is non-empty, so "see Errors above" on an errors: 0
+            # report is a dangling pointer -- exactly the self-contradiction #284/#220
+            # removed elsewhere, and the one a lone `conflict(...)?` used to trigger
+            # here before #306 gave it an unknown-predicate error (#306).
+            pointer = " — see Errors above" if errors else ""
             report.append(
                 f"- facts/query.dl has {len(pending)} line(s) but none produced a "
-                f"result — see Errors above"
+                f"result{pointer}"
             )
 
     text = "\n".join(report) + "\n"

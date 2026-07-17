@@ -100,7 +100,7 @@ SUPERSEDED_STATUSES = frozenset({"superseded"})
 # row (#208). Frozen so this union can never drift from the sets it snapshots.
 # A new `*_STATUSES` set must be added to the union — a unit test enforces it.
 KNOWN_STATUSES = frozenset(ENGINE_STATUSES | REVIEW_STATUSES | SUPERSEDED_STATUSES)
-QUERY_PREDICATES = {"relation", "path", "count", "conflict", "review_required"}
+QUERY_PREDICATES = {"relation", "path", "count", "review_required"}
 RELATION_FACT_RE = re.compile(r"^relation\((.*)\)\.$")
 # 1.0.3 is the floor: it bundles/validates wirelog v0.52.0, the first release
 # whose .dl parser supports \" escapes (wirelog#924) — required so an always-quoted
@@ -2890,7 +2890,12 @@ def classify_query(
     policy_query_predicates = policy_predicates(
         load_logic_policy() if policy_program is None else policy_program
     )
-    allowed_predicates = {"relation", "path", "count", "review_required"} | policy_query_predicates
+    # Derive from QUERY_PREDICATES, the one static query vocabulary the report
+    # (validate_query / evaluate_queries) also keys off, so ask and the report can
+    # never disagree on which predicates are known — the divergence #306 removed,
+    # where `conflict` was in the report's set but not this literal. Policy
+    # predicates are the dynamic half, declared per KB.
+    allowed_predicates = QUERY_PREDICATES | policy_query_predicates
     if predicate not in allowed_predicates:
         return False, QUERY_UNKNOWN_PREDICATE, f"unknown predicate: {predicate}"
 
