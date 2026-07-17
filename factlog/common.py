@@ -692,9 +692,19 @@ def policy_predicates(policy_program: str | None = None) -> set[str]:
     # relation_alive; before, a `.decl canonical` slipping through here would have been
     # walked as a policy predicate.
     built_in = _engine_decl_predicates()
+    # Read .decl names off the SAME skeleton the reserved-head guard reads (_scan_policy
+    # strips comments and string literals), NOT a `^`-anchored regex. The old `^\.decl`
+    # required column 0, so an INDENTED `.decl` in a hand-authored extra.dl was invisible
+    # here while _assert_no_canonical_head still treated it as a real declaration — the two
+    # parsers disagreed and a whole predicate's findings silently vanished from the report
+    # (#333, the fourth drifting parser the #226/#250 note warned about). Scanning the
+    # skeleton also means a `.decl` inside a comment or a string literal is not mistaken for
+    # a declaration. strict=False: a read-only reporting query takes what closed rather than
+    # raising on an unterminated string.
+    skeleton, _ = _scan_policy(text, strict=False)
     return {
         name
-        for name in re.findall(r"^\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\(", text, flags=re.MULTILINE)
+        for name in re.findall(r"\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\(", skeleton)
         if name not in built_in
     }
 
