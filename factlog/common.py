@@ -2767,6 +2767,20 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
     for relation_name, row, diff in session.step():
         if diff > 0:
             inferred[relation_name].add(tuple(str(decode_wirelog_value(session, value)) for value in row))
+    # Surface the engine's OWN relation EDB extent -- the relation atoms pyrewire
+    # parsed from accepted.dl at session open. relation is EDB, so it never appears as
+    # a step() delta (step yields only IDB derivations like edge/path), which is why
+    # it is read via preview_inline_facts rather than the loop above. A caller can then
+    # compare this against the disk fact count to catch a SILENT engine-input drop: an
+    # unknown cause that leaves the engine evaluating over an empty relation while
+    # load_accepted_facts still reads rows from disk (#308 -- the last net for the
+    # causes #305's guard does not cover). Stored under the "relation" key; no report/
+    # ask consumer renders it (they iterate policy predicates + path), so the program
+    # output is byte-unchanged.
+    inferred["relation"] = {
+        tuple(str(decode_wirelog_value(session, value)) for value in row)
+        for row in session.preview_inline_facts("relation")
+    }
     session.close()
     return inferred
 
