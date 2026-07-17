@@ -1184,10 +1184,15 @@ def value_hierarchy_warnings(
     # (rows carrying a surface variant) report a perfectly good declaration as
     # having "no effect", which is worse than saying nothing: a user who believes
     # it and deletes the declaration gets the silent omission back.
+    #
+    # The alias lookup key is folded to NFC because the alias map is keyed by NFC
+    # names: an NFD-typed relation would miss the map, fall through to its raw
+    # self, and re-create exactly the false "no effect" report above. Only this
+    # internal index key is folded — the reported strings keep their stored form.
     aliases = relation_aliases(root)
 
     def _canon_rel(name: str) -> str:
-        return _canonical_value(aliases.get(name, name))
+        return _canonical_value(aliases.get(unicodedata.normalize("NFC", name), name))
 
     values_by_relation: dict[str, set[str]] = {}
     for row in facts:
