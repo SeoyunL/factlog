@@ -1903,6 +1903,23 @@ def _assert_no_canonical_head(policy_text: str) -> None:
                 f"{_SOURCES[name]}) and is already declared by the engine; remove the "
                 f".decl from logic-policy(.extra).dl"
             )
+        # `relation` is the accepted-fact EDB and is ALREADY declared by the engine
+        # (WIRELOG_PROGRAM). A policy `.decl relation(...)` re-declares it, and pyrewire
+        # then silently mishandles the accepted atoms with compile rc=0: an arity that
+        # differs from the engine's 3 partially LOSES facts (an arity mismatch dropped
+        # a KB's path pairs 3->2 with no signal), and even an arity-MATCHING re-decl is
+        # a meaningless duplicate that only invites that failure later. So every form is
+        # rejected (#305). Unlike the fact/rule head check below, a `.decl relation`
+        # carries no legitimate use -- a bare relation(...) FACT (allowed, #303) is not
+        # a `.decl`, so this does not touch it.
+        if name == "relation":
+            raise FactlogError(
+                "relation is the engine's accepted-fact EDB, already declared by the "
+                "engine (WIRELOG_PROGRAM); a policy .decl relation(...) re-declares it "
+                "and pyrewire then silently drops or corrupts accepted facts (an arity "
+                "mismatch loses them, compile stays rc=0). Remove the .decl from "
+                "logic-policy(.extra).dl."
+            )
     bare = re.sub(r"\.decl\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)", "", bare)
 
     for statement in _split_policy_statements(bare):
@@ -1919,6 +1936,24 @@ def _assert_no_canonical_head(policy_text: str) -> None:
                 f"{name} is a reserved engine EDB predicate (populated from "
                 f"{_SOURCES[name]}); it may appear only in rule bodies, not as a "
                 f"rule head/fact in logic-policy(.extra).dl"
+            )
+        # `relation` is the accepted-fact EDB (facts/accepted.dl). A bare fact line is
+        # fine and stays allowed (#303), but a RULE that HEADS relation makes pyrewire
+        # treat relation as IDB and SILENTLY drop every accepted-fact atom: compile
+        # rc=0, then relation/path/every policy predicate evaluate over an empty
+        # relation -- a vacuous pass that check/add/ask all report as success (#305).
+        # `:-` is tested on the skeleton (strings and comments already stripped), so a
+        # reason literal or comment containing `:-` never trips this; the body (right of
+        # `:-`) is not the head, so a standard rule that READS relation is unaffected.
+        if m and m.group(1) == "relation" and ":-" in statement:
+            raise FactlogError(
+                "relation is the engine's accepted-fact EDB (populated from "
+                "facts/accepted.dl); a rule that HEADS relation makes pyrewire treat it "
+                "as IDB and silently drops every accepted fact (compile stays rc=0, then "
+                "relation/path/policy all evaluate over an empty relation -- a vacuous "
+                "pass). Define a derived relation under a DIFFERENT predicate name in "
+                "logic-policy(.extra).dl, not as a relation rule head. (A bare "
+                "relation(...) fact is allowed.)"
             )
 
 
