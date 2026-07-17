@@ -1913,6 +1913,24 @@ def _assert_no_canonical_head(policy_text: str) -> None:
                 f"{_SOURCES[name]}); it may appear only in rule bodies, not as a "
                 f"rule head/fact in logic-policy(.extra).dl"
             )
+        # `relation` is the accepted-fact EDB (facts/accepted.dl). A bare fact line is
+        # fine and stays allowed (#303), but a RULE that HEADS relation makes pyrewire
+        # treat relation as IDB and SILENTLY drop every accepted-fact atom: compile
+        # rc=0, then relation/path/every policy predicate evaluate over an empty
+        # relation -- a vacuous pass that check/add/ask all report as success (#305).
+        # `:-` is tested on the skeleton (strings and comments already stripped), so a
+        # reason literal or comment containing `:-` never trips this; the body (right of
+        # `:-`) is not the head, so a standard rule that READS relation is unaffected.
+        if m and m.group(1) == "relation" and ":-" in statement:
+            raise FactlogError(
+                "relation is the engine's accepted-fact EDB (populated from "
+                "facts/accepted.dl); a rule that HEADS relation makes pyrewire treat it "
+                "as IDB and silently drops every accepted fact (compile stays rc=0, then "
+                "relation/path/policy all evaluate over an empty relation -- a vacuous "
+                "pass). Define a derived relation under a DIFFERENT predicate name in "
+                "logic-policy(.extra).dl, not as a relation rule head. (A bare "
+                "relation(...) fact is allowed.)"
+            )
 
 
 def _split_policy_statements(text: str) -> list[str]:
