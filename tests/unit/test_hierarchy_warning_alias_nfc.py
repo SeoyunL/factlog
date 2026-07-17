@@ -78,22 +78,52 @@ class TestNoFalseDeclarationHasNoEffect:
         assert nfc == nfd, f"NFC -> {nfc}, NFD -> {nfd}"
 
 
+DEAD_RELATION = "nosuch"
+DEAD_HIERARCHY_MD = f"- {DEAD_RELATION}: `코호트연구` ⊂ `관찰연구`\n"
+
+
+@pytest.fixture
+def dead_kb(tmp_path):
+    """A KB declaring a relation that no alias and no fact ever mentions."""
+
+    def _build(form: str):
+        root = tmp_path / f"dead-{form}"
+        (root / "policy").mkdir(parents=True)
+        (root / "facts").mkdir(parents=True)
+        (root / "policy" / "relation-aliases.md").write_text(ALIASES_MD, encoding="utf-8")
+        (root / "policy" / "value-hierarchy.md").write_text(DEAD_HIERARCHY_MD, encoding="utf-8")
+        return root
+
+    return _build
+
+
 class TestTheAdviceIsSound:
-    """If the checker says a declaration has no effect, it must really have none."""
+    """`condemned` and `inert` must be the same thing, asserted both ways.
+
+    Pinned on a genuinely unused relation rather than on the live one: a dead
+    declaration must both be reported (a) and really subsume nothing (b).
+    Keeping the true positive is what holds the #326 fold honest — silencing the
+    false warning by weakening the check for every relation would satisfy "no
+    false alarm" while destroying #211, and (a) fails the moment that happens.
+    No early-out, so this cannot lapse back into a vacuous skip.
+    """
 
     @pytest.mark.parametrize("form", ["NFC", "NFD"])
-    def test_a_condemned_declaration_really_is_inert(self, kb, form):
-        root = kb(form)
+    def test_a_condemned_declaration_really_is_inert(self, dead_kb, form):
+        root = dead_kb(form)
         facts = _facts(form)
         warnings = common.value_hierarchy_warnings(root=root, facts=facts)
-        condemned = any("has no effect" in w for w in warnings)
-        if not condemned:
-            pytest.skip("declaration not condemned; nothing to falsify")
+
+        condemned = any(DEAD_RELATION in w and "has no effect" in w for w in warnings)
+        assert condemned, (
+            f"relation {DEAD_RELATION!r} is mentioned by no alias and no fact, but "
+            f"the checker stayed silent — #211's real warning was lost -> {warnings}"
+        )
 
         hierarchy = common.value_hierarchy(root)
         aliases = common.relation_aliases(root)
         subsumes = common.relation_row_matches(
-            ['"p1"', '"study_type"', '"관찰연구"'], facts[0], aliases, hierarchy
+            ['"p1"', f'"{DEAD_RELATION}"', '"관찰연구"'], facts[0], aliases, hierarchy
         )
         assert not subsumes, (
             "the checker advises deleting this declaration, but it is live — "
