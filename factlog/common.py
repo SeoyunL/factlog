@@ -2635,6 +2635,13 @@ def decode_wirelog_value(session: EasySession, value: object) -> object:
     That is why the pre-interning is load-bearing and must not be mistaken for
     dead code -- see the call sites in run_wirelog.
 
+    Both preconditions are ENFORCED, not merely written down here, because a
+    convention that only lives in prose is the exact defect #323 was filed to fix:
+    run_wirelog refuses to start when the engine has no schema to decode against
+    (the ``_schema_program is None`` guard), and the policy-load guard in
+    _assert_no_canonical_head keeps every policy column symbol/string, so a
+    pre-interned literal is all a policy row can carry.
+
     What this layer must NOT do is guess. It used to re-decode by looking only at
     the VALUE (``isinstance(value, int) and session._intern.contains_id(value)``),
     a type-blind second pass over a row the schema had already typed. It could not
@@ -2834,6 +2841,32 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
     # _typed_decls(specs) is "" when there is nothing projectable, so the program
     # text is byte-identical to today for a KB with no typed-relations (#116 inv.1).
     session = EasySession(base_program + _typed_decls(specs))
+    # decode_wirelog_value passes values through because step() decodes each row
+    # against this side-parsed schema. EasySession re-parses the program to build it
+    # and, if that re-parse fails (wirelog's parser disagreeing with the easy facade
+    # about what is well-formed), keeps None and runs ON — then _decode_row has no
+    # schema, every column falls back to its raw id, and a report prints
+    # `flagged: 0 (3)`: a subject that is not in the KB, asserted with rc=0. An
+    # over-claim is worse than silence, so refuse to run instead.
+    #
+    # This is enforced, not documented, on purpose: the same silent-fallback-plus-
+    # prose-convention shape is exactly what #323 was filed to remove. The pin is
+    # >=1.0.3,<2.0, so a 1.x MINOR is free to introduce such a parser disagreement
+    # and the fallback would stay quiet — a version pin cannot catch it, only this
+    # check can. Private attribute by necessity: the facade exposes no public way to
+    # ask whether decoding is live (see tools/README.md).
+    if session._schema_program is None:
+        session.close()
+        raise FactlogError(
+            "the engine could not build a schema for the logic program (pyrewire's "
+            "side parse of the assembled program failed), so it would decode every "
+            "column as a raw intern id: the report would print bare numbers where "
+            "subjects and reasons belong, with a clean exit. Refusing to run. This "
+            "is an engine/factlog parser disagreement, not a KB error — re-run "
+            "`factlog doctor`, check the pyrewire version against the "
+            "`pyrewire>=1.0.3,<2.0` pin in pyproject.toml, and report the policy "
+            "text that triggered it."
+        )
     for value in policy_string_literals(policy_program):
         session.intern(value)
     accepted = accepted_rows  # already loaded above for _attr_rel_facts

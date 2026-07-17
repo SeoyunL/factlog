@@ -44,6 +44,7 @@ from __future__ import annotations
 import pytest
 
 import common
+import factlog.common as fcommon
 from common import decode_wirelog_value
 
 try:  # pragma: no cover - environment-dependent
@@ -235,6 +236,96 @@ class TestGuardRejectsNonSymbolPolicyColumn:
         common._assert_no_canonical_head(
             ".decl triple(a: symbol, b: symbol, c: symbol)\n"
         )
+
+
+class TestRunWirelogRequiresALiveSchema:
+    """run_wirelog must refuse to run when the engine has no schema to decode with.
+
+    EasySession builds its schema by RE-PARSING the program; if wirelog's parser and
+    the easy facade disagree about what is well-formed, it keeps None and runs on.
+    Decoding then has nothing to consult and every column comes back as a raw id —
+    measured on pyrewire 1.0.3, `flagged("alpha", "needs review")` emits
+    ('alpha', 'needs review') normally and (0, 3) with the schema gone. That report
+    asserts a subject the KB does not contain, and rc stays 0; an over-claim is worse
+    than silence.
+
+    Enforced rather than documented because the <2.0 pin cannot catch it: a 1.x MINOR
+    may legally introduce such a disagreement and the fallback is silent.
+
+    Engine-free by design (the guard is a None check), so it runs in the CI job that
+    has no pyrewire.
+    """
+
+    class _FakeSession:
+        """EasySession's surface as run_wirelog uses it, with a settable schema."""
+
+        def __init__(self, schema_program):
+            self._schema_program = schema_program
+            self.closed = False
+
+        def intern(self, value):
+            pass
+
+        def step(self):
+            return []
+
+        def close(self):
+            self.closed = True
+
+    def _arrange(self, tmp_path, monkeypatch, *, schema_program):
+        """A minimal KB whose EasySession reports the given schema state.
+
+        Patches `factlog.common`, NOT the bare `common` seen elsewhere in this file:
+        tools/common.py is a wrapper that COPIES names via globals().update, so
+        run_wirelog resolves its globals in factlog.common and a patch on the wrapper
+        is invisible to it (the real require_pyrewire_version then fires).
+        """
+        accepted = tmp_path / "accepted.dl"
+        accepted.write_text("", encoding="utf-8")
+        made = []
+
+        def _factory(program):
+            session = self._FakeSession(schema_program)
+            made.append(session)
+            return session
+
+        monkeypatch.setattr(fcommon, "ACCEPTED_DL", accepted)
+        monkeypatch.setattr(fcommon, "require_pyrewire_version", lambda: None)
+        monkeypatch.setattr(fcommon, "load_logic_policy", lambda: "")
+        monkeypatch.setattr(fcommon, "typed_relations", lambda: {})
+        monkeypatch.setattr(fcommon, "load_accepted_facts", lambda: [])
+        monkeypatch.setattr(fcommon, "relation_aliases", lambda: {})
+        monkeypatch.setattr(fcommon, "EasySession", _factory)
+        return made
+
+    def test_raises_when_the_engine_has_no_schema(self, tmp_path, monkeypatch):
+        self._arrange(tmp_path, monkeypatch, schema_program=None)
+        with pytest.raises(fcommon.FactlogError, match="schema"):
+            fcommon.run_wirelog()
+
+    def test_the_error_explains_the_raw_id_consequence_and_what_to_do(
+        self, tmp_path, monkeypatch
+    ):
+        """A refusal has to say why it refused and where to look."""
+        self._arrange(tmp_path, monkeypatch, schema_program=None)
+        with pytest.raises(fcommon.FactlogError) as exc:
+            fcommon.run_wirelog()
+        message = str(exc.value)
+        assert "raw intern id" in message
+        assert "doctor" in message
+        assert "pyrewire>=1.0.3,<2.0" in message
+
+    def test_the_session_is_closed_before_raising(self, tmp_path, monkeypatch):
+        """Refusing must not leak the engine handle."""
+        made = self._arrange(tmp_path, monkeypatch, schema_program=None)
+        with pytest.raises(fcommon.FactlogError):
+            fcommon.run_wirelog()
+        assert made and made[0].closed, "the engine session was left open"
+
+    def test_a_live_schema_runs_normally(self, tmp_path, monkeypatch):
+        """The control: a session WITH a schema must pass the guard untouched."""
+        self._arrange(tmp_path, monkeypatch, schema_program=object())
+        assert fcommon.run_wirelog() == {}
 
 
 class TestLoadLogicPolicyScalarColumnGuard:
