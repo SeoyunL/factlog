@@ -139,6 +139,15 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         if len(args) != 2:
             errors.append(f"policy query must have entity and reason arguments: {line}")
             return errors, warnings
+        # The shape guard the gate (classify_query's policy branch) applies. Arity
+        # alone let a bare/single-quoted token like `'Alice'` through -- a wildcard to
+        # the matcher -- so the report passed a line the gate calls malformed, and the
+        # two verdicts on one line diverged (#321; #319 was the same omission in the
+        # count branch). Run before the entity warning below so a bare token never
+        # reaches the quoted-constant check.
+        if not all(is_variable(a) or is_quoted_string(a) for a in args):
+            errors.append(f"policy query arguments must be variables or quoted strings: {line}")
+            return errors, warnings
         # `is_quoted_string`, not an inline `startswith('"') and endswith('"')`: the
         # inline form called `"\q"` (and a bare `"`) a quoted constant and handed it
         # to `arg_value`, which `json.loads`ed it and died with a JSONDecodeError --

@@ -176,14 +176,17 @@ class TestPolicyQueryEntityWarning:
         The inline `startswith('"') and endswith('"')` test called it a quoted
         constant and handed it to `arg_value`, which `json.loads`ed it and died with
         a `JSONDecodeError` — a hard crash of the whole report over one draft line
-        (#342). The `is_quoted_string` guard the gate uses returns False for it, so
-        the warning branch is skipped and no entity claim is made about a token that
-        is not even a string.
+        (#342). It no longer reaches `arg_value`: `is_quoted_string` returns False for
+        a non-decodable token, so the shape guard (#321) rejects it as malformed —
+        a clean error, not a crash — exactly as the ask gate does.
         """
         errors, warnings = rlc.validate_query(
             'retracted("\\q", R)?', self.ENTITIES, self.POLICY
         )
-        assert (errors, warnings) == ([], [])
+        assert errors == [
+            'policy query arguments must be variables or quoted strings: retracted("\\q", R)?'
+        ]
+        assert warnings == []
 
     def test_an_nfd_query_constant_meets_an_nfc_accepted_entity(self):
         """The `entities` set is `known_constants`, which folds every value through
@@ -202,3 +205,54 @@ class TestPolicyQueryEntityWarning:
             f'retracted("{nfd}", R)?', {nfc}, self.POLICY
         )
         assert (errors, warnings) == ([], [])
+
+
+class TestPolicyQueryArgumentFormGuard:
+    """The policy branch of `validate_query` must reject an argument that is neither
+    a variable nor a quoted string — the same shape guard `classify_query` applies.
+
+    Before #321 the policy branch checked arity only. A bare/single-quoted token
+    like `'Alice'` is a wildcard to the matcher, so the report passed it with no
+    error while the ask gate rejected it as malformed — the two verdicts on one
+    line diverged (#319 is the same omission in the count branch).
+    """
+
+    ENTITIES = {"Alice", "P1"}
+    POLICY = {"needs_review"}
+
+    def test_a_single_quoted_bare_token_is_an_error(self):
+        errors, warnings = rlc.validate_query(
+            "needs_review('Alice', R)?", self.ENTITIES, self.POLICY
+        )
+        assert errors == [
+            "policy query arguments must be variables or quoted strings: "
+            "needs_review('Alice', R)?"
+        ]
+        assert warnings == []
+
+    def test_a_well_formed_quoted_entity_still_passes(self):
+        errors, warnings = rlc.validate_query(
+            'needs_review("Alice", R)?', self.ENTITIES, self.POLICY
+        )
+        assert (errors, warnings) == ([], [])
+
+    def test_a_well_formed_variable_entity_still_passes(self):
+        errors, warnings = rlc.validate_query(
+            "needs_review(X, R)?", self.ENTITIES, self.POLICY
+        )
+        assert (errors, warnings) == ([], [])
+
+    def test_report_and_gate_agree_on_the_malformed_policy_query(self):
+        """The parity #321 restores: report error <-> gate malformed, on one line."""
+        from common import classify_query
+
+        facts = [{"subject": "Alice", "relation": "authored", "object": "P1"}]
+        policy = (
+            ".decl needs_review(e: symbol, r: symbol)\n"
+            'needs_review(E, "x") :- relation(E, "authored", "P1").'
+        )
+        query = "needs_review('Alice', R)?"
+        report_errors, _ = rlc.validate_query(query, self.ENTITIES, self.POLICY)
+        ok, reason, _ = classify_query(query, facts, policy_program=policy)
+        assert report_errors, "report must flag the malformed policy query"
+        assert ok is False and reason == "malformed", (reason, report_errors)
