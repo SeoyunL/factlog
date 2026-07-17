@@ -2603,42 +2603,58 @@ def policy_string_literals(text: str) -> list[str]:
     Thin wrapper over the shared _scan_policy lexer so interning tokenizes the policy the
     same way the reserved-head guard and the engine do -- a private regex here split a
     literal at `\\"`, then missed `//` comments, then over-decoded `\\n`, each reopening
-    #250. run_wirelog pre-interns these so decode_wirelog_value turns an engine-emitted
-    symbol id back into its text.
+    #250. run_wirelog pre-interns these so the ENGINE can decode an emitted symbol id
+    back into its text: pyrewire's _decode_row resolves a STRING column through the
+    session intern table and falls back silently to the raw int on a miss, so a literal
+    missing from this list renders as a bare number, not as text (measured: without
+    pre-interning a symbol column arrives as ('int', 0)).
     """
     return _scan_policy(text)[1]
 
 def decode_wirelog_value(session: EasySession, value: object) -> object:
     """Pass an already-decoded wirelog value through unchanged.
 
-    The engine's schema is THE single authority on what a column means.
-    ``EasySession.step()`` decodes each row against the ``.decl`` types before we
-    ever see it (``_decode_row``): a ``symbol`` column arrives as ``str``, an
-    ``int64`` column as ``int``. Measured on pyrewire 1.0.3, the program
+    The row reaching us is decoded ALREADY, and it is a two-party result: the
+    engine does the decoding, but only because WE filled the table it decodes
+    against. ``EasySession.step()`` runs each row through ``_decode_row``, which
+    resolves a STRING column via ``self._intern.lookup(raw)`` and -- this is the
+    part that matters -- falls back SILENTLY to the raw ``int`` when that lookup
+    misses. The engine never learns a symbol on its own; run_wirelog pre-interns
+    every policy literal, accepted-fact value and canonical atom (#250) so the
+    lookup can hit.
 
-        .decl low_rank(subject: symbol, r: int64)
-        low_rank(S, R) :- priority_rank(S, R), R < 5.
+    Measured both ways on pyrewire 1.0.3, for
+    ``flagged(S, "needs review") :- relation(S, "is", "thing").``::
 
-    emits ``('alpha', 3)`` -- ``'alpha'`` is ALREADY ``str``, ``3`` is ALREADY the
-    right ``int``.
+        without pre-interning:  [('int', 0), ('int', 3)]              # raw ids
+        with pre-interning:     [('str', 'alpha'), ('str', 'needs review')]
 
-    So this layer must not guess. It used to re-decode by looking only at the
-    VALUE (``isinstance(value, int) and session._intern.contains_id(value)``), a
-    type-blind second pass over a row the schema had already typed. It could not
-    help -- a symbol column is already ``str``, so the ``isinstance`` never fired
-    -- and it could only harm: a genuine ``int64`` scalar small enough to be a
-    valid intern id was rewritten into whatever symbol held that id, so a report
-    printed ``low_rank: alpha (beta)`` where the truth was ``low_rank: alpha (3)``
-    (#323). ``bool`` being an ``int`` subclass meant ``True`` was looked up as id
-    1 by the same mistake; that dies here too.
+    So pass-through is sound because the pre-interning holds, NOT because the
+    engine is a self-sufficient authority. Break the pre-interning and symbol
+    columns arrive as raw ints and this function faithfully passes those ints on.
+    That is why the pre-interning is load-bearing and must not be mistaken for
+    dead code -- see the call sites in run_wirelog.
+
+    What this layer must NOT do is guess. It used to re-decode by looking only at
+    the VALUE (``isinstance(value, int) and session._intern.contains_id(value)``),
+    a type-blind second pass over a row the schema had already typed. It could not
+    help a correctly pre-interned run -- a symbol column is already ``str`` there,
+    so the ``isinstance`` never fired -- and it could only harm: a genuine
+    ``int64`` scalar small enough to be a valid intern id was rewritten into
+    whatever symbol held that id, so a report printed ``low_rank: alpha (beta)``
+    where the truth was ``low_rank: alpha (3)`` (#323). ``bool`` being an ``int``
+    subclass meant ``True`` was looked up as id 1 by the same mistake; that dies
+    here too. Reading a value cannot recover a column's type -- only the schema
+    knows it, and the schema is the engine's to apply.
 
     The ``pyrewire>=1.0.3,<2.0`` pin in pyproject.toml (mirrored in
-    requirements.txt) is what makes this schema decoding load-bearing: the >=1.0.3
-    floor is where ``step()`` types rows for us, and the <2.0 ceiling keeps a major
-    release from changing that contract under us unnoticed.
+    requirements.txt) is what keeps this decoding contract stable: the >=1.0.3
+    floor is where ``step()`` decodes rows against the schema for us, and the <2.0
+    ceiling keeps a major release from changing that -- or the silent raw-int
+    fallback -- under us unnoticed.
 
-    Kept as a function, not inlined, so the "the engine already decoded this" rule
-    has ONE place to live and to be re-checked against a new engine release.
+    Kept as a function, not inlined, so the "the row is already decoded" rule has
+    ONE place to live and to be re-checked against a new engine release.
     """
     return value
 
@@ -2826,9 +2842,12 @@ def run_wirelog() -> dict[str, set[tuple[str, ...]]]:
         session.intern(row["relation"])
         session.intern(row["object"])
 
-    # Intern canonical-atom symbols so decode_wirelog_value round-trips for any
-    # canonical/3 tuple the engine emits or a rule references.  canonical/3 is
-    # pure EDB — never a rule head — so we only intern, never insert.
+    # Intern canonical-atom symbols so the ENGINE can decode any canonical/3 tuple it
+    # emits or a rule references. NOT dead code: pyrewire's _decode_row resolves a
+    # STRING column through this table and falls back silently to the raw int on a
+    # miss, so dropping an intern here does not raise — it prints a bare id where a
+    # name belongs. canonical/3 is pure EDB — never a rule head — so we only intern,
+    # never insert.
     _c_aliases = relation_aliases()
     if _c_aliases:
         for s, canon, o in canonical_atoms(accepted, _c_aliases):
