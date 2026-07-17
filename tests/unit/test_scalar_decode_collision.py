@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import pytest
 
+import common
 from common import decode_wirelog_value
 
 try:  # pragma: no cover - environment-dependent
@@ -150,3 +151,16 @@ class TestAgainstTheRealEngine:
             )
         finally:
             session.close()
+
+
+@pytest.mark.skipif(not _HAVE_ENGINE, reason="pyrewire not installed")
+class TestGuardRejectsNonSymbolPolicyColumn:
+    """The cheap fix, shared with #322: reject an unrenderable head at policy load."""
+
+    def test_policy_load_rejects_an_int64_column(self):
+        policy = (
+            ".decl low_rank(subject: symbol, r: int64)\n"
+            "low_rank(S, R) :- priority_rank(S, R), R < 5.\n"
+        )
+        with pytest.raises(common.FactlogError):
+            common._assert_no_canonical_head(policy)

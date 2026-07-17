@@ -1932,6 +1932,43 @@ def _assert_no_canonical_head(policy_text: str) -> None:
                 "mismatch loses them, compile stays rc=0). Remove the .decl from "
                 "logic-policy(.extra).dl."
             )
+
+    # A policy predicate may only carry symbol/string columns. The report renders an
+    # emitted row by printing its values, and only a symbol column is renderable text;
+    # a scalar column reaches the report as a bare int with no way to say what it MEANS
+    # (#323). The scalar-free-head rule used to exist only as prose next to
+    # _project_typed_relations, and a `.decl low_rank(subject: symbol, r: int64)` in
+    # extra.dl loaded fine and printed a number where a reason belongs. Fail at LOAD,
+    # the one point that sees the whole policy, instead of at render time per row.
+    #
+    # `symbol` and `string` both map to ColumnType.STRING in the engine, so both are
+    # renderable and both are allowed. Everything else (int32/int64/float/unsigned) is
+    # a scalar and is rejected.
+    #
+    # This guard reads POLICY text only. The typed side-relations (#116) legitimately
+    # declare int64 columns, but _typed_decls appends them to the program AFTER
+    # load_logic_policy has returned (see the EasySession call in run_wirelog), so they
+    # never pass through here and typed projection is untouched.
+    _RENDERABLE_COL = {"symbol", "string"}
+    for m in re.finditer(r"\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", bare):
+        name, columns = m.group(1), m.group(2)
+        for column in columns.split(","):
+            if ":" not in column:
+                continue
+            field, _, coltype = column.partition(":")
+            coltype = coltype.strip()
+            if coltype and coltype not in _RENDERABLE_COL:
+                raise FactlogError(
+                    f"policy predicate {name!r} declares column {field.strip()!r} as "
+                    f"{coltype!r}, but a policy .decl may use only symbol/string "
+                    f"columns. The report renders an emitted row by printing its "
+                    f"values, so a scalar column would print a bare number where a "
+                    f"reason belongs. Keep the scalar in the rule BODY and head a "
+                    f"quoted reason instead, e.g. "
+                    f'`{name}(S, "rank below 5") :- priority_rank(S, R), R < 5.` '
+                    f"See docs/typed-relations.md. Fix the .decl in "
+                    f"logic-policy(.extra).dl."
+                )
     bare = re.sub(r"\.decl\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)", "", bare)
 
     for statement in _split_policy_statements(bare):
@@ -2726,9 +2763,11 @@ def _project_typed_relations(session, specs, accepted, aliases=None) -> None:
 
     NB: hand-authored comparison-predicate rules (#120) use arity-2
     (subject, reason) heads with a quoted reason string; the scalar stays in
-    the body. A bare scalar in a head would be mis-decoded as an interned
-    symbol by decode_wirelog_value (it round-trips ints through the intern
-    table), so it must never appear there. Those rules live in the optional
+    the body. This is no longer prose that a policy author has to know: a policy
+    .decl with a scalar column is now REJECTED at load by
+    _assert_no_canonical_head (see the symbol/string column check there), because
+    a scalar in a head reaches the report as a bare int with nothing to say what
+    it means (#323). Those rules live in the optional
     policy/logic-policy.extra.dl, not here.
     """
     if not specs:
