@@ -687,7 +687,11 @@ def load_logic_policy() -> str:
 
 def policy_predicates(policy_program: str | None = None) -> set[str]:
     text = policy_program if policy_program is not None else load_logic_policy()
-    built_in = {"relation", "edge", "path", "attr_rel"}
+    # The engine's own predicates are not policy findings the report iterates. Derived
+    # from WIRELOG_PROGRAM (#334) so this filter cannot miss one as it did canonical and
+    # relation_alive; before, a `.decl canonical` slipping through here would have been
+    # walked as a policy predicate.
+    built_in = _engine_decl_predicates()
     return {
         name
         for name in re.findall(r"^\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\(", text, flags=re.MULTILINE)
@@ -1633,9 +1637,10 @@ _TYPED_REL_RE = re.compile(
     r"^(?:`(?P<qname>[^`]+)`|(?P<name>\S+))\s*:\s*(?P<type>\w+)\s+as\s+(?P<alias>\S+)"
     r"(?:\s*\((?P<units>[^)]*)\))?\s*$"
 )
-# Built-in engine predicates. `attr_rel` joined them with #226: a policy file
-# declaring its own `attr_rel` used to work and now collides with the program.
-_TYPED_RESERVED = {"relation", "edge", "path", "attr_rel", "relation_alive"}
+# The set of names a typed-relation alias may not take (it would collide with an
+# engine predicate) is the engine's own .decl set — derived via _engine_decl_predicates
+# (#334) so it cannot miss one as it missed canonical. `attr_rel` joined the engine with
+# #226; a policy declaring its own `attr_rel` used to work and now collides.
 
 
 def _try(fn):
@@ -1648,7 +1653,7 @@ def _try(fn):
 
 
 def _typed_reserved_names(relations: set[str], predicates: set[str]) -> set[str]:
-    return _TYPED_RESERVED | set(relations) | set(predicates)
+    return _engine_decl_predicates() | set(relations) | set(predicates)
 
 
 def _parse_amount_units(body: str) -> dict[str, int]:
@@ -1739,7 +1744,7 @@ def _parse_typed_relations(
         units = _parse_amount_units(units_body) if (type_tag == "amount" and units_body is not None) else None
         if not _ASCII_IDENT_RE.match(alias):
             raise FactlogError(f"typed-relations: alias must be an ASCII identifier: {alias!r}")
-        if alias in _TYPED_RESERVED or alias in reserved:
+        if alias in _engine_decl_predicates() or alias in reserved:
             raise FactlogError(f"typed-relations: alias {alias!r} collides with a reserved or existing name")
         if alias in seen_alias:
             raise FactlogError(f"typed-relations: duplicate alias {alias!r} ({seen_alias[alias]} and {name})")
@@ -1925,6 +1930,12 @@ def _assert_no_canonical_head(policy_text: str) -> None:
     # heads `edge` re-draws every link the attribute filter removed, and the scaffold
     # promises, unconditionally, that no edge is drawn along an attribute relation. A
     # guarantee with an unguarded escape hatch is the false promise this issue is about.
+    # Which names may not be HEADED is DERIVED from the engine's own .decl set (#334):
+    # every engine predicate EXCEPT `relation`, which alone allows a bare fact (#303) and
+    # is handled by its own branch below. Deriving membership means a future engine
+    # predicate is reserved automatically; _SOURCES only supplies human provenance for the
+    # message and falls back to "the engine" if a new name lacks a line here.
+    _RESERVED_HEADS = _engine_decl_predicates() - {"relation"}
     _SOURCES = {
         "canonical": "relation-aliases.md",
         "attr_rel": "attribute-relations.md",
@@ -1951,11 +1962,11 @@ def _assert_no_canonical_head(policy_text: str) -> None:
     bare = "\n".join(line for line in skeleton.splitlines() if line.strip())
 
     for name in re.findall(r"\.decl\s+([A-Za-z_][A-Za-z0-9_]*)", bare):
-        if name in _SOURCES:
+        if name in _RESERVED_HEADS:
             raise FactlogError(
                 f"{name} is a reserved engine predicate (populated from "
-                f"{_SOURCES[name]}) and is already declared by the engine; remove the "
-                f".decl from logic-policy(.extra).dl"
+                f"{_SOURCES.get(name, 'the engine')}) and is already declared by the "
+                f"engine; remove the .decl from logic-policy(.extra).dl"
             )
         # `relation` is the accepted-fact EDB and is ALREADY declared by the engine
         # (WIRELOG_PROGRAM). A policy `.decl relation(...)` re-declares it, and pyrewire
@@ -2025,11 +2036,12 @@ def _assert_no_canonical_head(policy_text: str) -> None:
         # KB that worked before could no longer run `factlog check`.
         head = statement.split(":-", 1)[0]
         m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", head)
-        if m and m.group(1) in _SOURCES:
+        if m and m.group(1) in _RESERVED_HEADS:
             name = m.group(1)
             raise FactlogError(
                 f"{name} is a reserved engine EDB predicate (populated from "
-                f"{_SOURCES[name]}); it may appear only in rule bodies, not as a "
+                f"{_SOURCES.get(name, 'the engine')}); it may appear only in rule "
+                f"bodies, not as a "
                 f"rule head/fact in logic-policy(.extra).dl"
             )
         # `relation` is the accepted-fact EDB (facts/accepted.dl). A bare fact line is
@@ -2564,6 +2576,24 @@ relation_alive(S) :- relation(S, R, O).
 # relation atoms, whatever emptied them (a parse-time drop OR a fixpoint drop). Compared
 # against the disk fact count in run_logic_check.engine_relation_gap, it is the last net
 # for a silently-emptied engine input beyond what #305's policy-load guard rejects.
+
+
+def _engine_decl_predicates() -> frozenset[str]:
+    """The single source of truth for "an engine-declared predicate".
+
+    Every ``.decl`` name in WIRELOG_PROGRAM: relation, canonical, attr_rel, edge, path,
+    relation_alive. The concept "a policy may not HEAD / re-declare / alias this" used to
+    live in four hand-managed literals — the generator's RESERVED_PREDICATES, the typed
+    alias guard's reserved set, policy_predicates' built_in filter, and the reserved-head
+    guard's source table — and hand-managed literals drift: #332 lost relation_alive
+    (added the day #308 landed) and #334 lost canonical. All four now derive from this one
+    function so they cannot diverge again. ``relation`` is engine-declared but carries a
+    bare-fact exception (#303/#305), so a caller that wants the FULLY reserved heads
+    subtracts it explicitly rather than folding the exception in here.
+    """
+    return frozenset(
+        re.findall(r"^\.decl\s+([a-z_][a-z0-9_]*)\(", WIRELOG_PROGRAM, flags=re.MULTILINE)
+    )
 
 
 def attribute_relation_forms(

@@ -79,3 +79,60 @@ class TestGeneratorRejectsReservedHeadBullet:
         }
         rules = glp.normalized_rules(payload)
         assert rules[0]["predicate"] == "conflict"
+
+
+class TestFourConsumerSetsShareOneSource:
+    """The four sets that encode "an engine-declared predicate" now derive from
+    common._engine_decl_predicates (#334). This pins each consumer to that single
+    source so none can drift the way #332 (relation_alive) and #334 (canonical) did.
+    Removing the derivation and re-hardcoding any one of them reopens the divergence.
+    """
+
+    def test_engine_source_is_the_six_wirelog_decls(self):
+        engine = fcommon._engine_decl_predicates()
+        assert engine == _wirelog_decls()
+        assert engine == {
+            "relation",
+            "canonical",
+            "attr_rel",
+            "edge",
+            "path",
+            "relation_alive",
+        }
+
+    def test_generator_reserved_set_is_the_engine_set(self):
+        """Consumer 1: the generator's RESERVED_PREDICATES."""
+        assert set(glp.RESERVED_PREDICATES) == fcommon._engine_decl_predicates()
+
+    def test_typed_alias_reserved_set_covers_the_engine_set(self):
+        """Consumer 2: the typed-relation alias guard. canonical is the #334 miss."""
+        reserved = fcommon._typed_reserved_names(set(), set())
+        assert reserved >= fcommon._engine_decl_predicates()
+        assert "canonical" in reserved
+
+    def test_policy_predicates_filters_every_engine_name(self):
+        """Consumer 3: policy_predicates' built_in filter. Before #334, canonical and
+        relation_alive were NOT filtered and would have been walked as findings."""
+        engine = fcommon._engine_decl_predicates()
+        text = "".join(f".decl {n}(a: symbol, b: symbol)\n" for n in engine)
+        text += ".decl mypred(a: symbol, b: symbol)\n"
+        assert fcommon.policy_predicates(text) == {"mypred"}
+
+    def test_reserved_head_guard_covers_the_engine_set(self):
+        """Consumer 4: _assert_no_canonical_head. Every engine predicate is rejected
+        as a head — the five fully-reserved via the shared message, relation via its
+        own bare-fact-aware branch."""
+        for name in fcommon._engine_decl_predicates():
+            with pytest.raises(fcommon.FactlogError):
+                fcommon._assert_no_canonical_head(f".decl {name}(a: symbol, b: symbol)\n")
+
+    def test_canonical_is_now_reserved_everywhere(self):
+        """The specific #334 symptom: canonical was accepted as a typed alias and a
+        policy finding. It must now be reserved in every consumer."""
+        assert "canonical" in glp.RESERVED_PREDICATES
+        assert "canonical" in fcommon._typed_reserved_names(set(), set())
+        assert "canonical" not in fcommon.policy_predicates(
+            ".decl canonical(a: symbol, b: symbol)\n"
+        )
+        with pytest.raises(fcommon.FactlogError):
+            fcommon._assert_no_canonical_head(".decl canonical(a: symbol, b: symbol)\n")

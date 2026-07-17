@@ -16,6 +16,7 @@ from common import (
     PROMPTS_DIR,
     RUNS_DIR,
     WIRELOG_PROGRAM,
+    _engine_decl_predicates,
     dl_string,
     ensure_dirs,
     logic_policy_md_relations,
@@ -40,16 +41,12 @@ PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 RELATION_RE = re.compile(r"^[^\s\"`(),.]+$")
 # A generated bullet may never HEAD a predicate the engine already declares
 # (common.WIRELOG_PROGRAM); doing so makes pyrewire treat that EDB/IDB as an IDB the
-# policy owns and silently mishandle it with rc=0. So this set must be a SUPERSET of
-# WIRELOG_PROGRAM's .decl names, pinned by test_reserved_predicate_parity.
-# "canonical" is unreachable via infer_fixture_predicate today and any canonical head
-# is already rejected at load by common._assert_no_canonical_head, so it is cheap
-# insurance against a future inference path returning it. "relation_alive" is the #308
-# witness IDB; it joined the engine the day #308 landed but this set was not updated
-# then — the exact drift #332 is about — so it is listed now. ("review_required" used
-# to be here but NO .decl declares it, so it only blocked a valid policy predicate
-# name; dropped as a dead letter.)
-RESERVED_PREDICATES = {"relation", "edge", "path", "canonical", "attr_rel", "relation_alive"}
+# policy owns and silently mishandle it with rc=0. DERIVED from the engine's own .decl
+# set (#334) so it cannot drift the way it did in #332 (relation_alive missing) — the
+# hand-managed literal that lost review_required (declared by no .decl) and never gained
+# relation_alive is exactly what this replaces. This is one of four consumers of
+# common._engine_decl_predicates; test_reserved_predicate_parity pins them together.
+RESERVED_PREDICATES = _engine_decl_predicates()
 CANONICAL_PREFIX_RE = re.compile(r"^\{canonical\}\s+")
 
 
