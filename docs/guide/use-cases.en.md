@@ -47,11 +47,11 @@ walks the whole flow through once without your own data.
 
 - (run in the terminal) `factlog search` to find the fact you want to check
 - (run in the terminal) `factlog provenance` to trace which source it came from
-- For details, see [Tracing a fact to its source](../reference/search-provenance.en.md#tracing-a-fact-to-its-source-factlog-provenance) below
+- For details, see [Tracing a fact to its source](../reference/search-provenance.en.md#tracing-a-fact-to-its-source-factlog-provenance)
 
 **Cleaning up badly extracted candidates**
 
 - (run in Claude Code) `/factlog sync` to produce candidate facts
 - (run in the terminal) `factlog review` to review the candidates
 - (run in the terminal) retire badly extracted candidates with `factlog reject`; for candidates that only need their wording tidied, fix the value with `factlog amend` and then approve with `factlog accept` (or `factlog amend --accept`)
-- For details, see [Reviewing facts](../reference/review.en.md#reviewing-facts-factlog-review--accept--reject) below
+- For details, see [Reviewing facts](../reference/review.en.md#reviewing-facts-factlog-review--accept--reject)

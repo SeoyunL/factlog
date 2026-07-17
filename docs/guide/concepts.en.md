@@ -78,9 +78,9 @@ produces is only a candidate until a human confirms it as accepted.
 
 ## Commands at a glance — slash command · CLI command · KB file
 
-As defined in the intro above, factlog's commands split into two layers by
-**where you run them**. The third row is not a command but the **KB files**
-(outputs/locations) those commands read and write.
+factlog's commands split into two layers by **where you run them**. The third
+row is not a command but the **KB files** (outputs/locations) those commands
+read and write.
 
 | Category | Where it runs | Examples | Role |
 |------|-----------|------|------|

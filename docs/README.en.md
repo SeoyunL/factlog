@@ -16,6 +16,9 @@ If you are new, read these in order.
 5. [Reviewing facts](reference/review.en.md) — the gate where a human confirms candidates
 6. [Determinism & limitations](guide/determinism.en.md) — what is guaranteed and what is not
 
+To walk the whole flow through once without your own data, start with the
+[quick-start tutorial](../examples/sample-kb/README.md) (Korean only).
+
 ## Guides
 
 | Page | Contents |
