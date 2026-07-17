@@ -1275,8 +1275,17 @@ def policy_row_matches(args: list[str], row: tuple[str, ...]) -> bool:
     Only the first arg constrains, and only when it is a quoted string: a variable
     there ranges over the whole extent. The comparison is RAW, not canonicalised —
     a policy extent's column 0 is whatever the engine derived, and the router has
-    always compared it verbatim; folding here would answer a different question
-    than `/factlog ask` does.
+    always compared it verbatim. #320 preserved that verbatim comparison because its
+    job was to make the report agree with the router, not to change what both answer.
+
+    That raw comparison is itself an NFC blind spot, and this is the place to record
+    it: an NFD extent row `("한글", "low_conf")` does not meet an NFC query
+    `needs_review("한글", R)?`, so BOTH paths answer `0 rows` — a verified negative
+    about an entity that has rows. Closing that gap (a follow-up, deliberately not
+    done here) means folding BOTH sides inside this one function, the way
+    `relation_row_matches` routes its value comparison through `_canonical_value`.
+    Fold in the router alone and you resurrect exactly the report/router divergence
+    #320 removed.
     """
     if not args or not _is_quoted_string(args[0]):
         return True
