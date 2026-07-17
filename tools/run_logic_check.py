@@ -145,8 +145,11 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         # a hard crash of the whole report over one draft line (#342). The gate uses
         # this same predicate (common.policy_row_matches, #320), so the report's
         # last inline copy of the quote test now agrees with it and calls arg_value
-        # only after the guard passes.
-        if is_quoted_string(args[0]) and arg_value(args[0]) not in entities:
+        # only after the guard passes. Membership is compared through canonical_value,
+        # the same fold the generic constant loop (L187) and known_constants use, so
+        # an NFD-typed query of an NFC-stored engine entity is no longer falsely
+        # warned as a "non-engine entity" -- the two axes of one function agree (#341).
+        if is_quoted_string(args[0]) and canonical_value(arg_value(args[0])) not in entities:
             warnings.append(f"query references non-engine entity: {arg_value(args[0])}")
         return errors, warnings
     if predicate == "count":

@@ -184,3 +184,21 @@ class TestPolicyQueryEntityWarning:
             'retracted("\\q", R)?', self.ENTITIES, self.POLICY
         )
         assert (errors, warnings) == ([], [])
+
+    def test_an_nfd_query_constant_meets_an_nfc_accepted_entity(self):
+        """The `entities` set is `known_constants`, which folds every value through
+        `canonical_value` (NFC). A raw comparison of the query constant against it
+        called an NFD-typed query of an accepted entity a "non-engine entity" — a
+        claim about the KB that is false, since the entity IS in the engine (#341).
+        The generic constant loop (L187) already folds; the policy branch now folds
+        the same way, so the two axes of one function no longer diverge.
+        """
+        import unicodedata
+
+        nfc = unicodedata.normalize("NFC", "한글")
+        nfd = unicodedata.normalize("NFD", nfc)
+        assert nfc != nfd
+        errors, warnings = rlc.validate_query(
+            f'retracted("{nfd}", R)?', {nfc}, self.POLICY
+        )
+        assert (errors, warnings) == ([], [])
