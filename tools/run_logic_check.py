@@ -143,9 +143,23 @@ def validate_query(line: str, entities: set[str], policy_query_predicates: set[s
         return errors, warnings
     if predicate == "count":
         # count(subject, relation)? — engine-verified aggregate (see evaluate_queries).
-        if len(query_args(line)) != 2:
+        args = query_args(line)
+        if len(args) != 2:
             errors.append(f"count query must have subject and relation arguments: {line}")
-        return errors, warnings
+            return errors, warnings
+        # The guard `relation` and `path` already have. A bare token is a wildcard to the
+        # matcher, so `count("A", 'rel')?` used to pass this validator and render
+        # "count results: 0 (distinct objects)" -- and zero is documented as a VERIFIED
+        # answer -- for a line the ask gate rejects as malformed (#319).
+        if not all(is_variable(a) or is_quoted_string(a) for a in args):
+            errors.append(f"count arguments must be variables or quoted strings: {line}")
+            return errors, warnings
+        # A well-formed count falls through to the shared vocabulary loop, exactly as
+        # `relation` and `path` do. Returning here instead skipped that loop, so
+        # `count("Nobody", "born_in")?` came back silent -- no error, no warning -- and
+        # the report then rendered "count results: 0 (distinct objects)", a zero this
+        # file documents as a verified answer. `relation`, on the same unknown subject,
+        # warns. Same criterion for count as for relation/path, warnings included (#319).
     if predicate == "relation":
         args = query_args(line)
         if len(args) != 3:
@@ -270,19 +284,25 @@ def evaluate_queries(
             # (subject, relation) over engine facts (0 is a verified answer).
             # Same semantics as ask_router.evaluate's count branch.
             args = query_args(line)
-            if len(args) == 2:
-                # Same canonicalisation as the relation branch and as ask's count
-                # (#213). Comparing raw strings here made the report answer "0" to
-                # a question ask answered "2" — in an aliased KB, on the very same
-                # facts. A count query is a relation query with a free object, so
-                # it is matched by the shared predicate with a variable object.
-                subj_q, rel_q = args
-                objects = {
-                    row["object"]
-                    for row in facts
-                    if relation_row_matches([subj_q, rel_q, "O"], row, aliases, hierarchy)
-                }
-                results.append(f"count results: {len(objects)} (distinct objects)")
+            # Guard before relation_row_matches, matching the path (L218) and relation
+            # (L255) branches. The old `if len(args) == 2:` appended nothing on bad
+            # arity, and let a bare token through to the matcher -- which reads it as a
+            # wildcard -- so a malformed count rendered a VERIFIED zero (#319).
+            if len(args) != 2 or not all(is_variable(a) or is_quoted_string(a) for a in args):
+                results.append("count query malformed — see Errors above")
+                continue
+            # Same canonicalisation as the relation branch and as ask's count
+            # (#213). Comparing raw strings here made the report answer "0" to
+            # a question ask answered "2" — in an aliased KB, on the very same
+            # facts. A count query is a relation query with a free object, so
+            # it is matched by the shared predicate with a variable object.
+            subj_q, rel_q = args
+            objects = {
+                row["object"]
+                for row in facts
+                if relation_row_matches([subj_q, rel_q, "O"], row, aliases, hierarchy)
+            }
+            results.append(f"count results: {len(objects)} (distinct objects)")
         elif predicate == "review_required":
             constants = quoted_constants(line)
             question = constants[0] if constants else "(missing question)"
