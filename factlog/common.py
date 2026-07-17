@@ -1273,23 +1273,29 @@ def policy_row_matches(args: list[str], row: tuple[str, ...]) -> bool:
     worse than either being wrong. One predicate, two callers, no room to drift.
 
     Only the first arg constrains, and only when it is a quoted string: a variable
-    there ranges over the whole extent. The comparison is RAW, not canonicalised —
-    a policy extent's column 0 is whatever the engine derived, and the router has
-    always compared it verbatim. #320 preserved that verbatim comparison because its
-    job was to make the report agree with the router, not to change what both answer.
+    there ranges over the whole extent.
 
-    That raw comparison is itself an NFC blind spot, and this is the place to record
-    it: an NFD extent row `("한글", "low_conf")` does not meet an NFC query
-    `needs_review("한글", R)?`, so BOTH paths answer `0 rows` — a verified negative
-    about an entity that has rows. Closing that gap (a follow-up, deliberately not
-    done here) means folding BOTH sides inside this one function, the way
-    `relation_row_matches` routes its value comparison through `_canonical_value`.
-    Fold in the router alone and you resurrect exactly the report/router divergence
-    #320 removed.
+    BOTH sides go through `_canonical_value`, and they must stay that way. The router
+    used to compare verbatim, so an NFD extent row `("한글", "low_conf")` never met an
+    NFC query `needs_review("한글", R)?`: the pin found nothing and the answer was
+    `0 rows` — not silence, but a positive claim that a subject with rows has none,
+    the verified negative #284 forbids. Filtering an extent raw only looks safe
+    because a fabricated negative is quiet.
+
+    Parity is the means here, not the standard: two paths agreeing on `0 rows` is
+    still wrong, and worse than one of them being wrong, because their disagreement
+    was the only signal the NFD row existed at all. So the fold belongs HERE, in the
+    one predicate both callers route through — fold in the router alone and the
+    report/router divergence #320 removed comes straight back. Fold one side only and
+    a new one appears. `relation_row_matches` routes its value comparison through the
+    same function for the same reason.
+
+    `_canonical_value` folds NFC and `amount(...)` unit quoting; entity strings,
+    dates, numbers and ordinals keep their form, so this narrows nothing else.
     """
     if not args or not _is_quoted_string(args[0]):
         return True
-    return bool(row) and _arg_value(args[0]) == row[0]
+    return bool(row) and _canonical_value(_arg_value(args[0])) == _canonical_value(row[0])
 
 
 def relation_row_matches(
