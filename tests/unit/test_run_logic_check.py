@@ -332,3 +332,30 @@ class TestUnverifiedVocabularyRender:
             monkeypatch, ['count("Marie Curie", "won")?'], facts
         )
         assert "count results: 0 (distinct objects)" in results, results
+
+    def test_unaccepted_relation_object_is_unverified_not_zero(self, monkeypatch):
+        # subject and relation-name are accepted, but the OBJECT "Nobody" is not
+        # accepted vocabulary — the gate rejects it entity_not_accepted, so an empty
+        # result is unverified, not a verified zero. The object axis #347 deferred and
+        # #350 closes: unverified_vocabulary now receives args[2] too.
+        facts = [_fact("Anthropic", "founded_by", "someone")]
+        results = self._evaluate(
+            monkeypatch, ['relation("Anthropic", "founded_by", "Nobody")?'], facts
+        )
+        assert any(
+            "relation results: unverified" in line and "Nobody" in line for line in results
+        ), results
+        assert not any("relation results: 0 rows" in line for line in results), results
+
+    def test_declared_ancestor_object_with_empty_result_stays_zero(self, monkeypatch):
+        # "anyone" appears in no fact but is a DECLARED hierarchy ancestor
+        # (someone ⊂ anyone), so `known` admits it as accepted derived vocabulary.
+        # A subject whose rows do not match keeps the honest "0 rows" — the new object
+        # axis must not mis-flag a value the KB licenses (#350 discriminator).
+        monkeypatch.setattr(
+            rlc, "query_lines", lambda: ['relation("x", "founded_by", "anyone")?']
+        )
+        facts = [_fact("Anthropic", "founded_by", "someone"), _fact("x", "y", "z")]
+        hierarchy = {"founded_by": {"someone": {"anyone"}}}
+        results = rlc.evaluate_queries(facts, {"path": set()}, set(), hierarchy=hierarchy)
+        assert "relation results: 0 rows" in results, results

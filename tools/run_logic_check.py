@@ -245,14 +245,17 @@ def unverified_vocabulary(constants: list[str], known: set[str]) -> str | None:
     vocabulary reference is a normal KB state, exit 0) but stops calling the empty
     result a verified negative (#347).
 
-    Callers pass only the subject and relation-name positions -- the lightweight
-    #347 scope; the object axis is deferred. Membership is compared through the SAME
-    ``canonical_value`` fold ``known_constants``/validate_query's warning use, so a
-    constant that draws the warning is the constant that marks the result unverified
-    and the "(see Warnings above)" pointer is always accurate. A query whose subject
-    and relation-name are both accepted but whose triple is simply absent (sample-kb
-    q4) has no unaccepted constant here, so it keeps rendering the honest ``0 rows``
-    -- that is the discriminator between the two.
+    Callers pass whichever positions the gate vocabulary-checks: the relation branch
+    now passes subject, relation-name AND object (#350 closes the object axis #347's
+    lightweight scope deferred), count passes subject and relation-name, policy passes
+    the pinned entity. Membership is compared through the SAME ``canonical_value`` fold
+    ``known_constants``/validate_query's warning use, so a constant that draws the
+    warning is the constant that marks the result unverified and the "(see Warnings
+    above)" pointer is always accurate. ``known`` admits declared hierarchy ancestors,
+    so a broad-value object matching a narrower row (코호트연구 ⊂ 관찰연구) is accepted
+    vocabulary and never flagged. A query whose constants are all accepted but whose
+    triple is simply absent (sample-kb q4) has no unaccepted constant here, so it keeps
+    rendering the honest ``0 rows`` -- that is the discriminator between the two.
     """
     for arg in constants:
         if is_quoted_string(arg) and canonical_value(arg_value(arg)) not in known:
@@ -337,7 +340,14 @@ def evaluate_queries(
                 # negative -- the gate rejects the same query outright (#347). Say
                 # unverified, not "0 rows". A fully-accepted vocabulary with an absent
                 # triple (q4) has no unaccepted constant and falls through to "0 rows".
-                unaccepted = unverified_vocabulary([args[0], args[1]], known)
+                # All THREE positions, object included: the gate rejects a relation
+                # query whose object is outside the accepted vocabulary with
+                # entity_not_accepted too, so an empty result there is unverified, not a
+                # verified zero (#350, the object axis #347 deferred). `known` carries
+                # value_set AND declared hierarchy ancestors, so a broad-value object
+                # that matches a narrower row (코호트연구 ⊂ 관찰연구) is accepted
+                # vocabulary and never mis-flagged.
+                unaccepted = unverified_vocabulary([args[0], args[1], args[2]], known)
                 if unaccepted is not None:
                     results.append(
                         f"relation results: unverified — '{unaccepted}' is not "
