@@ -227,12 +227,23 @@ def policy_result_line(
         # analogue of #347 (#351). validate_query's policy branch already WARNS on this
         # entity, against the SAME `known` set (run_logic_check L494), so mark the
         # result unverified and point at that warning instead of rendering a verified
-        # "0 rows". Only the pinned entity (args[0]) is vocabulary-checked -- exactly
-        # what the gate's policy branch and validate_query's warning check -- so a
-        # variable pin, which ranges over the extent, is never flagged. Warning
-        # severity and exit 0 are unchanged: a needs_review entity is a normal KB
-        # state; this only stops the line asserting a checked negative. A real finding
-        # (non-empty extent) never reaches here and renders normally.
+        # "0 rows" -- the pointer is exact because both read one set. Only the pinned
+        # entity (args[0]) is vocabulary-checked, the position validate_query warns on
+        # and the gate's policy branch judges, so a variable pin -- which ranges over
+        # the extent -- is never flagged. Warning severity and exit 0 are unchanged: a
+        # needs_review entity is a normal KB state; this only stops the line asserting
+        # a checked negative. A real finding (non-empty extent) never reaches here.
+        #
+        # The SET this is judged against matches validate_query, NOT the gate. The gate's
+        # policy branch tests entity_set (common.py), while `known` is known_constants,
+        # which also carries value_set -- and entity_set deliberately excludes the object
+        # literals of attribute relations. So known is a strict superset of the gate's
+        # entities, and a query pinning an attribute literal -- needs_review("2020", R)?
+        # where 2020 is a published_year object -- passes silently here (no warning
+        # either, since validate_query reads the same set) while the gate answers
+        # entity_not_accepted. Closing that axis means changing which set the report
+        # reads, which also moves validate_query's warnings, so it is scoped out with
+        # the relation-object axis under #362.
         unaccepted = unverified_vocabulary(args[:1], known)
         if unaccepted is not None:
             return (
@@ -385,7 +396,9 @@ def evaluate_queries(
                 # entity_not_accepted. That mismatch predates #350 (the object axis was
                 # unchecked entirely before) and closing it means scoping this set by
                 # relation, a change to known_constants that also moves validate_query's
-                # warnings. Tracked separately as #362.
+                # warnings. #362 tracks that scoping work, and covers the second place
+                # the report's `known` and the gate's sets disagree: the policy-entity
+                # axis in policy_result_line, where known_constants outruns entity_set.
                 unaccepted = unverified_vocabulary([args[0], args[1], args[2]], known)
                 if unaccepted is not None:
                     results.append(
