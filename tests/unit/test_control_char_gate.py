@@ -104,6 +104,58 @@ def test_candidates_csv_still_loads_a_tab_bearing_row(tmp_path):
     assert "1 'Fig\\t2'" in out.stdout, out.stdout
 
 
+class TestCanonicalNameControlChars:
+    """#357: the gate must also reject a control char authored INTO a canonical relation
+    name via policy/relation-aliases.md. #331 only checks a fact row's subject/relation/
+    object; a canonical name is derived from the alias policy, so a tab authored there
+    reaches accepted.dl as a wirelog-undecodable escape through the canonical/3 EDB atom —
+    the same silent identity loss, via the policy-authoring path.
+    """
+
+    def _kb_with_alias(self, tmp_path, canonical, rows):
+        kb = tmp_path / "kb"
+        subprocess.run(
+            [sys.executable, "-m", "factlog", "init", "--target", str(kb)],
+            capture_output=True, check=True,
+        )
+        (kb / "sources" / "x.md").write_text("x\n")
+        # `cites` is the alias KEY; canonical is the value under test. The fact below uses
+        # `cites`, so canonical_atoms emits a canonical/3 atom carrying `canonical`.
+        (kb / "policy" / "relation-aliases.md").write_text(
+            f"# Relation aliases\n- `cites` -> `{canonical}`\n", encoding="utf-8"
+        )
+        (kb / "facts" / "candidates.csv").write_text(
+            "\n".join([HEADER, *rows]) + "\n", encoding="utf-8"
+        )
+        return kb
+
+    def test_compile_rejects_a_tab_in_a_canonical_name(self, tmp_path):
+        # The fact fields are all CLEAN — only the canonical name (from the alias policy)
+        # carries a tab, so only the #357 policy-path check can catch it.
+        kb = self._kb_with_alias(
+            tmp_path, "canon\tname",
+            ["Fig,cites,Smith2020,sources/x.md,confirmed,0.9,"],
+        )
+        proc = _compile(kb)
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        assert "control character" in proc.stderr, proc.stderr
+        assert "canonical relation name" in proc.stderr, proc.stderr
+        assert "#357" in proc.stderr and "relation-aliases.md" in proc.stderr, proc.stderr
+        # The undecodable canonical atom never reaches the engine's trusted input.
+        assert not (kb / "facts" / "accepted.dl").exists()
+
+    def test_compile_accepts_a_clean_canonical_name(self, tmp_path):
+        # A normal alias policy compiles with no regression; the canonical/3 atom is written.
+        kb = self._kb_with_alias(
+            tmp_path, "cited_by_paper",
+            ["Fig,cites,Smith2020,sources/x.md,confirmed,0.9,"],
+        )
+        proc = _compile(kb)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        accepted = (kb / "facts" / "accepted.dl").read_text(encoding="utf-8")
+        assert "canonical(" in accepted and "cited_by_paper" in accepted, accepted
+
+
 # --- Engine-backed reproduction: WHY the gate exists -------------------------
 try:
     import pyrewire  # noqa: F401

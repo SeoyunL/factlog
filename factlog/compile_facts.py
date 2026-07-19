@@ -147,6 +147,27 @@ def main() -> None:
             lines.append("")
             lines.append("// canonical/3 EDB atoms — engine-only; never parsed by Python readers")
             for s, canon, o in c_atoms:
+                # The canonical name is DERIVED from relation-aliases.md, not from a fact
+                # row, so it never passed _reject_undecodable_control_chars above. Without
+                # this check a tab/newline authored INTO a canonical name would reach
+                # accepted.dl as a wirelog-undecodable JSON escape — the same #331 silent
+                # identity loss, via the policy-authoring path (#357). Gate it here too,
+                # before any write, and point at the policy file (not amend/eject: this is
+                # a policy defect, corrected in relation-aliases.md).
+                bad = wirelog_undecodable_chars(canon)
+                if bad:
+                    shown = ", ".join(repr(c) for c in bad)
+                    raise FactlogError(
+                        f"control character(s) {shown} in canonical relation name {canon!r} "
+                        "cannot be compiled: facts/accepted.dl would encode them as JSON escapes "
+                        "the wirelog engine does not decode (\\t \\n \\r \\b \\f and other "
+                        "U+0000–U+001F controls), so the canonical/3 EDB atom would silently "
+                        "diverge from every fact that maps to it (#357, the policy-authoring "
+                        "sibling of #331). This canonical name comes from policy/relation-aliases.md "
+                        "— correct the mapping there (edit the `raw` -> `canonical` bullet to a "
+                        "clean name); do NOT write the control character back. "
+                        "(U+0085/U+2028/U+2029 are fine and never rejected.)"
+                    )
                 lines.append(f"canonical({dl_string(s)}, {dl_string(canon)}, {dl_string(o)}).")
 
     out = FACTS_DIR / "accepted.dl"
