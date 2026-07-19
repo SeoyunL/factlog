@@ -243,7 +243,11 @@ still merged and compiled, but the engine verification did **not** run, so
 `finalize` **exits 3** — distinct from a verified pass (`0`) so automation never
 mistakes an unverified compile for a checked one. Install `pyrewire>=1.0.3` and
 run `/factlog check` to verify, or pass `--allow-unverified` to accept the
-unverified compile and keep the exit code `0`.
+unverified compile and keep the exit code `0`. That flag tolerates the **engine
+being absent, not a policy defect**: if `policy/logic-policy.md` defines rules
+that did not compile, the policy is silently not applied, so `finalize` exits
+non-zero (`3`) regardless of `--allow-unverified` — fix the policy rather than
+suppress the signal.
 
 **Contradiction detection.** Relations you list in `policy/single-valued.md`
 (one relation name per line) are treated as *functional* — at most one object
