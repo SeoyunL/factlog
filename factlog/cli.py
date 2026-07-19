@@ -1929,11 +1929,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     facts = ctx.load_facts() if ctx.candidates_csv.is_file() else []
     by_status = Counter(r["status"] for r in facts)
     engine_rows = common.engine_facts(facts)
+    # Display the DEDUPED engine-atom count, the same basis the report's `engine facts:`
+    # (accepted.dl is deduped) and the freshness mismatch check below both use. Showing
+    # raw len(engine_rows) let a duplicate-triple KB print "7 engine fact(s)" next to a
+    # report reading "engine facts: 6" while the dedup-aware mismatch stayed silent
+    # (6==6) — the two on-screen numbers disagreed with no explanation (#355/#330 AC2).
+    n_engine = len(common.dedup_engine_atoms(engine_rows))
     if facts:
         order = ["confirmed", "accepted", "needs_review", "candidate", "superseded"]
         seen = [f"{s}={by_status[s]}" for s in order if by_status.get(s)]
         extra = [f"{s}={n}" for s, n in by_status.items() if s not in order]
-        print(f"  facts:      {len(facts)} candidate(s) [{', '.join(seen + extra)}]; {len(engine_rows)} engine fact(s)")
+        print(f"  facts:      {len(facts)} candidate(s) [{', '.join(seen + extra)}]; {n_engine} engine fact(s)")
     else:
         print("  facts:      none (no facts/candidates.csv — run /factlog sync)")
 
@@ -2052,7 +2058,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         # report that checked 3, and still called it fresh. Compare dedup-aware (the report
         # counts deduped accepted.dl rows, so dedup the candidate side too — legitimate
         # duplicate triples must not false-alarm) and say so on mismatch.
-        expected_engine = len(common.dedup_engine_atoms(engine_rows))
+        expected_engine = n_engine  # same deduped basis as the `engine fact(s)` line printed above
         if report_engine is not None and report_engine.isdigit() and int(report_engine) != expected_engine:
             line += (
                 f"\n              ⚠ engine-input mismatch: {expected_engine} confirmed fact(s) in "
