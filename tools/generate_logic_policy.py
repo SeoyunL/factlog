@@ -382,10 +382,17 @@ def _one_line(message: str) -> str:
 
     That safety is a property of one exception type, not of the marker. An exception
     class that puts OS text in its message without repr would break it, so the guarantee
-    is stated here instead: no message, whatever produces it, can add a line. The set is
-    the characters str.splitlines() splits on plus the rest of C0/C1 and DEL, since
-    _section in tests/unit/test_failed_policy_run_marker.py reads the marker by
-    splitlines() while a Markdown renderer reads it by \\n and \\r.
+    is stated here instead, and it is deliberately narrow: no message, whatever produces
+    it, can add a LINE to the marker. The set is the characters str.splitlines() splits
+    on plus the rest of C0/C1 and DEL, because the marker's readers split it into lines
+    — _section in tests/unit/test_failed_policy_run_marker.py by str.splitlines(), a
+    Markdown renderer by \\n and \\r.
+
+    What this does NOT promise is that no '## ' can appear in the message at all. A
+    message of "boom ## Written by this run" puts one there with no control character
+    involved, and no escaping can prevent it. It is harmless because both readers anchor
+    a heading to the start of a line and that text sits mid-line — which is why the
+    guarantee is phrased about lines rather than about the '## ' sequence.
     """
     return re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", _escape_control, message)
 
@@ -401,8 +408,12 @@ def _kb_relative(name: object) -> str:
     try:
         return path.relative_to(ROOT).as_posix()
     except ValueError:
-        # Outside the KB, so there is no relative form; the basename still identifies it
-        # and dropping the rest is what keeps the marker independent of where the KB sits.
+        # Outside the KB, so there is no relative form and the basename is what is left.
+        # This does NOT make such a name position-independent: the basename can itself be
+        # the varying component, e.g. the KB directory '/a/kbA' and a copy of it at
+        # '/b/kbBBBBBBBB' reduce to 'kbA' and 'kbBBBBBBBB'. Position independence is
+        # claimed only for paths INSIDE the KB, which is every path the run's own writes
+        # produce; a name from outside can still move the marker's bytes.
         return path.name
 
 
@@ -415,7 +426,10 @@ def _failure_message(exc: BaseException) -> str:
     determinism the marker is supposed to have. Reproduce on base e0cc695 by copying a
     KB to two paths of different name length, running once cleanly, replacing
     policy/logic-policy.dl with a directory so tmp.replace raises IsADirectoryError, and
-    comparing marker bytes — md5 d6e5f67b vs 6d11d2cf.
+    comparing marker bytes: on base the two DIFFER, here they are equal. The comparison
+    is stated as an inequality on purpose — the absolute md5s depend on the temporary
+    directory the reproduction runs in, and that dependence is the defect itself, so
+    quoting fixed digests would give a number nobody else can reproduce.
 
     Rebuilding rather than substituting str(ROOT) out of the finished message: the
     filenames are rendered through %r, so a path holding a quote or a control character
@@ -424,10 +438,29 @@ def _failure_message(exc: BaseException) -> str:
     Both filenames are kept. errno and strerror are kept. Losing them for determinism
     would trade one unreadable marker for another, and it is why "keep the first line
     only" was rejected — the rename case carries its second path there.
+
+    strerror is not the only place a message can sit. An OSError built like a plain
+    exception, `e = OSError("boom"); e.filename = ...`, leaves errno and strerror None
+    and keeps "boom" in args, so reading strerror alone dropped the whole diagnosis and
+    rendered `OSError: 'policy/x.dl'`. args is therefore consulted when errno and
+    strerror are both empty, which is exactly the shape that carries no OS text.
+
+    Falling back to str(exc) in that shape does NOT work, and was measured before being
+    rejected: OSError.__str__ appends the filename whenever one is set, so
+    `OSError("boom")` with filename '/abs/kb/policy/x.dl' stringifies to
+    "[Errno None] None: '/abs/kb/policy/x.dl'" — the absolute path comes straight back
+    and takes the determinism with it. Rebuilding is what keeps both properties.
     """
     if isinstance(exc, OSError) and exc.filename is not None:
         prefix = f"[Errno {exc.errno}] " if exc.errno is not None else ""
-        reason = f"{exc.strerror}: " if exc.strerror else ""
+        if exc.strerror:
+            reason = f"{exc.strerror}: "
+        elif exc.errno is None and exc.args:
+            # No errno and no strerror: this was not built from a syscall result, so args
+            # holds the author's message rather than an (errno, strerror) pair.
+            reason = f"{' '.join(str(arg) for arg in exc.args)}: "
+        else:
+            reason = ""
         names = [repr(_kb_relative(exc.filename))]
         if exc.filename2 is not None:
             names.append(repr(_kb_relative(exc.filename2)))
