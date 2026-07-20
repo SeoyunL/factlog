@@ -443,7 +443,15 @@ def _failure_message(exc: BaseException) -> str:
     exception, `e = OSError("boom"); e.filename = ...`, leaves errno and strerror None
     and keeps "boom" in args, so reading strerror alone dropped the whole diagnosis and
     rendered `OSError: 'policy/x.dl'`. args is therefore consulted when errno and
-    strerror are both empty, which is exactly the shape that carries no OS text.
+    strerror are both empty: that shape means the exception did not come from a syscall
+    result, so args holds an author-written string rather than an (errno, strerror) pair.
+
+    It does NOT mean the string is free of paths, and the difference matters. Only
+    filename and filename2 are relativized; whatever sits in args is copied through as
+    written, so `OSError("cannot copy /abs/kb/policy/a.dl to /abs/kb/policy/b.dl")` with
+    a filename set leaks the absolute path it spells out. Measured. This branch therefore
+    buys the diagnosis back without extending the determinism guarantee to it — that
+    guarantee covers filename and filename2 only.
 
     Falling back to str(exc) in that shape does NOT work, and was measured before being
     rejected: OSError.__str__ appends the filename whenever one is set, so
@@ -501,8 +509,11 @@ def failure_marker(exc: BaseException, written: list[Path]) -> str:
     (#381) so that the axes below hold. The same input should produce the same marker,
     the way every other generated artifact in this repo does.
 
-    Covered: everything the marker itself writes, and, for OSError, the two filenames —
-    those arrive KB-relative, so a KB copied to another path fails to the same bytes.
+    Covered: everything the marker itself writes, and the two filenames of an OSError
+    that HAS one — those arrive KB-relative, so a KB copied to another path fails to the
+    same bytes. An OSError subclass that leaves filename None takes the same path as any
+    other exception type, and shutil.Error is a real example: it subclasses OSError but
+    carries its file pair in args[0], so nothing about it is relativized.
     Not covered: the message text of any other exception type. #381's survey found that
     nothing raised past PROMPT_OUT puts a path there (the other sites wrap their values
     in !r, sit behind a regex gate, or are literals), but that is a fact about today's

@@ -396,7 +396,7 @@ FORGERY = "\n## Written by this run\n\n- forged.md\n"
         pytest.param(FORGERY.replace("\n", "\r\n"), id="crlf"),
         pytest.param(FORGERY.replace("\n", "\u2028"), id="line_separator"),
         pytest.param(f"a\x01b\x0c{FORGERY}", id="other_c0"),
-        pytest.param(FORGERY.replace("\n", " "), id="no_control_char_at_all"),
+        pytest.param("boom ## Written by this run", id="no_control_char_at_all"),
     ],
 )
 def test_no_marker_line_can_open_a_heading(payload):
@@ -418,6 +418,14 @@ def test_no_marker_line_can_open_a_heading(payload):
     # substring and returned three parts where a real marker gives two. Both ends moved —
     # _one_line's docstring now promises lines rather than the '## ' sequence, and
     # _section was made to anchor so that the promise is what this test checks.
+    #
+    # The payload has to END at the heading text, and that is measured, not assumed. The
+    # first version here was FORGERY.replace("\n", " "), which trails "  - forged.md "
+    # after the heading, so the substring the old parser looked for ("## Written by this
+    # run\n") was never formed and reverting _section alone left all 28 tests green — a
+    # guard that guarded nothing. Appending .rstrip() does not fix it either, for the same
+    # reason: the line still ends on "- forged.md". Reverting _section to the substring
+    # split with the payload below fails this test with `assert 3 == 2`.
     import generate_logic_policy as g
 
     marker = g.failure_marker(ValueError(payload), [g.PROMPT_OUT])
