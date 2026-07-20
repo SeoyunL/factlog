@@ -234,14 +234,24 @@ def test_compile_policy_is_only_ever_fed_normalized_rules_output():
       What it holds is not a compiled relation name but the author's original .md text —
       a prompt exists to hand the model the source verbatim, so stripping it would defeat
       the file's purpose. It is not engine input; nothing reads it back into the .dl.
-    - ``RESPONSE_OUT`` is before THIS gate but after the #359 one. On the deterministic
-      path fixture_policy_json raises first, so the file is never created at all —
-      measured: rc=1 and no natural-language-to-policy-response.json. It becomes reachable
-      only once a real LLM draft is wired in at its call site, replacing fixture output.
+    - ``RESPONSE_OUT`` is before THIS gate but after the #359 one, so whether it exists
+      after a failure depends on WHICH gate fired. For a control char in a backtick
+      relation name, fixture_policy_json raises first and the file is never created —
+      measured: rc=1 and no natural-language-to-policy-response.json. That holds for THAT
+      input only. #372 measured a deterministic input that dies past this line: two
+      bullets with the same reason, one carrying {canonical}, raise in normalized_rules
+      and leave both prompt.md and response.json on disk at rc=1. No LLM draft is needed
+      to reach RESPONSE_OUT on a failing run — the earlier wording here claimed otherwise
+      and was wrong.
 
-    Both orderings are decisions, not oversights: these files are the audit record of what
-    went in and what came back, and an audit record that only survives validation cannot
-    show why validation failed. Whoever wires a real draft in should keep the order.
+    These files are the audit record of what went in and what came back, and an audit
+    record that only survives validation cannot show why validation failed — so keeping
+    them past a failure is worth defending, and the ordering is pinned below. The history
+    does not say the order was chosen for that reason (``git log -L 374,392`` on the tool
+    shows one migration commit and nothing else), so read this as the argument for the
+    order rather than as its provenance. #372 covers the other half: a failing run now
+    writes runs/natural-language-to-policy-failed.md saying which of these files it wrote
+    and which an earlier run left, because the bytes alone cannot say.
     """
     # These are TEXT pins: they match source spelling, so an innocent rename or reflow
     # breaks them without anything being wrong. The messages say what to check, because a
@@ -262,7 +272,7 @@ def test_compile_policy_is_only_ever_fed_normalized_rules_output():
         f"{source.count('rules = normalized_rules(draft)')}. {bypass_hint}"
     )
 
-    # Pin the ordering the docstring calls intentional, so flipping it is a test failure
+    # Pin the ordering the docstring argues for, so flipping it is a test failure
     # rather than a silent change to what the audit record captures.
     lines = source.splitlines()
     response_at = next(i for i, ln in enumerate(lines) if "RESPONSE_OUT.write_text" in ln)

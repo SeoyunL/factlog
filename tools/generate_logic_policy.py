@@ -38,6 +38,10 @@ PROMPT_MD = PROMPTS_DIR / "natural_language_to_policy.md"
 PROMPT_OUT = RUNS_DIR / "natural-language-to-policy-prompt.md"
 RESPONSE_OUT = RUNS_DIR / "natural-language-to-policy-response.json"
 TRACE_OUT = RUNS_DIR / "natural-language-to-policy-trace.md"
+FAILED_OUT = RUNS_DIR / "natural-language-to-policy-failed.md"
+# The three artifacts a generating run accounts for in FAILED_OUT. Ordered as the run
+# writes them, so the marker reads in pipeline order.
+RUN_ARTIFACTS = (PROMPT_OUT, RESPONSE_OUT, TRACE_OUT)
 REASON_RE = re.compile(r"^[a-z0-9_]+$")
 PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 RELATION_RE = re.compile(r"^[^\s\"`(),.]+$")
@@ -351,6 +355,77 @@ def write_trace(rules: list[dict[str, Any]], output: str) -> None:
     TRACE_OUT.write_text("\n".join(trace), encoding="utf-8")
 
 
+def failure_marker(exc: BaseException, written: list[Path]) -> str:
+    """Render the accounting note a failed run leaves in runs/ (#372).
+
+    A run that raises after PROMPT_OUT leaves runs/ describing no single run: the files
+    it managed to write sit beside whatever the previous run left, and nothing in their
+    bytes says which is which. Reproduce on base 4b40fac, over a copy of
+    examples/sample-kb — one clean run, then replace policy/logic-policy.md with the
+    CONTROL_CHAR_MD constant of tests/unit/test_failed_policy_run_marker.py (a U+0001
+    inside a backtick relation name) and run again: rc=1, prompt.md c3dd879a ->
+    cc0b8770, and response.json / trace.md still at 56ca7221 / 3b618ecb, the first run's
+    bytes.
+    That directory is an audit record of a run that never happened, which is the defect
+    — not the leftovers themselves, since deleting them only moves the mismatch onto the
+    earlier run's half-record.
+
+    Files are sorted into what this run wrote and what merely sits there, because only
+    the first group is evidence about the failing input. The verdict is what main()
+    RECORDED writing, not a re-read of the bytes: a run whose output happens to equal
+    its predecessor's is still this run's output, and a hash comparison would call it
+    stale.
+
+    The headline states only what the two groups support, because a marker that
+    overstates recreates the defect it exists to report. A run that wrote every artifact
+    and then failed on the .dl leaves runs/ internally consistent — the mixed-vintage
+    sentence would be false there, so it appears only when something in runs/ is in fact
+    older than this run. main() does not call this at all when the run wrote nothing.
+
+    Contains no wall-clock time and no absolute paths: the same input must produce the
+    same marker, the way every other generated artifact in this repo does.
+    """
+    written_names = {path.name for path in written}
+    mine = [p for p in RUN_ARTIFACTS if p.name in written_names]
+    stale = [p for p in RUN_ARTIFACTS if p.name not in written_names and p.is_file()]
+    absent = [p for p in RUN_ARTIFACTS if p.name not in written_names and not p.is_file()]
+    lines = [
+        "# natural-language-to-policy: last run failed",
+        "",
+        "tools/generate_logic_policy.py raised part-way through, so policy/logic-policy.dl",
+        "was not regenerated from the files below (#372).",
+        "",
+    ]
+    if stale:
+        lines += [
+            "Those files do not all belong to the same run: the ones this run wrote sit",
+            "beside files an earlier run left, and their bytes cannot tell you which is",
+            "which. Do not read this directory as one audit record while this marker",
+            "exists.",
+            "",
+        ]
+    message = str(exc)
+    lines += [
+        "## Failure",
+        "",
+        f"{type(exc).__name__}: {message}" if message else type(exc).__name__,
+        "",
+    ]
+    groups = [
+        ("Written by this run", mine),
+        ("Present, not written by this run", stale),
+        ("Not present", absent),
+    ]
+    for heading, paths in groups:
+        lines.append(f"## {heading}")
+        lines.append("")
+        lines.extend(f"- {path.name}" for path in paths)
+        if not paths:
+            lines.append("- (none)")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate policy/logic-policy.dl from controlled natural-language policy text.")
     parser.add_argument("--dry-run", action="store_true", help="render and validate, but do not write policy/logic-policy.dl")
@@ -374,28 +449,78 @@ def main() -> int:
         print(f"checked: {OUTPUT_DL}")
         return 0
 
-    prompt = render_prompt(policy_text)
-    PROMPT_OUT.write_text(prompt + "\n", encoding="utf-8")
+    # The marker is cleared on SUCCESS, at the end, not here. Clearing it up front would
+    # drop the previous run's accounting for files this run may never touch: a run that
+    # dies before PROMPT_OUT leaves runs/ byte-for-byte as it found it, so whatever the
+    # marker said about those files is still true and deleting it would hide a mixture an
+    # earlier run created. Absence therefore means "the last run that wrote anything into
+    # runs/ finished". A --check run writes nothing under runs/ and touches neither.
+    #
+    # BaseException, not Exception: render_prompt (via read_required on the prompt
+    # template) and fixture_policy_json both raise SystemExit from inside this try, and a
+    # run cut short by one leaves the same half-written directory as any other failure.
+    written: list[Path] = []
+    try:
+        prompt = render_prompt(policy_text)
+        PROMPT_OUT.write_text(prompt + "\n", encoding="utf-8")
+        written.append(PROMPT_OUT)
 
-    # LLM draft step is Claude-native (see references/natural-language-to-policy.md).
-    # Deterministic compile uses fixture_policy_json for local/non-LLM runs.
-    draft = fixture_policy_json(policy_text)
-    RESPONSE_OUT.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # LLM draft step is Claude-native (see references/natural-language-to-policy.md).
+        # Deterministic compile uses fixture_policy_json for local/non-LLM runs.
+        draft = fixture_policy_json(policy_text)
+        RESPONSE_OUT.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        written.append(RESPONSE_OUT)
 
-    rules = normalized_rules(draft)
-    program = compile_policy(rules)
-    smoke_compile(program)
+        rules = normalized_rules(draft)
+        program = compile_policy(rules)
+        smoke_compile(program)
 
-    write_trace(rules, OUTPUT_DL.relative_to(OUTPUT_DL.parents[1]).as_posix())
+        write_trace(rules, OUTPUT_DL.relative_to(OUTPUT_DL.parents[1]).as_posix())
+        written.append(TRACE_OUT)
 
-    if not args.dry_run:
-        tmp = OUTPUT_DL.with_suffix(".dl.tmp")
-        tmp.write_text(program, encoding="utf-8")
-        tmp.replace(OUTPUT_DL)
+        if not args.dry_run:
+            tmp = OUTPUT_DL.with_suffix(".dl.tmp")
+            tmp.write_text(program, encoding="utf-8")
+            tmp.replace(OUTPUT_DL)
+    except BaseException as exc:
+        # Only a run that wrote something can have left a mixture; one that wrote nothing
+        # leaves runs/ exactly as it found it, and a marker there would announce a
+        # mismatch that does not exist — the very kind of audit surface #372 removes.
+        if written:
+            try:
+                FAILED_OUT.write_text(failure_marker(exc, written), encoding="utf-8")
+            except OSError:
+                # A full or read-only disk must not rewrite the verdict: the caller needs
+                # to see the gate that fired, not the failure to record it. The marker is
+                # an extra record, so losing it is strictly better than replacing `exc`.
+                pass
+        # Re-raised unchanged, so the exit code and stderr a caller sees stay exactly
+        # what they were.
+        raise
+    # Reported BEFORE the marker is cleared, because the files named here exist by now and
+    # clearing can fail. Printing afterwards left the unlink-failure path with empty stdout
+    # — rc=1 and not one line about the .dl it had just written, so an operator had only
+    # the error sentence to go on.
     print(f"policy rules: {len(rules)}")
     print(f"written: {OUTPUT_DL}" if not args.dry_run else f"dry-run: {OUTPUT_DL} not changed")
     print(f"prompt: {PROMPT_OUT}")
     print(f"trace: {TRACE_OUT}")
+
+    # Every artifact under runs/ now comes from this run, so the accounting is settled.
+    # This one is NOT swallowed, unlike the write above, and the asymmetry is the point:
+    # an unwritable marker only costs a record, while an undeletable one leaves a stale
+    # marker calling current files leftovers — a false audit surface, which is the thing
+    # #372 removes. So the run says it could not honour that invariant instead of exiting
+    # 0 over a lie. Reproduced by placing a directory at the marker path.
+    try:
+        FAILED_OUT.unlink(missing_ok=True)
+    except OSError as exc:
+        raise FactlogError(
+            f"generated {OUTPUT_DL.name} but could not clear {FAILED_OUT.name}: {exc}. "
+            f"That file marks the previous run as failed, and leaving it would describe "
+            f"this run's fresh runs/ files as another run's leftovers. Remove it by hand "
+            f"and re-run."
+        ) from exc
     return 0
 
 
