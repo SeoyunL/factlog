@@ -2470,6 +2470,27 @@ def wirelog_undecodable_chars(value: str) -> list[str]:
 
     Corollary: an emission site whose input is guaranteed to have passed a gate carries a
     DOCUMENTED PRECONDITION, not a second gate — and that precondition states what breaks it.
+
+    Whether that antecedent HOLDS is judged by bypassability, not by counting call sites. A
+    REQUIRED argument whose only ordinary producer carries the gate keeps the corollary:
+    compile_policy(rules) is reached as compile_policy(normalized_rules(draft)) by every
+    caller it has, so skipping the gate means deliberately constructing some other value. An
+    OPTIONAL parameter that substitutes a gated DEFAULT does not: _attr_rel_facts(accepted=None)
+    reads accepted.dl when omitted and whatever the caller holds when passed, and the call site
+    alone never says which, so a reader cannot tell a gated input from an ungated one. That is
+    clause 2's shape — no artefact to attribute across the paths, so the gate drops to the point
+    they share. #373 is the case, and its parameter is not a test seam: run_wirelog passes rows
+    to REUSE an accepted.dl it already read (the `already loaded above` comment there), added
+    with the function in #237. The sibling idiom already carries ungated rows — cli.py hands
+    entity_set/value_set its ctx.load_facts(), candidates.csv before any gate — and
+    _attr_rel_facts is the only member of it that emits into a .dl.
+
+    A GENERATED artefact also guarantees only TEMPORALLY, not structurally. accepted.dl is
+    written behind the fact gate, but run_wirelog re-reads it from disk with no recompile, so
+    "it passed the gate" describes an earlier process rather than this input — hand editing,
+    truncation and an external generator all reach emission ungated, and #373's default branch,
+    which takes no argument at all, is breached exactly that way. Read a gate as covering the
+    bytes it saw, never the file it once produced.
     """
     return sorted(set(_WIRELOG_UNDECODABLE_RE.findall(value)))
 
