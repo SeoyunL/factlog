@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from factlog.export_types import resolve_source_type, should_promote_to_journal_type
+
 _LIST_ITEM_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 _KV_RE = re.compile(r"^([A-Za-z0-9_]+):\s*(.*)$")
 
@@ -22,20 +24,36 @@ _KV_RE = re.compile(r"^([A-Za-z0-9_]+):\s*(.*)$")
 _ENTRY_TYPES = {
     # Zotero itemType
     "journalArticle": "article",
+    "magazineArticle": "article",
+    "newspaperArticle": "article",
     "conferencePaper": "inproceedings",
     "book": "book",
     "bookSection": "incollection",
+    "encyclopediaArticle": "incollection",
+    "dictionaryEntry": "incollection",
     "report": "techreport",
     "thesis": "phdthesis",
     "preprint": "misc",
-    # OpenAlex work type
+    # OpenAlex work type (a subset of api_client.WORK_TYPES; see
+    # tests/unit/test_export_entry_types.py, which pins that containment)
     "article": "article",
     "review": "article",
+    "book-review": "article",
+    "letter": "article",
+    "editorial": "article",
+    "erratum": "article",
+    "retraction": "article",
+    "data-paper": "article",
     "conference-paper": "inproceedings",
     "book-chapter": "incollection",
     "book-section": "incollection",
+    "reference-entry": "incollection",
     "dissertation": "phdthesis",
     "report-component": "techreport",
+    # Standard BibTeX has no @dataset/@software (those are biblatex), so these
+    # stay @misc — but CSL does have them, hence no matching _CSL_TYPES value.
+    "dataset": "misc",
+    "software": "misc",
 }
 
 # Char-by-char LaTeX escaping (one pass, so inserted braces are not re-escaped).
@@ -119,49 +137,13 @@ def is_annotation_source(fm: dict) -> bool:
     return fm.get("source_kind") == "annotations"
 
 
-def resolve_source_type(fm: dict) -> str | None:
-    """Which front-matter key carries this record's work type, and what it says.
-
-    Each integration records the type under a different key, so reading only
-    Zotero's ``item_type`` dropped every OpenAlex/arXiv/PubMed record to the
-    exporter's default type (#384). Probed most-specific first:
-
-    ==========  ====================================  ===================
-    source      key                                   vocabulary
-    ==========  ====================================  ===================
-    Zotero      ``item_type``                         ``journalArticle``
-    OpenAlex    ``type``                              ``conference-paper``
-    arXiv       ``preprint: true``                    (implies a preprint)
-    PubMed      *none* — inferred by the caller from ``journal``
-    ==========  ====================================  ===================
-
-    ``item_type`` stays first so a Zotero-only KB exports exactly as before.
-    The arXiv flag is checked before any ``journal``-based inference because an
-    arXiv deposit stays a preprint even when ``journal`` records where the work
-    was later published; callers apply the ``journal`` fallback themselves,
-    since what it should promote to is a per-format decision.
-
-    Returns None when no key answers — the caller picks its own default.
-    """
-    for key in ("item_type", "type"):
-        value = fm.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    if fm.get("preprint") is True:
-        return "preprint"
-    return None
-
-
 def _entry_type(fm: dict) -> str:
     source_type = resolve_source_type(fm)
-    entry = _ENTRY_TYPES.get(source_type, "misc") if source_type else "misc"
-    # Standard BibTeX's @misc has no `journal` field, so biber/BibTeX drops it
-    # with a warning. A record that names a journal was published in one, so
-    # cite it as @article rather than emit the invalid pairing (#384). This also
-    # types PubMed records, which carry no type key at all.
-    if entry == "misc" and fm.get("journal"):
+    if should_promote_to_journal_type(fm, source_type):
+        # PubMed declares no type at all; naming a journal is the only evidence
+        # its front matter gives that the record is a journal article (#384).
         return "article"
-    return entry
+    return _ENTRY_TYPES.get(source_type, "misc") if source_type else "misc"
 
 
 def _esc(value: str) -> str:
@@ -180,15 +162,22 @@ def to_bibtex(fm: dict, cite_key: str) -> str:
     authors = fm.get("authors")
     if isinstance(authors, list) and authors:
         fields.append(("author", " and ".join(str(a) for a in authors)))
+    entry_type = _entry_type(fm)
+    # Standard BibTeX's @misc has no `journal` field: biber/BibTeX drops it with
+    # a warning, which is how a published preprint lost its venue entirely (#384).
+    # The venue is still worth recording, so it goes to `howpublished`, the field
+    # @misc does define. Retyping the entry instead would contradict #60 — an
+    # arXiv deposit stays a preprint even once `journal` names where it landed.
+    venue_key = "journal" if entry_type != "misc" else "howpublished"
     for fm_key, bib_key in (("title", "title"), ("year", "year"),
-                            ("journal", "journal"), ("doi", "doi")):
+                            ("journal", venue_key), ("doi", "doi")):
         value = fm.get(fm_key)
         if value:
             fields.append((bib_key, str(value)))
     if fm.get("pmid"):
         fields.append(("note", f"PMID: {fm['pmid']}"))
 
-    lines = [f"@{_entry_type(fm)}{{{safe_cite_key(cite_key)},"]
+    lines = [f"@{entry_type}{{{safe_cite_key(cite_key)},"]
     for name, value in fields:
         lines.append(f"  {name} = {{{_esc(value)}}},")
     lines.append("}")

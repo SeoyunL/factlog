@@ -241,9 +241,36 @@ factlog export --csl -o refs.json       # CSL-JSON (Pandoc/Zotero/Word)
 ```
 
 `--bibtex`|`--csl` 중 하나를 지정합니다. `sources/*.md` front matter의 provenance를 항목당
-한 엔트리로 냅니다(id/citation key=슬러그 stem, itemType→타입, 저자·연도·저널·DOI·PMID).
+한 엔트리로 냅니다(id/citation key=슬러그 stem, 저자·연도·저널·DOI·PMID).
 주석 소스(`source_kind: annotations`)와 provenance 없는 파일은 제외합니다. stdout 출력은
 순수 BibTeX/JSON(진행 메시지는 stderr)이라 `> refs.bib`로 바로 저장할 수 있습니다.
+
+### 엔트리 타입 결정 순서
+
+연동마다 타입을 담는 front matter 키가 다릅니다. Zotero의 `item_type`만 읽던 동안
+OpenAlex/arXiv/PubMed 레코드가 전부 기본 타입으로 떨어졌기 때문에(#384), 아래 순서로
+**먼저 답하는 키 하나**를 채택합니다.
+
+| 순서 | 키 | 쓰는 연동 | 예 |
+|---|---|---|---|
+| 1 | `item_type` | Zotero | `journalArticle` → `@article` / `article-journal` |
+| 2 | `type` (단, `imported_from: openalex`일 때만) | OpenAlex | `conference-paper` → `@inproceedings` / `paper-conference` |
+| 3 | `preprint: true` | arXiv | → `@misc` / `article` |
+| 4 | (아무 키도 없을 때) `journal` 유무 | PubMed | 저널명이 있으면 `@article` / `article-journal` |
+
+4단계는 **타입을 선언한 키가 하나도 없을 때만** 동작합니다. 선언된 타입을 `journal`로
+덮어쓰지 않는다는 뜻이고, 이유는 두 가지입니다. Zotero는 `publicationTitle`을 item type과
+무관하게 `journal`로 옮기므로 잡지·신문 기사가 저널 논문으로 잘못 기재되고, arXiv 기탁본은
+`journal`이 후속 게재를 기록해도 여전히 preprint이기 때문입니다(#60). 매핑이 없는 타입은
+4단계로 추측하지 않고 기본값(`@misc` / `document`)으로 두며, 필요하면 매핑 표
+(`factlog/bibtex.py`의 `_ENTRY_TYPES`, `factlog/csl.py`의 `_CSL_TYPES`)에 추가합니다.
+
+`type` 키는 provenance 원장에서 *소스 이름*을 담는 RESERVED 키이기도 해서(#73),
+OpenAlex writer가 실제로 남긴 레코드에서만 신뢰합니다.
+
+표준 BibTeX의 `@misc`에는 `journal` 필드가 없어 biber/BibTeX가 경고와 함께 버립니다.
+그래서 `@misc`로 나가는 항목의 저널명은 `@misc`가 정의하는 `howpublished`로 옮겨
+적습니다 — 게재지를 잃지 않으면서 preprint를 저널 논문으로 재분류하지도 않습니다.
 
 ## 설정 파일 (선택)
 

@@ -47,10 +47,32 @@ factlog zotero-import --collection "Systematic Review" --pdf            # biblio
 factlog zotero-import --collection "Systematic Review" --annotations    # + highlights & notes
 ```
 
+## Citation export
+
+`factlog export --bibtex|--csl` emits one entry per source. Each integration
+records the work type under a different front-matter key, so the exporters take
+the **first key that answers** (#384):
+
+| Order | Key | Written by | Example |
+|---|---|---|---|
+| 1 | `item_type` | Zotero | `journalArticle` → `@article` / `article-journal` |
+| 2 | `type` (only when `imported_from: openalex`) | OpenAlex | `conference-paper` → `@inproceedings` / `paper-conference` |
+| 3 | `preprint: true` | arXiv | → `@misc` / `article` |
+| 4 | presence of `journal`, *only if no key above answered* | PubMed | → `@article` / `article-journal` |
+
+Step 4 never overrides a declared type: Zotero copies `publicationTitle` into
+`journal` for every item type (so magazine and newspaper articles would be
+mistyped as journal articles), and an arXiv deposit stays a preprint even once
+`journal` records where it was published (#60). A declared type with no mapping
+keeps the default (`@misc` / `document`) rather than being guessed at.
+
+Standard BibTeX's `@misc` has no `journal` field, so for `@misc` entries the
+venue is written to `howpublished` instead — keeping it without reclassifying a
+preprint as a journal article.
+
 ## Further reading
 
 The Korean [Zotero 가져오기](zotero-import.md) covers more than this page does:
 the Local API setup walkthrough, the output format, the shape of the generated
-source file, the `--pdf` and `--annotations` flows in detail, BibTeX export
-(`factlog export --bibtex`), the optional config file, and what is not supported
-yet.
+source file, the `--pdf` and `--annotations` flows in detail, the optional
+config file, and what is not supported yet.

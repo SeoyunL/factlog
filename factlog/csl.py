@@ -4,35 +4,52 @@
 
 CSL-JSON is consumed by Pandoc, Zotero, and Word citation tools, so
 `factlog export --csl` complements the BibTeX export for a wider set of writing
-workflows. Reuses the front-matter reader from :mod:`factlog.bibtex`; read-only.
+workflows. Read-only. The caller (`factlog export`) supplies the parsed front
+matter, read by :mod:`factlog.bibtex`; the work-type judgements this module
+shares with the BibTeX exporter live in :mod:`factlog.export_types`.
 """
 from __future__ import annotations
 
 import re
 
-from factlog.bibtex import resolve_source_type
+from factlog.export_types import resolve_source_type, should_promote_to_journal_type
 
-# Work type -> CSL type; anything else falls back to "document". Keyed by both
-# vocabularies `resolve_source_type` can return (Zotero itemType and OpenAlex
-# work type), mirroring `bibtex._ENTRY_TYPES` entry for entry so the two
-# exporters never disagree about what a record is.
+# Work type -> CSL type; anything else falls back to "document". Keyed by the
+# same vocabularies as `bibtex._ENTRY_TYPES` (Zotero itemType and OpenAlex work
+# type) and kept key-for-key in step with it, so the two exporters never
+# disagree about what a record is. CSL draws finer distinctions than standard
+# BibTeX in places (magazine/newspaper, dataset/software), so the values are a
+# refinement of the BibTeX ones, never a contradiction.
 _CSL_TYPES = {
     # Zotero itemType
     "journalArticle": "article-journal",
+    "magazineArticle": "article-magazine",
+    "newspaperArticle": "article-newspaper",
     "conferencePaper": "paper-conference",
     "book": "book",
     "bookSection": "chapter",
+    "encyclopediaArticle": "entry-encyclopedia",
+    "dictionaryEntry": "entry-dictionary",
     "report": "report",
     "thesis": "thesis",
     "preprint": "article",
     # OpenAlex work type
     "article": "article-journal",
     "review": "article-journal",
+    "book-review": "article-journal",
+    "letter": "article-journal",
+    "editorial": "article-journal",
+    "erratum": "article-journal",
+    "retraction": "article-journal",
+    "data-paper": "article-journal",
     "conference-paper": "paper-conference",
     "book-chapter": "chapter",
     "book-section": "chapter",
+    "reference-entry": "entry-encyclopedia",
     "dissertation": "thesis",
     "report-component": "report",
+    "dataset": "dataset",
+    "software": "software",
 }
 
 _YEAR_RE = re.compile(r"\d{4}")
@@ -40,14 +57,11 @@ _YEAR_RE = re.compile(r"\d{4}")
 
 def _csl_type(fm: dict) -> str:
     source_type = resolve_source_type(fm)
-    csl_type = _CSL_TYPES.get(source_type, "document") if source_type else "document"
-    # A record naming a journal is a journal article, even when no key says so —
-    # this is the only signal PubMed front matter gives (#384). Unlike BibTeX
-    # this promotes "document" only: CSL's "article" (what a preprint maps to)
-    # is already a valid pairing with `container-title`.
-    if csl_type == "document" and fm.get("journal"):
+    if should_promote_to_journal_type(fm, source_type):
+        # Same inference as `bibtex._entry_type`, on the same condition, which is
+        # why that condition lives in one place (#384).
         return "article-journal"
-    return csl_type
+    return _CSL_TYPES.get(source_type, "document") if source_type else "document"
 
 
 def _author(name: str) -> dict:
