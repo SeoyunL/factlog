@@ -38,6 +38,10 @@ PROMPT_MD = PROMPTS_DIR / "natural_language_to_policy.md"
 PROMPT_OUT = RUNS_DIR / "natural-language-to-policy-prompt.md"
 RESPONSE_OUT = RUNS_DIR / "natural-language-to-policy-response.json"
 TRACE_OUT = RUNS_DIR / "natural-language-to-policy-trace.md"
+FAILED_OUT = RUNS_DIR / "natural-language-to-policy-failed.md"
+# The three artifacts a generating run accounts for in FAILED_OUT. Ordered as the run
+# writes them, so the marker reads in pipeline order.
+RUN_ARTIFACTS = (PROMPT_OUT, RESPONSE_OUT, TRACE_OUT)
 REASON_RE = re.compile(r"^[a-z0-9_]+$")
 PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 RELATION_RE = re.compile(r"^[^\s\"`(),.]+$")
@@ -351,6 +355,62 @@ def write_trace(rules: list[dict[str, Any]], output: str) -> None:
     TRACE_OUT.write_text("\n".join(trace), encoding="utf-8")
 
 
+def failure_marker(exc: BaseException, written: list[Path]) -> str:
+    """Render the accounting note a failed run leaves in runs/ (#372).
+
+    A run that raises after PROMPT_OUT leaves runs/ describing no single run: the files
+    it managed to write sit beside whatever the previous run left, and nothing in their
+    bytes says which is which. Measured on main 4b40fac, sample-kb, success then a
+    control-char relation name: prompt.md changed (c3dd879a -> a237478b), response.json
+    and trace.md kept the previous run's bytes (56ca7221 / 3b618ecb) and rc was 1. That
+    directory is an audit record of a run that never happened, which is the defect —
+    not the leftovers themselves, since deleting them only moves the mismatch onto the
+    earlier run's half-record.
+
+    Files are sorted into what this run wrote and what merely sits there, because only
+    the first group is evidence about the failing input. The verdict is what main()
+    RECORDED writing, not a re-read of the bytes: a run whose output happens to equal
+    its predecessor's is still this run's output, and a hash comparison would call it
+    stale.
+
+    Contains no wall-clock time and no absolute paths: the same input must produce the
+    same marker, the way every other generated artifact in this repo does.
+    """
+    written_names = {path.name for path in written}
+    groups = [
+        ("Written by this run", [p for p in RUN_ARTIFACTS if p.name in written_names]),
+        (
+            "Present, not written by this run",
+            [p for p in RUN_ARTIFACTS if p.name not in written_names and p.is_file()],
+        ),
+        (
+            "Not present",
+            [p for p in RUN_ARTIFACTS if p.name not in written_names and not p.is_file()],
+        ),
+    ]
+    lines = [
+        "# natural-language-to-policy: last run failed",
+        "",
+        "tools/generate_logic_policy.py raised part-way through, so the files in this",
+        "directory do not all belong to the same run. Do not read them as one audit",
+        "record while this marker exists; a run that finishes deletes it before writing",
+        "anything (#372).",
+        "",
+        "## Failure",
+        "",
+        f"{type(exc).__name__}: {exc}",
+        "",
+    ]
+    for heading, paths in groups:
+        lines.append(f"## {heading}")
+        lines.append("")
+        lines.extend(f"- {path.name}" for path in paths)
+        if not paths:
+            lines.append("- (none)")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate policy/logic-policy.dl from controlled natural-language policy text.")
     parser.add_argument("--dry-run", action="store_true", help="render and validate, but do not write policy/logic-policy.dl")
@@ -374,24 +434,42 @@ def main() -> int:
         print(f"checked: {OUTPUT_DL}")
         return 0
 
-    prompt = render_prompt(policy_text)
-    PROMPT_OUT.write_text(prompt + "\n", encoding="utf-8")
+    # Clear the previous failure marker before writing anything: its absence is what
+    # tells a reader the files under runs/ come from one run, so it may only be absent
+    # once this run is the one they will describe. A --check run writes nothing under
+    # runs/, so it neither clears nor sets the marker.
+    FAILED_OUT.unlink(missing_ok=True)
 
-    # LLM draft step is Claude-native (see references/natural-language-to-policy.md).
-    # Deterministic compile uses fixture_policy_json for local/non-LLM runs.
-    draft = fixture_policy_json(policy_text)
-    RESPONSE_OUT.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # BaseException, not Exception: read_required/render_prompt raise SystemExit, and a
+    # run killed by one leaves the same half-written directory as any other failure.
+    written: list[Path] = []
+    try:
+        prompt = render_prompt(policy_text)
+        PROMPT_OUT.write_text(prompt + "\n", encoding="utf-8")
+        written.append(PROMPT_OUT)
 
-    rules = normalized_rules(draft)
-    program = compile_policy(rules)
-    smoke_compile(program)
+        # LLM draft step is Claude-native (see references/natural-language-to-policy.md).
+        # Deterministic compile uses fixture_policy_json for local/non-LLM runs.
+        draft = fixture_policy_json(policy_text)
+        RESPONSE_OUT.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        written.append(RESPONSE_OUT)
 
-    write_trace(rules, OUTPUT_DL.relative_to(OUTPUT_DL.parents[1]).as_posix())
+        rules = normalized_rules(draft)
+        program = compile_policy(rules)
+        smoke_compile(program)
 
-    if not args.dry_run:
-        tmp = OUTPUT_DL.with_suffix(".dl.tmp")
-        tmp.write_text(program, encoding="utf-8")
-        tmp.replace(OUTPUT_DL)
+        write_trace(rules, OUTPUT_DL.relative_to(OUTPUT_DL.parents[1]).as_posix())
+        written.append(TRACE_OUT)
+
+        if not args.dry_run:
+            tmp = OUTPUT_DL.with_suffix(".dl.tmp")
+            tmp.write_text(program, encoding="utf-8")
+            tmp.replace(OUTPUT_DL)
+    except BaseException as exc:
+        # Re-raised unchanged: the marker is an extra record, never a change of verdict,
+        # so the exit code and stderr a caller sees stay exactly what they were.
+        FAILED_OUT.write_text(failure_marker(exc, written), encoding="utf-8")
+        raise
     print(f"policy rules: {len(rules)}")
     print(f"written: {OUTPUT_DL}" if not args.dry_run else f"dry-run: {OUTPUT_DL} not changed")
     print(f"prompt: {PROMPT_OUT}")
