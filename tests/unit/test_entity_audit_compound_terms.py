@@ -229,6 +229,56 @@ class TestMalformedCompoundTerms:
         assert found["literal_suspects"]["published_year"] == {"date(2020)"}
 
 
+class TestAmountShapeIsJudgedWithoutADeclaration:
+    """#394 — the unit exemption covers unit RESOLUTION, not the whole type.
+
+    A KB that writes compound terms before declaring them is the population this
+    section exists for; exempting `amount` wholesale left exactly that population
+    with no signal. These values fail on literal_types' `num` group, before any
+    unit lookup, so no declaration could ever make them parse.
+    """
+
+    @pytest.mark.parametrize("value", ['amount(abc,"억")', 'amount(,"억")', "amount(5)"])
+    def test_shape_failure_is_malformed_with_no_typed_declaration(self, value):
+        found = entity_audit.audit([_row("P1", "예산", value)])
+
+        assert found["malformed_literals"] == [value]
+
+    def test_unit_resolution_failure_stays_unjudged_with_no_declaration(self):
+        # The other half of the split, and the half that keeps the fix honest: the
+        # unit table really is per-KB, so an unresolved unit must stay silent.
+        found = entity_audit.audit([_row("P1", "예산", 'amount(5,"달러")')])
+
+        assert found["malformed_literals"] == []
+
+    def test_shape_failure_is_malformed_under_a_non_amount_relation(self, monkeypatch):
+        # INFO in #394: the wrapper name decides the type for every type. A relation
+        # declared `number` supplies no unit table, so it is the no-spec case — the
+        # shape is still judged.
+        from common import TypedRelSpec
+
+        monkeypatch.setattr(
+            entity_audit,
+            "typed_relations",
+            lambda: {"예산": TypedRelSpec(type="number", alias="budget")},
+        )
+        found = entity_audit.audit([_row("P1", "예산", 'amount(abc,"억")')])
+
+        assert found["malformed_literals"] == ['amount(abc,"억")']
+
+    def test_a_declared_amount_of_good_shape_is_still_not_malformed(self, monkeypatch):
+        from common import TypedRelSpec
+
+        monkeypatch.setattr(
+            entity_audit,
+            "typed_relations",
+            lambda: {"예산": TypedRelSpec(type="amount", alias="budget", units={"파운드": 1700})},
+        )
+        found = entity_audit.audit([_row("P1", "예산", 'amount(5,"파운드")')])
+
+        assert found["malformed_literals"] == []
+
+
 class TestConflictingTypedDeclarations:
     """#393 — two declarations claiming one surface form must not silently win.
 
@@ -271,6 +321,14 @@ class TestConflictingTypedDeclarations:
             "published_year": ["published_year", "게재연도"],
             "게재연도": ["published_year", "게재연도"],
         }
+
+    def test_shape_failures_survive_a_conflicted_form(self, monkeypatch):
+        # Skipping the contested form must skip UNIT resolution only — it must not
+        # become a way to switch the whole judgement off.
+        self._two_tables(monkeypatch)
+        found = entity_audit.audit([_row("P1", "published_year", 'amount(abc,"파운드")')])
+
+        assert found["malformed_literals"] == ['amount(abc,"파운드")']
 
     def test_agreeing_declarations_are_not_a_conflict(self, monkeypatch):
         # Same spec on both lines: nothing is contested, so the table still applies

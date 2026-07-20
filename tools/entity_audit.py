@@ -141,23 +141,38 @@ def _is_malformed_compound_term(value: str, spec: object | None = None) -> bool:
     `typed-relations.md` line may attach an inline table (`(파운드=1700, 원=1)`).
     Judging it against literal_types' built-in table alone called `amount(5,"파운드")`
     malformed while the engine parsed it to 8500 — an advisory tool telling a human
-    to fix correct data, which is worse than the noise this audit removes. So an
-    amount is judged ONLY through its relation's declared spec (*spec*); with no
-    spec we do not judge it at all. A miss beats a false accusation.
+    to fix correct data, which is worse than the noise this audit removes.
 
-    The type is taken from the WRAPPER NAME, not from the relation's declared type.
-    So `date(2020,1)` under a relation declared `number` reads as well-formed here
-    even though the engine, which parses by the DECLARED type, would reject it. That
-    mismatch is a separate check (relation type vs value type), not this one.
+    So exactly ONE step is exempted, and only when the table is unreadable: UNIT
+    RESOLUTION. An amount whose SHAPE already fails — `amount(abc,"억")`,
+    `amount(,"억")`, `amount(5)` — never reaches unit resolution (literal_types'
+    `_AMOUNT_COMPOUND_RE` rejects it on the `num` group), so no unit table could
+    change the verdict and it is judged with or without a spec. Exempting the whole
+    `amount` type instead (#394) silenced precisely the population this section
+    exists for: a KB writing compound terms before declaring them.
+
+    The type is taken from the WRAPPER NAME, not from the relation's declared type,
+    for EVERY type including `amount`. So `date(2020,1)` under a relation declared
+    `number` reads as well-formed here even though the engine, which parses by the
+    DECLARED type, would reject it. That mismatch is a separate check (relation type
+    vs value type), not this one. *spec* is consulted for one purpose only — to read
+    a unit table — so a relation declared non-`amount` supplies no table and its
+    amounts are treated exactly like the no-spec case: shape is still judged, unit
+    resolution is not. That is a narrowing of the unit exemption, not a second
+    typing rule.
     """
     type_tag = _compound_term_type(value)
     if type_tag is None:
         return False
     if type_tag == "amount":
-        units = getattr(spec, "units", None)
+        # Shape first: a `num`-group failure is unit-independent, so it is judged
+        # before any spec/table question. Read-only use of literal_types' regex —
+        # re-deriving the shape here would be a second definition to drift from.
+        if literal_types._AMOUNT_COMPOUND_RE.match(value) is None:
+            return True
         if getattr(spec, "type", None) != "amount":
             return False
-        return literal_types.normalize(type_tag, value, units) is None
+        return literal_types.normalize(type_tag, value, getattr(spec, "units", None)) is None
     return literal_types.normalize(type_tag, value) is None
 
 

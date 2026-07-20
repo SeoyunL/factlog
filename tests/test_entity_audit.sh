@@ -107,6 +107,26 @@ printf '%s' "$out" | grep -qF "• 'date(abc)'" && ok "unparsable compound term 
 printf '%s' "$out" | grep -qE "1 literal subject\(s\)" && ok "summary counts literal subjects" || bad "summary omits literal subject count"
 printf '%s' "$out" | grep -qE "[0-9]+ malformed literal\(s\)" && ok "summary counts malformed literals" || bad "summary omits malformed literal count"
 
+# --- amount shape vs unit resolution (#394) -----------------------------------
+# With NO typed-relations.md, the unit table is unknowable — but `amount(abc,"억")`
+# and `amount(,"억")` fail on the NUMBER part, before any unit lookup, so no
+# declaration could make them parse. Unit-independent, hence judged either way.
+# `amount(5,"달러")` is the contrast: it may be legal once a table is declared, so
+# it must stay silent. Neither assertion depends on a parser version.
+KB3="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$KB3" >/dev/null 2>&1
+printf 'x\n' > "$KB3/sources/a.md"
+printf '%s\n%s\n%s\n%s\n' "$H" \
+  'P1,예산,"amount(abc,""억"")",sources/a.md,accepted,0.9,' \
+  'P2,예산,"amount(,""억"")",sources/a.md,accepted,0.9,' \
+  'P3,예산,"amount(5,""달러"")",sources/a.md,accepted,0.9,' > "$KB3/facts/candidates.csv"
+set +e; out="$("$PYTHON" "$AUDIT" --wiki "$KB3" 2>&1)"; rc=$?; set -e
+
+[ "$rc" -eq 0 ] && ok "undeclared-amount KB exits 0" || bad "undeclared-amount KB exit $rc"
+printf '%s' "$out" | grep -qF '• '"'"'amount(abc,"억")'"'" && ok "amount with an unparsable number is malformed without a declaration" || bad "amount(abc,...) missed with no declaration"
+printf '%s' "$out" | grep -qF '• '"'"'amount(,"억")'"'" && ok "amount with an empty number is malformed without a declaration" || bad "amount(,...) missed with no declaration"
+printf '%s' "$out" | grep -qF '• '"'"'amount(5,"달러")'"'" && bad "unresolved unit accused without a unit table" || ok "unresolved unit stays unjudged without a declaration"
+
 # --- conflicting typed declarations (#393) ------------------------------------
 # Canonical and alias declared on separate lines with DIFFERENT unit tables. The
 # later line used to overwrite the canonical's, so a value written under the
