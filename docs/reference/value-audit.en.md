@@ -17,7 +17,11 @@ python3 tools/value_audit.py --wiki ~/wiki --strict         # non-zero on a prov
 python3 tools/value_audit.py --wiki ~/wiki --all-statuses   # every candidate row, not just engine input
 ```
 
-- `--wiki` is the KB root. Omitted, it falls back to `$FACTLOG_ROOT`, then the current directory.
+- `--wiki` is the KB root. Omitted, it falls back to `$FACTLOG_ROOT`, then the **active KB**
+  (set by `factlog use`), then the current directory. If an active KB is set, running from
+  any directory audits **the active KB, not the one you are standing in** — so if you feed
+  `--strict` to a CI gate, confirm the target with `factlog where` or pass `--wiki`
+  explicitly.
 - By default only **engine input** rows (`confirmed`/`accepted`) are audited.
   `--all-statuses` includes candidates that no human has approved yet, and is much noisier.
 - On a fresh KB with no `candidates.csv` it prints `value_audit: no candidate facts` and
@@ -84,8 +88,13 @@ bibliography, title and DOI).
 
 Nothing is merged automatically; every finding is reported for human judgement. Fix one
 with `factlog amend <subject> <relation> <object> --set-object <canonical>`, which rewrites
-the row durably — `candidates.csv` and the backing `runs/*.json` together. The report
-prints a ready-to-paste `amend` line for each finding.
+the row durably — `candidates.csv` and the backing `runs/*.json` together.
+
+For split wrappers and wrapper values the report also prints a `fix:` line sketching that
+`amend` command. Note that its `<subject>` is a literal placeholder: substitute the real
+subject before running it. Spelling duplicates and placeholders get no `fix:` line — which
+spelling is canonical, and what a placeholder should become, is not something the tool
+decides.
 
 ## What it does not catch
 
