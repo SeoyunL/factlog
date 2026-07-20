@@ -1,7 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the PubMed search composer and silent-zero guard (#167).
 
-Pure functions over strings and an ``esearch`` XML body — no network. The fixtures
+Pure functions over strings and an ``esearch`` XML body — no network. The
+``--year`` range check (#387) additionally reads *efetch* fixtures through the real
+``work_parser``: what it compares against ``--year`` is the year that would reach
+front matter, and a hand-built work object would assert that year rather than derive
+it — the fixture must carry ``ArticleDate`` and ``JournalIssue/PubDate`` as the
+separate fields they are, since their disagreement is the whole subject. The fixtures
 are shaped like the ``eSearchResult`` envelope E-utilities returns, including the
 ``ErrorList``/``WarningList`` PubMed volunteers when it cannot map a phrase or
 field. The tests take no network, but the zero-count fixtures are *captured* response
@@ -24,9 +29,12 @@ from factlog.integrations.pubmed.search import (
     compose_query,
     mesh_clause,
     parse_esearch,
+    parse_year_range,
     silent_zero_report,
     validate_field_tags,
+    year_range_report,
 )
+from factlog.integrations.pubmed.work_parser import parse_efetch_response
 
 
 # -- field-tag validation: reject an unknown tag before a request -----------
@@ -131,6 +139,206 @@ class TestYearFilter:
     def test_garbage_is_rejected(self):
         with pytest.raises(PubMedSearchValidationError):
             build_year_filter("last tuesday")
+
+    def test_parse_year_range_returns_the_validated_bounds(self):
+        # The clause builder and the range check must read --year through one
+        # parser; the split that produced #387 is what this keeps from recurring.
+        assert parse_year_range("2020") == (2020, 2020)
+        assert parse_year_range("2022-2025") == (2022, 2025)
+
+
+# -- --year vs. the recorded year (#387) ------------------------------------
+
+def _efetch_record(pmid: str, *, issue_year: str, article_date: str | None = None) -> str:
+    """One `<PubmedArticle>` shaped like the efetch body PMID 41620285 returns.
+
+    `<ArticleDate DateType="Electronic">` is the field PubMed's [Date - Publication]
+    filter matches; `Journal/JournalIssue/PubDate/Year` is the one `work_parser`
+    writes to front matter. A `PubModel="Print-Electronic"` record carries both and
+    they disagree — that disagreement is the whole subject of these tests, so the
+    fixture keeps them as separate elements rather than asserting on a hand-built
+    work object.
+    """
+    article_date_xml = ""
+    if article_date is not None:
+        year, month, day = article_date.split("-")
+        article_date_xml = (
+            f'<ArticleDate DateType="Electronic"><Year>{year}</Year>'
+            f"<Month>{month}</Month><Day>{day}</Day></ArticleDate>"
+        )
+    return f"""
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>{pmid}</PMID>
+      <Article PubModel="Print-Electronic">
+        <Journal><Title>J Test</Title>
+          <JournalIssue CitedMedium="Internet">
+            <PubDate><Year>{issue_year}</Year></PubDate>
+          </JournalIssue></Journal>
+        <ArticleTitle>Base editing in T cells.</ArticleTitle>
+        {article_date_xml}
+      </Article>
+    </MedlineCitation>
+    <PubmedData><ArticleIdList>
+      <ArticleId IdType="pubmed">{pmid}</ArticleId>
+    </ArticleIdList></PubmedData>
+  </PubmedArticle>"""
+
+
+def _medline_record(pmid: str, *, medline_date: str) -> str:
+    """A record whose issue carries `<MedlineDate>` free text instead of a `<Year>`.
+
+    No `ArticleDate`, no `PubModel="Print-Electronic"` — the electronic-date story is
+    simply false here. `work_parser` records the span's *first* year and keeps the raw
+    text in `pub_date_raw`; a span like "1998 Dec-1999 Jan" therefore records 1998
+    while PubMed matched the 1999 half.
+    """
+    return f"""
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>{pmid}</PMID>
+      <Article>
+        <Journal><Title>J Test</Title>
+          <JournalIssue>
+            <PubDate><MedlineDate>{medline_date}</MedlineDate></PubDate>
+          </JournalIssue></Journal>
+        <ArticleTitle>A winter issue.</ArticleTitle>
+      </Article>
+    </MedlineCitation>
+    <PubmedData><ArticleIdList>
+      <ArticleId IdType="pubmed">{pmid}</ArticleId>
+    </ArticleIdList></PubmedData>
+  </PubmedArticle>"""
+
+
+def _works(*records):
+    """Parse fixture records through the real parser, so `.year` is the recorded year."""
+    xml = "<PubmedArticleSet>" + "".join(records) + "</PubmedArticleSet>"
+    ids = tuple(r.split("<PMID>")[1].split("</PMID>")[0] for r in records)
+    return parse_efetch_response(xml, ids).works
+
+
+class TestYearRangeReport:
+    def test_issue_year_past_the_range_is_surfaced(self):
+        # The measured case from #387: matched on ArticleDate 2025-04-16, recorded
+        # as the issue year 2026. Genuinely in range for PubMed, out of range for
+        # the KB — so the operator is told before it lands.
+        works = _works(_efetch_record("41620285", issue_year="2026",
+                                      article_date="2025-04-16"))
+        lines = year_range_report(works, year="2022-2025")
+        assert len(lines) == 1
+        assert "41620285" in lines[0]
+        assert "2026" in lines[0]
+        assert "2022-2025" in lines[0]
+
+    def test_the_warning_explains_why_the_years_differ(self):
+        # A bare "out of range" line reads as a factlog bug. The explanation is the
+        # point of surface-and-explain: name the electronic/issue date split.
+        works = _works(_efetch_record("41620285", issue_year="2026",
+                                      article_date="2025-04-16"))
+        line = year_range_report(works, year="2022-2025")[0]
+        assert "electronic" in line
+        assert "journal issue" in line
+
+    def test_a_medline_span_is_never_blamed_on_an_electronic_date(self):
+        # The counterexample that keeps the explanation honest: this record has no
+        # ArticleDate and is not Print-Electronic. Its year is out of range because
+        # `_pub_date` took the FIRST year of a MedlineDate span. Blaming an
+        # electronic publication date would send the operator hunting for a field
+        # the record does not carry — a confidently wrong explanation.
+        works = _works(_medline_record("1", medline_date="1998 Dec-1999 Jan"))
+        assert works[0].year == 1998
+        assert works[0].pub_date_raw == "1998 Dec-1999 Jan"
+        line = year_range_report(works, year="1999")[0]
+        assert "electronic" not in line
+        assert "MedlineDate" in line
+        # The raw span is quoted, so the derived year stays auditable — the stated
+        # purpose of `pub_date_raw` in work_parser.
+        assert "1998 Dec-1999 Jan" in line
+
+    def test_each_cause_gets_its_own_block(self):
+        # Both causes in one result set: two blocks, each explaining only its own
+        # records. Neither explanation may attach to the other's PMID.
+        works = _works(
+            _efetch_record("41620285", issue_year="2026", article_date="2025-04-16"),
+            _medline_record("1", medline_date="1998 Dec-1999 Jan"),
+        )
+        lines = year_range_report(works, year="2000-2025")
+        assert len(lines) == 2
+        electronic = next(line for line in lines if "41620285" in line)
+        medline = next(line for line in lines if "PMID 1 " in line)
+        assert "electronic" in electronic and "MedlineDate" not in electronic
+        assert "MedlineDate" in medline and "electronic" not in medline
+
+    def test_a_record_inside_the_range_stays_silent(self):
+        # The counterexample: an in-range issue year says nothing, whatever the
+        # ArticleDate. A warning on every result would be noise, not a signal.
+        works = _works(_efetch_record("40000001", issue_year="2024",
+                                      article_date="2023-11-02"))
+        assert year_range_report(works, year="2022-2025") == []
+
+    def test_only_the_out_of_range_records_are_named(self):
+        works = _works(
+            _efetch_record("40000001", issue_year="2024", article_date="2023-11-02"),
+            _efetch_record("41620285", issue_year="2026", article_date="2025-04-16"),
+            _efetch_record("40000002", issue_year="2021", article_date="2022-01-09"),
+        )
+        lines = year_range_report(works, year="2022-2025")
+        # One block per cause, not one per record: both share the electronic cause.
+        assert len(lines) == 1
+        assert "41620285" in lines[0] and "40000002" in lines[0]
+        assert "40000001" not in lines[0]
+
+    def test_the_explanation_is_printed_once_per_block(self):
+        # At --limit 25 a per-record paragraph would fill the screen and bury the
+        # other things stderr carries that run (retractions, the silent-zero guard).
+        works = _works(*[
+            _efetch_record(f"4000000{n}", issue_year="2026", article_date="2025-04-16")
+            for n in range(1, 6)
+        ])
+        lines = year_range_report(works, year="2022-2025")
+        assert len(lines) == 1
+        assert lines[0].count("electronic publication date") == 1
+        assert lines[0].startswith("⚠ 5 results")
+
+    def test_a_single_record_is_counted_in_the_singular(self):
+        works = _works(_efetch_record("41620285", issue_year="2026",
+                                      article_date="2025-04-16"))
+        assert year_range_report(works, year="2022-2025")[0].startswith("⚠ 1 result will")
+
+    def test_a_single_year_spec_is_a_range_of_one(self):
+        works = _works(_efetch_record("41620285", issue_year="2026",
+                                      article_date="2025-04-16"))
+        assert year_range_report(works, year="2025") != []
+        assert year_range_report(works, year="2026") == []
+
+    def test_no_year_filter_means_nothing_to_check(self):
+        # Without --year the operator asked for no range, so no year can be outside it.
+        works = _works(_efetch_record("41620285", issue_year="2026",
+                                      article_date="2025-04-16"))
+        assert year_range_report(works, year=None) == []
+        assert year_range_report(works) == []
+
+    def test_a_record_without_a_year_is_not_reported(self):
+        # Absence is not a range mismatch; work_parser already accounts for a
+        # PubDate with no parseable year.
+        xml = ("<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>40000003</PMID>"
+               "<Article><Journal><Title>J Test</Title><JournalIssue><PubDate/>"
+               "</JournalIssue></Journal><ArticleTitle>No date.</ArticleTitle>"
+               "</Article></MedlineCitation></PubmedArticle></PubmedArticleSet>")
+        works = parse_efetch_response(xml, ("40000003",)).works
+        assert works[0].year is None
+        assert year_range_report(works, year="2022-2025") == []
+
+    def test_an_unparseable_year_spec_yields_no_second_complaint(self):
+        # The CLI rejects a bad --year before spending a request; this must not add
+        # a contradictory line on top of that rejection.
+        works = _works(_efetch_record("41620285", issue_year="2026",
+                                      article_date="2025-04-16"))
+        assert year_range_report(works, year="last tuesday") == []
+
+    def test_an_empty_result_set_is_silent(self):
+        assert year_range_report((), year="2022-2025") == []
 
 
 # -- reading esearch back ---------------------------------------------------
