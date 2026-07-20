@@ -179,8 +179,15 @@ def test_marker_does_not_change_the_bytes_a_successful_run_writes(kb):
 
 
 def test_the_marker_is_deterministic(kb):
-    # No wall-clock time, no absolute paths: same input, same marker bytes. A timestamp
-    # here would make every failed run a diff even when nothing about it changed.
+    # The WALL-CLOCK axis: two runs of one KB at one path, so a timestamp in the marker
+    # would make every failed run a diff even when nothing about it changed.
+    #
+    # This covers neither of the other two axes, and #381 slipped through both gaps.
+    # It re-runs the SAME KB at the SAME tmp_path, so it says nothing about whether the
+    # marker depends on where the KB lives — test_the_marker_does_not_depend_on_where_
+    # the_kb_lives is that axis. And its one failure mode is the #359 gate, whose message
+    # holds no path at all, so even a two-path version of this test would have passed on
+    # this sample; FAILURE_MODES below is the sample-independent form.
     (kb / "policy" / "logic-policy.md").write_text(CONTROL_CHAR_MD, encoding="utf-8")
     assert _generate(kb).returncode == 1
     first = _marker(kb)

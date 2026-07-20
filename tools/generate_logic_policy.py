@@ -464,8 +464,18 @@ def failure_marker(exc: BaseException, written: list[Path]) -> str:
     sentence would be false there, so it appears only when something in runs/ is in fact
     older than this run. main() does not call this at all when the run wrote nothing.
 
-    Contains no wall-clock time and no absolute paths: the same input must produce the
-    same marker, the way every other generated artifact in this repo does.
+    Contains no wall-clock time, and the failure message goes through _failure_message
+    (#381) so that the axes below hold. The same input should produce the same marker,
+    the way every other generated artifact in this repo does.
+
+    Covered: everything the marker itself writes, and, for OSError, the two filenames —
+    those arrive KB-relative, so a KB copied to another path fails to the same bytes.
+    Not covered: the message text of any other exception type. #381's survey found that
+    nothing raised past PROMPT_OUT puts a path there (the other sites wrap their values
+    in !r, sit behind a regex gate, or are literals), but that is a fact about today's
+    exception set, not a property this function enforces. strerror is also OS- and locale-
+    dependent; the marker is only claimed to be stable for one machine, which is the
+    scope the test compares in.
     """
     written_names = {path.name for path in written}
     mine = [p for p in RUN_ARTIFACTS if p.name in written_names]
