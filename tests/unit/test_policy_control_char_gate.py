@@ -7,23 +7,36 @@ a backtick relation name in policy/logic-policy.md. ``RELATION_RE`` (``^[^\\s"`(
 excludes only whitespace, so 23 C0 controls (\\x00-\\x08, \\x0e-\\x1b) pass it and
 ``dl_string`` writes them as ``relation(X, "cites\\u0001evil", _).`` — an escape the
 engine does not decode, so the rule body can never match any fact and the policy is
-silently dead. The gate lives in ``fixture_policy_json`` because that is the only place
-where the source lineno is still known, so the error can point at the exact bullet.
+silently dead.
 
-The ``reason`` axis is gated too, but it has no red test because no input can reach the
-gate. Two defences stand in front of it, and only the FIRST one decides reachability:
+There are TWO gates because there are two paths to emission, and every claim about
+reachability below holds only on one of them:
+
+- DETERMINISTIC path: ``fixture_policy_json`` parses the .md and gates both axes there,
+  because that is the only place where the source lineno is still known, so the error can
+  point at the exact bullet.
+- LLM DRAFT path: a model returns JSON that goes ``parse_json_object`` ->
+  ``normalized_rules``, never touching ``fixture_policy_json``. Its relation gate (#365)
+  therefore sits in ``normalized_rules``, right after ``RELATION_RE``, which is the one
+  choke point both paths share — ``main()`` builds every program as
+  ``compile_policy(normalized_rules(draft))``.
+
+The ``reason`` axis has no red test on either path, but for different reasons, and only
+the first defence on each path decides reachability:
 
 1. ``markdown_policy_items`` (common.py) requires the bullet tag to match
    ``^\\[([a-z0-9_]+)\\]\\s+(.+)$``. A control char in the tag means the bullet is not a
-   policy item AT ALL — measured: all 32 C0 characters yield zero items. This runs
-   BEFORE the gate, so it is the boundary that actually keeps the reason axis unreachable.
-2. ``REASON_RE`` (``^[a-z0-9_]+$``) in ``normalized_rules`` rejects the same 32, but it
-   runs AFTER ``fixture_policy_json``, so it can never stop anything from reaching the gate.
+   policy item AT ALL — measured: all 32 C0 characters yield zero items. This is the
+   boundary on the DETERMINISTIC path.
+2. ``REASON_RE`` (``^[a-z0-9_]+$``) rejects the same 32 in ``normalized_rules``. It runs
+   after ``fixture_policy_json``, so it decides nothing on the deterministic path — but on
+   the DRAFT path it is the reason axis's only defence, and it runs before the #365 gate,
+   which is why that gate covers relation names only.
 
-Both are pinned below: relaxing the tag regex would make the reason axis reachable and
-needs a red test, while relaxing REASON_RE alone would not. The gate stays regardless —
-the tag regex is a PARSING rule, so whoever widens it is deciding bullet syntax (#190) and
-has no cue that engine integrity hangs on it. See ``_reject_undecodable_policy_name``.
+Both are pinned below, and relaxing either one needs a red test. The fixture gate stays
+regardless — the tag regex is a PARSING rule, so whoever widens it is deciding bullet
+syntax (#190) and has no cue that engine integrity hangs on it. See
+``_reject_undecodable_policy_name``.
 """
 from __future__ import annotations
 
@@ -95,9 +108,16 @@ def test_no_c0_character_survives_the_bullet_tag_regex():
 
 
 def test_no_c0_character_survives_the_reason_regex():
-    """Second-line alarm only: REASON_RE runs in normalized_rules, i.e. AFTER the gate, so
-    it cannot make the reason axis unreachable on its own. Pinned so that a relaxation
-    here plus one in the tag regex above cannot both slip through unnoticed."""
+    """REASON_RE's role splits by path, so this is not merely a second-line alarm.
+
+    On the DETERMINISTIC path it is redundant: markdown_policy_items already refused the
+    bullet, and REASON_RE runs after fixture_policy_json anyway. On the LLM DRAFT path
+    there is no bullet and no fixture_policy_json — a draft goes parse_json_object ->
+    normalized_rules, so REASON_RE is the ONLY defence the reason axis has. That is also
+    why normalized_rules gates relation names (#365) but not reason names: REASON_RE
+    already stops every C0 there, earlier in the same function. Relaxing it would open the
+    reason axis on the draft path with nothing behind it.
+    """
     survivors = [
         ch for ch in (chr(i) for i in range(0x20)) if g.REASON_RE.match(f"a{ch}b".strip())
     ]

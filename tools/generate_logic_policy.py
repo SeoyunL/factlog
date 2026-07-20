@@ -121,12 +121,18 @@ def _reject_undecodable_policy_name(kind: str, name: str, lineno: int) -> None:
     HERE because this is the only point where the source lineno survives (normalized_rules
     knows the rule index only), so the error can name the bullet to fix.
 
+    This gate covers the DETERMINISTIC path only: it runs from fixture_policy_json, which
+    an LLM draft never calls (that path is parse_json_object -> normalized_rules). The
+    draft path is gated separately inside normalized_rules (#365); claims about what can
+    reach where hold per path, not globally.
+
     Reachability is asymmetric. RELATION_RE excludes whitespace but nothing else, so 23 C0
     characters (\\x00-\\x08, \\x0e-\\x1b) pass it and reach us. Nothing reaches us on the
     reason axis, but NOT because of REASON_RE — that runs in normalized_rules, i.e. AFTER
-    this gate, so it cannot decide what arrives here. The real boundary is the bullet tag
-    regex in markdown_policy_items (common.py), which admits no C0 character into a reason
-    tag, so such a bullet is not a policy item at all.
+    this gate, so it cannot decide what arrives here. The real boundary HERE is the bullet
+    tag regex in markdown_policy_items (common.py), which admits no C0 character into a
+    reason tag, so such a bullet is not a policy item at all. On the draft path there is no
+    bullet, and there REASON_RE is the reason axis's only defence.
 
     We gate reason anyway, because that boundary is a PARSING rule, not an integrity rule:
     markdown_policy_items exists to define bullet syntax (#190), not to protect the engine's
