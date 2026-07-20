@@ -18,6 +18,10 @@ deterministically and informationally (always exit 0):
      ordinal) under a relation NOT yet declared in attribute-relations.md;
      suggests declaring that relation (pairs with entity-vs-literal typing).
 
+A typed literal written as a COMPOUND TERM (`date(2020)`, `number(19)`) is a
+literal by syntax alone, whatever the relation says, so it never counts as an
+entity here — see `_is_compound_term`.
+
 Usage:
     python3 entity_audit.py [--wiki <kb>]
 """
@@ -51,6 +55,7 @@ from common import (  # noqa: E402
     entity_set,
     load_facts,
 )
+from factlog import literal_types  # noqa: E402
 
 # Heuristic: looks like a literal VALUE rather than a first-class entity. Covers
 # dates (2030.1 / 2024-07-01), plain/comma/decimal numbers (2026, 1,000, 3.14),
@@ -63,6 +68,34 @@ _LITERAL_RE = re.compile(
     r"|^\d[\d,]*(\.\d+)?$"                                        # number / comma / decimal
     r"|^제?\d+\s*(호|차|위|개|번|년|월|일|억|만|천|원|%)(\s+.+)?$"   # number + unit (+word)
 )
+
+
+# A typed literal written the way text-to-fact.md mandates: `date(2020)`,
+# `number(19)`, `ordinal(3)`, `amount(100,"억")`. The wrapper names come from
+# literal_types.TYPES — the single source of the notation — so this file never
+# holds a second copy of the list to drift from.
+_COMPOUND_TERM_RE = re.compile(
+    r"^(?:" + "|".join(sorted(re.escape(t) for t in literal_types.TYPES)) + r")\(.*\)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_compound_term(value: str) -> bool:
+    """Is *value* a typed literal in compound-term form?
+
+    Syntax settles it: nothing but a literal is spelled `date(...)`. So this does
+    NOT consult attribute-relations.md. It cannot, and must not wait for it — a KB
+    that follows the mandated notation but has not declared the relation yet was
+    leaking every such value into the entity set, where `_tokens` split the wrapper
+    off and made `date` a token shared by every date. All C(n,2) date pairs then
+    surfaced as fragmentation candidates and buried the real ones (#386).
+    """
+    return bool(_COMPOUND_TERM_RE.match(value.strip()))
+
+
+def _looks_literal(value: str) -> bool:
+    """Literal by the prose heuristic OR by compound-term syntax."""
+    return _is_compound_term(value) or bool(_LITERAL_RE.match(value))
 
 
 def _norm(s: str) -> str:
@@ -78,7 +111,9 @@ def audit(facts: list[dict[str, str]]) -> dict[str, object]:
     # Surface forms via the shared predicate: comparing raw declarations made this
     # advise declaring a relation that WAS already declared, just under its alias.
     literal_rels = attribute_relation_forms()
-    entities = entity_set(facts)  # excludes declared-literal objects
+    # Excludes declared-literal objects; compound terms go too, since their form
+    # already proves they are values and pairing them is pure noise (#386).
+    entities = {e for e in entity_set(facts) if not _is_compound_term(e)}
 
     fact_count: Counter[str] = Counter()
     statuses: dict[str, set[str]] = defaultdict(set)
@@ -93,7 +128,7 @@ def audit(facts: list[dict[str, str]]) -> dict[str, object]:
                 statuses[ent].add(st)
         if o and is_attribute_relation(rel, literal_rels):
             declared_literals.add(o)
-        elif o and not is_attribute_relation(rel, literal_rels) and _LITERAL_RE.match(o):
+        elif o and _looks_literal(o):
             literal_suspects[rel].add(o)
 
     # Fragmentation clusters among entities only. Precompute norm/tokens once per
