@@ -127,6 +127,22 @@ class TestParseOrdinal:
         # bare numbers, amount/date units, and words are not ordinals
         assert lt.parse_ordinal(raw) is None
 
+    # docs/reference/typed-relations.{md,en.md} teaches the accepted shape:
+    # a number followed by a rank unit (Korean 호/위/번/차/등/째 with an
+    # optional leading 제, or English st/nd/rd/th). These pin the units the
+    # docs enumerate but the cases above do not reach.
+    @pytest.mark.parametrize("raw,expected", [
+        ("3차", 3), ("3등", 3), ("3째", 3), ("2nd", 2), ("4th", 4),
+    ])
+    def test_accepts_every_documented_unit(self, raw, expected):
+        assert lt.parse_ordinal(raw) == expected
+
+    # ...and the counter-examples the docs name: without a rank unit the value
+    # does not parse, so a leading 제 alone or a prose prefix stays untyped.
+    @pytest.mark.parametrize("raw", ["제3", "rank 3", "no.3"])
+    def test_rejects_documented_counterexamples(self, raw):
+        assert lt.parse_ordinal(raw) is None
+
 
 class TestParseAmount:
     @pytest.mark.parametrize("raw,expected", [
