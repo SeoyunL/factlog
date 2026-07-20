@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -269,6 +270,90 @@ def test_an_unclearable_marker_is_reported_rather_than_left_lying(kb):
     assert "policy rules:" in proc.stdout, proc.stdout
 
 
+NO_BULLET_MD = "# Logic policy\n\n## Rules\n\n- nothing compilable here.\n"
+
+
+def _block_with_a_directory(kb, relative):
+    """Make the next write to `relative` raise OSError, standing in for a full disk."""
+    path = kb / relative
+    if path.exists():
+        path.unlink()
+    path.mkdir(parents=True)
+
+
+def _replacing_the_policy(text):
+    return lambda kb: (kb / "policy" / "logic-policy.md").write_text(text, encoding="utf-8")
+
+
+# One mode per raising step of main()'s try block in tools/generate_logic_policy.py,
+# in the order that block runs them: fixture_policy_json (both its "no compilable
+# policies" exit and its #359 control-char gate), the RESPONSE_OUT write, the canonical
+# clash in normalized_rules, the write_trace call, and the .dl swap. Listed against the
+# code rather than sampled, because the axis #381 broke stayed invisible while the only
+# sample was the #359 gate, whose message holds no path.
+#
+# Two steps of that block are absent and neither was measured here: compile_policy, for
+# which no failing input is known, and smoke_compile, whose pyrewire ParseError this
+# harness has no way to provoke from policy text. Reaching either would need a separate
+# reachability finding, so they are named rather than silently dropped.
+FAILURE_MODES = (
+    ("no_compilable_bullets", _replacing_the_policy(NO_BULLET_MD), "SystemExit"),
+    ("response_out_unwritable", lambda kb: _block_with_a_directory(kb, f"runs/{RESPONSE}"), "IsADirectoryError"),
+    ("control_char_gate", _replacing_the_policy(CONTROL_CHAR_MD), "FactlogError"),
+    ("canonical_clash", _replacing_the_policy(CANONICAL_CLASH_MD), "ValueError"),
+    ("trace_out_unwritable", lambda kb: _block_with_a_directory(kb, f"runs/{TRACE}"), "IsADirectoryError"),
+    ("dl_swap_blocked", lambda kb: _block_with_a_directory(kb, "policy/logic-policy.dl"), "IsADirectoryError"),
+)
+
+
+def _marker_bytes_after(root: Path, setup) -> bytes:
+    """Build a KB at `root`, run it clean, break it with `setup`, return the marker."""
+    subprocess.run(
+        [sys.executable, "-m", "factlog", "init", "--target", str(root)],
+        capture_output=True, check=True,
+    )
+    (root / "policy" / "logic-policy.md").write_text(GOOD_MD, encoding="utf-8")
+    assert _generate(root).returncode == 0
+    setup(root)
+    proc = _generate(root)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    path = root / "runs" / MARKER
+    assert path.is_file(), proc.stdout + proc.stderr
+    return path.read_bytes()
+
+
+def test_the_marker_does_not_depend_on_where_the_kb_lives(tmp_path):
+    # The axis #381 is about. Two KBs with identical contents at paths of different name
+    # length, failing the same way: on base e0cc695 these came out md5 d6e5f67b and
+    # 6d11d2cf, because IsADirectoryError stringifies with the absolute paths of the
+    # .dl.tmp and the .dl. A marker whose bytes move with the directory it sits in is
+    # not the deterministic artifact the rest of this file assumes it is.
+    def blocked_dl(kb):
+        _block_with_a_directory(kb, "policy/logic-policy.dl")
+
+    short = _marker_bytes_after(tmp_path / "kbA", blocked_dl)
+    long = _marker_bytes_after(tmp_path / "kbBBBBBBBBBBBBBBBB", blocked_dl)
+    # The mode really is the path-carrying one, so that byte equality below means the
+    # paths were normalized and not that the failure changed.
+    assert b"IsADirectoryError" in short, short.decode()
+    assert short == long, (short.decode(), long.decode())
+    assert str(tmp_path).encode() not in short, short.decode()
+
+
+@pytest.mark.parametrize(
+    ("setup", "exception_name"),
+    [pytest.param(setup, name, id=mode) for mode, setup, name in FAILURE_MODES],
+)
+def test_no_failure_mode_writes_where_the_kb_lives_into_the_marker(tmp_path, setup, exception_name):
+    short = _marker_bytes_after(tmp_path / "a", setup)
+    long = _marker_bytes_after(tmp_path / "bbbbbbbbbbbbbbbb", setup)
+    # Reachability first: without this the byte comparison would also pass for a mode
+    # that stopped firing, or that started failing somewhere else entirely.
+    assert f"\n{exception_name}".encode() in short, short.decode()
+    assert short == long, (short.decode(), long.decode())
+    assert str(tmp_path).encode() not in short, short.decode()
+
+
 def test_an_exception_with_no_message_is_named_without_a_dangling_colon():
     # KeyboardInterrupt() and friends stringify to "", and "KeyboardInterrupt: " reads
     # like a message that got truncated on the way out.
@@ -276,3 +361,71 @@ def test_an_exception_with_no_message_is_named_without_a_dangling_colon():
 
     assert "## Failure\n\nKeyboardInterrupt\n" in g.failure_marker(KeyboardInterrupt(), [g.PROMPT_OUT])
     assert "## Failure\n\nValueError: boom\n" in g.failure_marker(ValueError("boom"), [g.PROMPT_OUT])
+
+
+FORGERY = "\n## Written by this run\n\n- forged.md\n"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(FORGERY, id="lf"),
+        pytest.param(FORGERY.replace("\n", "\r\n"), id="crlf"),
+        pytest.param(FORGERY.replace("\n", "\u2028"), id="line_separator"),
+        pytest.param(f"a\x01b\x0c{FORGERY}", id="other_c0"),
+    ],
+)
+def test_no_marker_line_can_open_a_heading(payload):
+    # Called directly, because NO exception the subprocess path raises can carry this:
+    # the only OS-supplied text past PROMPT_OUT is an OSError filename, and OSError
+    # stringifies filenames through %r, so a newline in a path arrives as the two
+    # characters \ and n. Measured on python3.12 with
+    # OSError(21, 'Is a directory', '/a/kb' + FORGERY + '/x.tmp'): re.findall(r'^## ',
+    # str(exc), re.M) == [] and len(str(exc).splitlines()) == 1. So this pins an axis
+    # that is closed today only by another type's implementation detail, not a live bug
+    # — #381's report claimed a live forgery after counting '## ' as a substring, which
+    # answers a different question than "how many headings are there".
+    import generate_logic_policy as g
+
+    marker = g.failure_marker(ValueError(payload), [g.PROMPT_OUT])
+    assert len(re.findall(r"^## ", marker, re.M)) == 4, marker
+    assert _section(marker, "Written by this run") == [PROMPT], marker
+    for heading in ("Failure", "Present, not written by this run", "Not present"):
+        _section(marker, heading)  # asserts the heading appears exactly once
+
+
+def _failure_line(marker: str) -> str:
+    return marker.split("## Failure\n\n")[1].splitlines()[0]
+
+
+def test_an_oserror_names_its_files_relative_to_the_kb_and_keeps_its_diagnosis():
+    # Determinism must not be bought with diagnosis: errno, strerror and BOTH filenames
+    # have to survive. That is why "keep the first line only" was rejected — a rename
+    # failure carries its second path there, and the .dl swap is exactly a rename.
+    #
+    # The five-argument form is deliberate. On POSIX, OSError(errno, strerror, filename,
+    # filename2) puts the fourth argument in winerror and leaves filename2 as None;
+    # filename2 only lands when the winerror slot is passed too. Measured on python3.12.
+    import generate_logic_policy as g
+
+    def line(exc):
+        return _failure_line(g.failure_marker(exc, [g.PROMPT_OUT]))
+
+    tmp = str(g.ROOT / "policy" / "logic-policy.dl.tmp")
+    final = str(g.ROOT / "policy" / "logic-policy.dl")
+    both = line(OSError(21, "Is a directory", tmp, None, final))
+    assert str(g.ROOT) not in both, both
+    assert "[Errno 21] Is a directory" in both, both
+    assert "policy/logic-policy.dl.tmp" in both and "policy/logic-policy.dl'" in both, both
+
+    # A path outside the KB has no relative form, so it keeps its basename only.
+    outside = line(OSError(21, "Is a directory", "/somewhere/else/donor.dl", None, final))
+    assert "/somewhere/else" not in outside, outside
+    assert "donor.dl" in outside and "policy/logic-policy.dl" in outside, outside
+
+    # No second filename: one name, and no dangling arrow suggesting a lost one.
+    single = line(OSError(21, "Is a directory", str(g.ROOT / "runs" / TRACE)))
+    assert f"runs/{TRACE}" in single and "->" not in single, single
+
+    # No filename at all: nothing to rebuild from, so the message stands as written.
+    assert line(OSError("boom")) == "OSError: boom"
