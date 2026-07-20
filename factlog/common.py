@@ -1045,21 +1045,47 @@ def _group_key(obj: str, spec: TypedRelSpec | None) -> tuple:
        another the full date for the same work — that false positive is the
        common case, not the rare one. Conflicts nobody can act on train readers
        to skip the section, which weakens contradiction detection far more than
-       the collapse does.
+       the collapse does. This is the same principle ``_is_specialisation_chain``
+       already contracts for hierarchies (#219): a row described at **two levels
+       of precision** is not a self-contradiction, and reporting it as one gets a
+       human-checked fact discarded on no evidence.
     2. *Consistency with the engine and with the axis already contracted.* The
        precision axis was not opened by #385: #204 already pinned the month↔day
        collapse. Keying year precision separately while month↔day still collapses
-       would draw a line with no principled place to stand. The engine agrees —
-       ``_TYPED_COL["date"]`` is a bare yyyymmdd int64 with no precision column,
-       so a precision-aware checker would diverge from the comparisons it guards.
+       would draw a line with no principled place to stand — ``2030.1``→
+       ``2030.01.01`` and ``date(2020)``→``date(2020,1)`` are the SAME refinement
+       relation, and ``2030.1`` is itself a filled-in precision, so such a split
+       would have to call one fill-in significant and the other not. The engine
+       agrees — ``_TYPED_COL["date"]`` is a bare yyyymmdd int64 with no precision
+       column, so a precision-aware checker would diverge from the comparisons it
+       guards.
 
-    The cost is real and bounded: a KB that must treat "some time in 2020" and
-    "2020-01" as rival claims cannot express that here. Same escape hatch as
-    ``ordinal``: model them as **separate relations** (e.g. a coarse
-    ``published_year`` beside a precise ``published_date``) rather than one
-    single-valued date relation. (Contrast the bare ``2030`` case: with no
-    separator and no ``date(…)`` wrapper it does not parse at all, so it degrades
-    to a ``"raw"`` key and DOES fire against a scalar date — #224 B2, unchanged.)
+    Do NOT read ground 2 as "the tests forbid it". A key carrying the full
+    precision does break #204's ``test_date_equivalent_precision_collapses_to_one_value``,
+    but a narrower variant that splits ONLY year precision passes #204 untouched
+    (measured). That design space is real and reachable; what rules it out is the
+    arbitrariness above, not a failing test. A future reader reopening this
+    decision should weigh the principle, not assume the suite blocks the door.
+
+    The cost is real and bounded, and it is a *detection* cost, not only an
+    expressiveness one:
+
+    - Expressiveness: a KB that must treat "some time in 2020" and "2020-01" as
+      rival claims cannot say so here. Same escape hatch as ``ordinal``: model
+      them as **separate relations** (a coarse ``published_year`` beside a precise
+      ``published_date``) rather than one single-valued date relation.
+    - Detection: a *mis-extraction* that invents a month — writing ``date(2020,1)``
+      for a source that only stated the year, against ``text-to-fact.md``'s rule to
+      write ``date(2020)`` — no longer collides with a correctly extracted
+      ``date(2020)``. main flagged that pair (as a side effect of the year-only
+      parse failure, not by design); here it is silent. The exposure is narrow: it
+      needs the invented value to land exactly on the year-start ``20200101``, so
+      an invented ``date(2020,3)`` still fires. Guarding the rule itself belongs to
+      extraction review, not to the conflict checker.
+
+    (Contrast the bare ``2030`` case: with no separator and no ``date(…)`` wrapper
+    it does not parse at all, so it degrades to a ``"raw"`` key and DOES fire
+    against a scalar date — #224 B2, unchanged.)
 
     **int64 divergence note (#224 C):** ``normalize`` can return a scalar wider
     than int64 (mainly ``number`` via ``parse_number_scaled``, and unbounded
