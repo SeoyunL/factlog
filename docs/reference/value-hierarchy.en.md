@@ -32,6 +32,8 @@ Ancestry is transitive: if `a ⊂ b` and `b ⊂ c`, a query for `c` also catches
 
 The broad value need not appear in any fact. Declaring it is enough to make it queryable.
 
+`factlog init` scaffolds this file with a commented example.
+
 ## Scope contract
 
 Subsumption applies when a query's **object** is matched, and the gate, the evaluator,

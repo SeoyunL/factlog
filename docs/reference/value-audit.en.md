@@ -73,7 +73,9 @@ exempt. A two-fact KB would also be injective by accident. Declare only relation
 value names one subject. **Never declare a category many subjects share** — that
 permanently exempts the leak this audit exists to catch.
 
-`factlog init` scaffolds the file empty. **An existing KB does not have it**, so every
+`factlog init` scaffolds this file with a commented example — every line is a comment, so
+it declares nothing and behaves exactly like an absent file. **An existing KB does not
+have it at all**, so every
 relation starts categorical and title collisions are reported as leaks. Create
 `policy/identity-relations.md` yourself and declare your identity relations (for
 bibliography, title and DOI).
