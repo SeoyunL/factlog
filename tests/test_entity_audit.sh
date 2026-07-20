@@ -72,6 +72,41 @@ printf '%s' "$out" | grep -qF "declared literals (attribute-relation objects, no
 # 2030.1 should now be under declared literals, not flagged as a suspect
 printf '%s' "$out" | grep -qF "relation '정식_운영' has literal-looking" && bad "declared relation still flagged as suspect" || ok "declared relation no longer a literal suspect"
 
+# --- compound-term literals (#386) --------------------------------------------
+# The issue's reproduction, end to end: two `date(YYYY)` rows used to pair with
+# each other on the wrapper name ("shared token ['date']"), and every further date
+# added C(n,2) more of them until the real candidates were buried.
+KB2="$(mktemp -d)/wiki"
+"$PYTHON" -m factlog init --target "$KB2" >/dev/null 2>&1
+printf 'x\n' > "$KB2/sources/a.md"
+printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$H" \
+  'P1998,published_year,date(1998),sources/a.md,accepted,0.9,' \
+  'P2020,published_year,date(2020),sources/a.md,accepted,0.9,' \
+  '병지역 플랫폼가,예시,플랫폼가,sources/a.md,accepted,0.9,' \
+  'Date(Time),측정,플랫폼가,sources/a.md,accepted,0.9,' \
+  'date(2019),집필,Kim,sources/a.md,accepted,0.9,' \
+  'X1,측정_시점,date(abc),sources/a.md,accepted,0.9,' > "$KB2/facts/candidates.csv"
+set +e; out="$("$PYTHON" "$AUDIT" --wiki "$KB2" 2>&1)"; rc=$?; set -e
+
+[ "$rc" -eq 0 ] && ok "compound-term KB exits 0" || bad "compound-term KB exit $rc"
+printf '%s' "$out" | grep -qF "shared token ['date']" && bad "date(YYYY) pair still a fragmentation candidate" || ok "no wrapper-name shared-token pair"
+printf '%s' "$out" | grep -qF "'병지역 플랫폼가' ⟷ '플랫폼가'" && ok "real candidate survives beside compound terms" || bad "real candidate lost"
+printf '%s' "$out" | grep -qF "consider adding 'published_year' to policy/attribute-relations.md" && ok "compound term under undeclared relation advises declaring" || bad "declare advice missing for compound term"
+# Capitalized look-alike: a column label, not the mandated notation — stays an entity.
+printf '%s' "$out" | grep -qF "Date(Time)  (accepted)" && ok "'Date(Time)' still listed as an entity" || bad "'Date(Time)' wrongly treated as a literal"
+# A compound term dropped from the entity list must resurface in its own section,
+# or removing it from `entities` just moves the blind spot.
+printf '%s' "$out" | grep -qF "literal used as subject" && ok "subject-position literal section printed" || bad "subject-position literal section missing"
+printf '%s' "$out" | grep -qF "'date(2019)' (1 fact(s))" && ok "subject-position literal named with its fact count" || bad "subject-position literal missing"
+# `date(abc)` is malformed under ANY parser version, unlike year-only date(YYYY)
+# (#385) — so this assertion does not flip when that lands.
+printf '%s' "$out" | grep -qF "malformed typed literal" && ok "malformed-literal section printed" || bad "malformed-literal section missing"
+printf '%s' "$out" | grep -qF "• 'date(abc)'" && ok "unparsable compound term named" || bad "unparsable compound term missing"
+# Both new findings must be countable from the one-line summary, not only from
+# the stderr sections a scanning human or wrapper script never reads.
+printf '%s' "$out" | grep -qE "1 literal subject\(s\)" && ok "summary counts literal subjects" || bad "summary omits literal subject count"
+printf '%s' "$out" | grep -qE "[0-9]+ malformed literal\(s\)" && ok "summary counts malformed literals" || bad "summary omits malformed literal count"
+
 echo ""
 echo "========================================"
 echo "test_entity_audit: $pass passed, $fail failed"
