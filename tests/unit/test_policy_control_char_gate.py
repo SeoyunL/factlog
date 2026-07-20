@@ -225,18 +225,42 @@ def test_compile_policy_is_only_ever_fed_normalized_rules_output():
     future call site feeds compile_policy directly, this breaks and the gate needs to move
     down to the emission site.
 
-    The claim stops there, and deliberately. ``RESPONSE_OUT`` is written BEFORE the gate,
-    so runs/natural-language-to-policy-response.json can still contain a control char the
-    .dl will never receive. That ordering is a decision, not an oversight: the response
-    file is the audit record of what the model actually returned, and an audit record that
-    only survives validation cannot show why validation failed. Whoever wires a real LLM
-    draft in at RESPONSE_OUT's call site should read the order as intentional and keep it.
+    The claim stops there, and deliberately. Two files under runs/ are written before this
+    gate, and they are NOT equally reachable — measured, not assumed:
+
+    - ``PROMPT_OUT`` (main() writes it before either gate) survives a FAILING run. A .md
+      with a control char in a backtick relation name exits rc=1 from the #359 gate, and
+      runs/natural-language-to-policy-prompt.md is still on disk containing that byte.
+      What it holds is not a compiled relation name but the author's original .md text —
+      a prompt exists to hand the model the source verbatim, so stripping it would defeat
+      the file's purpose. It is not engine input; nothing reads it back into the .dl.
+    - ``RESPONSE_OUT`` is before THIS gate but after the #359 one. On the deterministic
+      path fixture_policy_json raises first, so the file is never created at all —
+      measured: rc=1 and no natural-language-to-policy-response.json. It becomes reachable
+      only once a real LLM draft is wired in at its call site, replacing fixture output.
+
+    Both orderings are decisions, not oversights: these files are the audit record of what
+    went in and what came back, and an audit record that only survives validation cannot
+    show why validation failed. Whoever wires a real draft in should keep the order.
     """
+    # These are TEXT pins: they match source spelling, so an innocent rename or reflow
+    # breaks them without anything being wrong. The messages say what to check, because a
+    # bare count mismatch reads like a defect and would send the next person hunting one.
+    bypass_hint = (
+        "This is a text pin on tools/generate_logic_policy.py, so a rename or reflow can "
+        "break it harmlessly. Before adjusting the pin, confirm the #365 gate still cannot "
+        "be bypassed: every compile_policy/write_trace call must still be fed the output "
+        "of normalized_rules. If some path now reaches emission without it, fix that "
+        "instead — the gate has a hole."
+    )
     source = Path(g.__file__).read_text(encoding="utf-8")
     calls = re.findall(r"(?<!def )compile_policy\((.*?)\)", source)
-    assert len(calls) == 2, calls
-    assert set(calls) == {"rules"}, calls
-    assert source.count("rules = normalized_rules(draft)") == 2, source
+    assert len(calls) == 2, f"expected 2 compile_policy call sites, found {calls}. {bypass_hint}"
+    assert set(calls) == {"rules"}, f"compile_policy fed something else: {calls}. {bypass_hint}"
+    assert source.count("rules = normalized_rules(draft)") == 2, (
+        f"expected 2 gate call sites spelled 'rules = normalized_rules(draft)', found "
+        f"{source.count('rules = normalized_rules(draft)')}. {bypass_hint}"
+    )
 
     # Pin the ordering the docstring calls intentional, so flipping it is a test failure
     # rather than a silent change to what the audit record captures.
