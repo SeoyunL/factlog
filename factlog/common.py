@@ -2812,6 +2812,15 @@ def _attr_rel_facts(accepted: list[dict[str, str]] | None = None) -> str:
     the python tracer (which does normalize) said otherwise. Matching on the stored
     symbol keeps the two in step under any normalization, and leaves accepted.dl
     byte-identical.
+
+    *accepted* takes rows in the shape load_accepted_facts returns; omitted, they are
+    loaded from accepted.dl. It exists to REUSE an accepted.dl the caller already read
+    (run_wirelog does, see the comment at its `accepted = accepted_rows`), added with the
+    function itself in #237 — a hot path, not a test seam. So it carries no guarantee that
+    compile_facts' gate ever saw these rows, and neither does the default branch, which
+    reads whatever is on disk now. The control-char gate below therefore runs on BOTH
+    branches; see wirelog_undecodable_chars for why this is a gate and not a documented
+    precondition (#373).
     """
     forms = attribute_relation_forms()
     if not forms:
@@ -2822,10 +2831,39 @@ def _attr_rel_facts(accepted: list[dict[str, str]] | None = None) -> str:
     )
     if not names:
         return ""
+    _reject_undecodable_attr_rel_names(names)
     # dl_string, not an f-string: a name carrying a quote emitted `attr_rel(""x"")`
     # and the engine failed to parse the whole program, killing `factlog check` on
     # a KB that worked before the declaration existed.
     return "\n" + "\n".join(f"attr_rel({dl_string(name)})." for name in names) + "\n"
+
+
+def _reject_undecodable_attr_rel_names(names: list[str]) -> None:
+    """Refuse to build an engine program while any attr_rel name carries a control
+    character dl_string would emit as a wirelog-undecodable escape (#373).
+
+    Reaching here means the name got past compile_facts' gate, which rejects the same
+    characters in a fact's relation field — so accepted.dl was hand-edited, truncated,
+    externally generated, or handed in through *accepted*. Fail loud rather than emit a
+    symbol Python and the engine spell differently (#331).
+    """
+    for name in names:
+        bad = wirelog_undecodable_chars(name)
+        if not bad:
+            continue
+        shown = ", ".join(repr(c) for c in bad)
+        raise FactlogError(
+            f"control character(s) {shown} in attribute relation name {name!r} cannot be "
+            "emitted: the engine program encodes them as JSON escapes wirelog does not decode "
+            "(\\t \\n \\r \\b \\f and other U+0000–U+001F controls), so Python and the engine "
+            "would hold different strings for this relation and the value would be silently "
+            "lost from every query (#331/#373). tools/compile_facts.py rejects such a row, so "
+            "facts/accepted.dl was edited, truncated or generated outside it. Clean BOTH the "
+            "declaration in policy/attribute-relations.md (edit the `name` bullet) and the fact "
+            "— factlog amend <subject> <relation> <object> --set-relation <clean> — then "
+            "recompile with tools/compile_facts.py. "
+            "(U+0085/U+2028/U+2029 are fine and never rejected.)"
+        )
 
 
 def policy_string_literals(text: str) -> list[str]:
