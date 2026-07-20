@@ -2878,16 +2878,26 @@ def _reject_undecodable_attr_rel_names(names: list[str]) -> None:
     externally generated, or handed in through *accepted*. Fail loud rather than emit a
     symbol Python and the engine spell differently (#331).
 
-    The message prescribes RECOMPILE, not amend. amend reads candidates.csv only (one
-    csv.DictReader, no ACCEPTED_DL, no load_accepted_facts), so on the case this gate
-    actually catches — accepted.dl dirty, candidates.csv clean — the row it is told to
-    correct is not there and it answers `no fact matches`. Recompiling rebuilds accepted.dl
-    from candidates.csv and fixes that case outright; when candidates.csv is dirty too the
-    compile gate refuses and prints its own amend instruction, so this message hands off
-    rather than duplicating it. Cleaning the declaration is a SEPARATE repair, not a
-    redundant one: `names` is the intersection of accepted relations and declared forms, so
-    recompiling alone silences this gate while leaving a declaration that matches no row and
-    has silently stopped marking the relation as an attribute (measured, #373).
+    The message prescribes RECOMPILE, not amend. amend never consults accepted.dl (no
+    ACCEPTED_DL, no load_accepted_facts in cmd_amend), so on the case this gate actually
+    catches — accepted.dl dirty, candidates.csv clean — the row it is told to correct is not
+    there and it answers `no fact matches`. Recompiling rebuilds accepted.dl from
+    candidates.csv and fixes that case outright. When the compile refuses instead, this
+    message hands off the row-level fix but names the flag the compile gate omits: that gate
+    reports the offending `relation` field yet suggests only --set-object/--set-subject.
+
+    It does NOT say WHERE the character is when the compile refuses, because compile_facts
+    has TWO control-char gates — _reject_undecodable_control_chars on the fact rows and
+    _reject_undecodable_canonical_names on the alias-derived canonical names. Since
+    attribute_relation_forms expands aliases through surface_variants, a mapping in
+    relation-aliases.md can produce the very form this gate fires on while candidates.csv
+    holds no control character at all (measured, #373). Both compile gates name their own
+    file and bullet, so the message defers to whichever one spoke.
+
+    Cleaning the declaration is a SEPARATE repair, not a redundant one: `names` is the
+    intersection of accepted relations and declared forms, so recompiling alone silences this
+    gate while leaving a declaration that matches no row and has silently stopped marking the
+    relation as an attribute (measured, #373).
     """
     for name in names:
         bad = wirelog_undecodable_chars(name)
@@ -2903,8 +2913,9 @@ def _reject_undecodable_attr_rel_names(names: list[str]) -> None:
             "facts/accepted.dl was edited, truncated or generated outside it. Two repairs, "
             "both needed: (1) rebuild the engine input — tools/compile_facts.py — which "
             "restores facts/accepted.dl from facts/candidates.csv; if the compile itself "
-            "refuses, the control character is in facts/candidates.csv as well — correct that "
-            "row through factlog amend (--set-relation for this field), then rerun the "
+            "refuses, its message says which file holds the character — a facts/candidates.csv "
+            "row (correct it with factlog amend, using --set-relation for this field) or a "
+            "policy/relation-aliases.md mapping — so follow that message, then rerun the "
             "compile. (2) clean the declaration carrying this name in "
             "policy/attribute-relations.md (or the policy/relation-aliases.md mapping that "
             "produces this form) — step 1 alone silences this error but leaves a declaration "
