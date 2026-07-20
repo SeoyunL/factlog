@@ -3,17 +3,24 @@
 
 tools/generate_logic_policy.py writes PROMPT_OUT before any gate and RESPONSE_OUT
 between two of them, so a run that raises part-way leaves runs/ holding files from two
-different runs with nothing to tell them apart. Measured on main 4b40fac (sample-kb,
-a clean run then a control character in a backtick relation name): rc=1, prompt.md
-c3dd879a -> a237478b, response.json still 56ca7221 and trace.md still 3b618ecb — the
-previous run's bytes. The directory then reads as the audit record of a run that never
-happened, which no exit code or stderr message contradicts.
+different runs with nothing to tell them apart. To reproduce on base 4b40fac: copy
+examples/sample-kb, run the tool once, overwrite policy/logic-policy.md with the
+CONTROL_CHAR_MD constant below, run it again. Measured — rc=1, prompt.md c3dd879a ->
+cc0b8770, response.json still 56ca7221 and trace.md still 3b618ecb, the first run's
+bytes. The directory then reads as the audit record of a run that never happened, which
+no exit code or stderr message contradicts.
 
 Deleting the leftovers was rejected as the fix: it destroys the only evidence of the
 failing run and still leaves a directory matching no run (the earlier run's response
 and trace, minus its prompt). So the run states the accounting instead, in
-runs/natural-language-to-policy-failed.md, and its absence is the signal that runs/
-describes exactly one run.
+runs/natural-language-to-policy-failed.md, and its absence is the signal that the last
+run to write anything under runs/ finished.
+
+The marker only ever states what it can support. A run that writes nothing leaves runs/
+byte-for-byte as it found it, so it writes no marker and clears none: claiming a mismatch
+over an untouched directory would manufacture the audit surface this issue removes, and
+the accounting an earlier failure left is still the true one. That is also why a
+successful run clears the marker at the END rather than at startup.
 
 The failure is NOT specific to the control-char gate. A canonical/non-canonical clash
 raises in normalized_rules, one line past RESPONSE_OUT, and leaves BOTH files behind —
@@ -174,3 +181,90 @@ def test_the_marker_is_deterministic(kb):
     first = _marker(kb)
     assert _generate(kb).returncode == 1
     assert _marker(kb) == first
+
+
+def _break_prompt_template(kb):
+    """Make render_prompt fail, i.e. fail the run before it writes any artifact."""
+    (kb / "policy" / "prompts" / "natural_language_to_policy.md").write_text(
+        "no placeholder here\n", encoding="utf-8"
+    )
+
+
+def test_a_run_that_writes_nothing_leaves_no_marker(kb):
+    # The marker must not claim a mismatch that does not exist. render_prompt raises
+    # before PROMPT_OUT, so runs/ still holds the previous run's three files and they are
+    # a consistent record of it — writing "these do not belong to one run" over them
+    # would manufacture exactly the audit surface #372 exists to remove.
+    assert _generate(kb).returncode == 0
+    before = {name: _md5(kb / "runs" / name) for name in (PROMPT, RESPONSE, TRACE)}
+    _break_prompt_template(kb)
+    proc = _generate(kb)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert {name: _md5(kb / "runs" / name) for name in before} == before
+    assert not (kb / "runs" / MARKER).exists(), (kb / "runs" / MARKER).read_text()
+
+
+def test_a_run_that_writes_nothing_keeps_an_earlier_marker(kb):
+    # The mirror case, and why the marker is cleared on success rather than at startup.
+    # Run 1 leaves a real mixture; run 2 touches nothing, so run 1's accounting is still
+    # the true description of these files and must survive.
+    assert _generate(kb).returncode == 0
+    (kb / "policy" / "logic-policy.md").write_text(CONTROL_CHAR_MD, encoding="utf-8")
+    assert _generate(kb).returncode == 1
+    mixed = _marker(kb)
+    _break_prompt_template(kb)
+    assert _generate(kb).returncode == 1
+    assert _marker(kb) == mixed
+
+
+def test_the_mixed_vintage_sentence_appears_only_when_something_is_stale(kb):
+    mixed_claim = "do not all belong to the same run"
+    # Fresh KB: the failing run writes the prompt and nothing older is present, so runs/
+    # holds one run's files only and the headline may not say otherwise.
+    (kb / "policy" / "logic-policy.md").write_text(CONTROL_CHAR_MD, encoding="utf-8")
+    assert _generate(kb).returncode == 1
+    only_this_run = _marker(kb)
+    assert _section(only_this_run, "Present, not written by this run") == ["(none)"], only_this_run
+    assert mixed_claim not in only_this_run, only_this_run
+    # Same input over a completed run: now response.json and trace.md ARE older.
+    (kb / "policy" / "logic-policy.md").write_text(GOOD_MD, encoding="utf-8")
+    assert _generate(kb).returncode == 0
+    (kb / "policy" / "logic-policy.md").write_text(CONTROL_CHAR_MD, encoding="utf-8")
+    assert _generate(kb).returncode == 1
+    assert mixed_claim in _marker(kb), _marker(kb)
+
+
+def test_failing_to_write_the_marker_does_not_replace_the_verdict(kb):
+    # A directory at the marker path makes write_text raise IsADirectoryError, standing in
+    # for the full or read-only disk. The caller must still be told which gate fired: the
+    # marker is an extra record, so losing it beats swapping the diagnosis for an OSError.
+    (kb / "runs" / MARKER).mkdir(parents=True)
+    (kb / "policy" / "logic-policy.md").write_text(CONTROL_CHAR_MD, encoding="utf-8")
+    proc = _generate(kb)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "#359" in proc.stderr, proc.stderr
+    assert "IsADirectoryError" not in proc.stderr, proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
+
+
+def test_an_unclearable_marker_is_reported_rather_than_left_lying(kb):
+    # The other half of the asymmetry. On success the marker MUST go, because leaving it
+    # would describe three freshly written files as an older run's leftovers. Swallowing
+    # the error here would exit 0 over that lie, so the run reports it and says what to do.
+    (kb / "runs" / MARKER).mkdir(parents=True)
+    proc = _generate(kb)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "could not clear" in proc.stderr, proc.stderr
+    assert "Remove it by hand" in proc.stderr, proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
+    # The run really did its job before tripping on the marker.
+    assert (kb / "policy" / "logic-policy.dl").is_file()
+
+
+def test_an_exception_with_no_message_is_named_without_a_dangling_colon():
+    # KeyboardInterrupt() and friends stringify to "", and "KeyboardInterrupt: " reads
+    # like a message that got truncated on the way out.
+    import generate_logic_policy as g
+
+    assert "## Failure\n\nKeyboardInterrupt\n" in g.failure_marker(KeyboardInterrupt(), [g.PROMPT_OUT])
+    assert "## Failure\n\nValueError: boom\n" in g.failure_marker(ValueError("boom"), [g.PROMPT_OUT])

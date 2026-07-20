@@ -360,11 +360,14 @@ def failure_marker(exc: BaseException, written: list[Path]) -> str:
 
     A run that raises after PROMPT_OUT leaves runs/ describing no single run: the files
     it managed to write sit beside whatever the previous run left, and nothing in their
-    bytes says which is which. Measured on main 4b40fac, sample-kb, success then a
-    control-char relation name: prompt.md changed (c3dd879a -> a237478b), response.json
-    and trace.md kept the previous run's bytes (56ca7221 / 3b618ecb) and rc was 1. That
-    directory is an audit record of a run that never happened, which is the defect —
-    not the leftovers themselves, since deleting them only moves the mismatch onto the
+    bytes says which is which. Reproduce on base 4b40fac, over a copy of
+    examples/sample-kb — one clean run, then replace policy/logic-policy.md with the
+    CONTROL_CHAR_MD constant of tests/unit/test_failed_policy_run_marker.py (a U+0001
+    inside a backtick relation name) and run again: rc=1, prompt.md c3dd879a ->
+    cc0b8770, and response.json / trace.md still at 56ca7221 / 3b618ecb, the first run's
+    bytes.
+    That directory is an audit record of a run that never happened, which is the defect
+    — not the leftovers themselves, since deleting them only moves the mismatch onto the
     earlier run's half-record.
 
     Files are sorted into what this run wrote and what merely sits there, because only
@@ -373,33 +376,45 @@ def failure_marker(exc: BaseException, written: list[Path]) -> str:
     its predecessor's is still this run's output, and a hash comparison would call it
     stale.
 
+    The headline states only what the two groups support, because a marker that
+    overstates recreates the defect it exists to report. A run that wrote every artifact
+    and then failed on the .dl leaves runs/ internally consistent — the mixed-vintage
+    sentence would be false there, so it appears only when something in runs/ is in fact
+    older than this run. main() does not call this at all when the run wrote nothing.
+
     Contains no wall-clock time and no absolute paths: the same input must produce the
     same marker, the way every other generated artifact in this repo does.
     """
     written_names = {path.name for path in written}
-    groups = [
-        ("Written by this run", [p for p in RUN_ARTIFACTS if p.name in written_names]),
-        (
-            "Present, not written by this run",
-            [p for p in RUN_ARTIFACTS if p.name not in written_names and p.is_file()],
-        ),
-        (
-            "Not present",
-            [p for p in RUN_ARTIFACTS if p.name not in written_names and not p.is_file()],
-        ),
-    ]
+    mine = [p for p in RUN_ARTIFACTS if p.name in written_names]
+    stale = [p for p in RUN_ARTIFACTS if p.name not in written_names and p.is_file()]
+    absent = [p for p in RUN_ARTIFACTS if p.name not in written_names and not p.is_file()]
     lines = [
         "# natural-language-to-policy: last run failed",
         "",
-        "tools/generate_logic_policy.py raised part-way through, so the files in this",
-        "directory do not all belong to the same run. Do not read them as one audit",
-        "record while this marker exists; a run that finishes deletes it before writing",
-        "anything (#372).",
+        "tools/generate_logic_policy.py raised part-way through, so policy/logic-policy.dl",
+        "was not regenerated from the files below (#372).",
         "",
+    ]
+    if stale:
+        lines += [
+            "Those files do not all belong to the same run: the ones this run wrote sit",
+            "beside files an earlier run left, and their bytes cannot tell you which is",
+            "which. Do not read this directory as one audit record while this marker",
+            "exists.",
+            "",
+        ]
+    message = str(exc)
+    lines += [
         "## Failure",
         "",
-        f"{type(exc).__name__}: {exc}",
+        f"{type(exc).__name__}: {message}" if message else type(exc).__name__,
         "",
+    ]
+    groups = [
+        ("Written by this run", mine),
+        ("Present, not written by this run", stale),
+        ("Not present", absent),
     ]
     for heading, paths in groups:
         lines.append(f"## {heading}")
@@ -434,14 +449,16 @@ def main() -> int:
         print(f"checked: {OUTPUT_DL}")
         return 0
 
-    # Clear the previous failure marker before writing anything: its absence is what
-    # tells a reader the files under runs/ come from one run, so it may only be absent
-    # once this run is the one they will describe. A --check run writes nothing under
-    # runs/, so it neither clears nor sets the marker.
-    FAILED_OUT.unlink(missing_ok=True)
-
-    # BaseException, not Exception: read_required/render_prompt raise SystemExit, and a
-    # run killed by one leaves the same half-written directory as any other failure.
+    # The marker is cleared on SUCCESS, at the end, not here. Clearing it up front would
+    # drop the previous run's accounting for files this run may never touch: a run that
+    # dies before PROMPT_OUT leaves runs/ byte-for-byte as it found it, so whatever the
+    # marker said about those files is still true and deleting it would hide a mixture an
+    # earlier run created. Absence therefore means "the last run that wrote anything into
+    # runs/ finished". A --check run writes nothing under runs/ and touches neither.
+    #
+    # BaseException, not Exception: render_prompt (via read_required on the prompt
+    # template) and fixture_policy_json both raise SystemExit from inside this try, and a
+    # run cut short by one leaves the same half-written directory as any other failure.
     written: list[Path] = []
     try:
         prompt = render_prompt(policy_text)
@@ -466,10 +483,35 @@ def main() -> int:
             tmp.write_text(program, encoding="utf-8")
             tmp.replace(OUTPUT_DL)
     except BaseException as exc:
-        # Re-raised unchanged: the marker is an extra record, never a change of verdict,
-        # so the exit code and stderr a caller sees stay exactly what they were.
-        FAILED_OUT.write_text(failure_marker(exc, written), encoding="utf-8")
+        # Only a run that wrote something can have left a mixture; one that wrote nothing
+        # leaves runs/ exactly as it found it, and a marker there would announce a
+        # mismatch that does not exist — the very kind of audit surface #372 removes.
+        if written:
+            try:
+                FAILED_OUT.write_text(failure_marker(exc, written), encoding="utf-8")
+            except OSError:
+                # A full or read-only disk must not rewrite the verdict: the caller needs
+                # to see the gate that fired, not the failure to record it. The marker is
+                # an extra record, so losing it is strictly better than replacing `exc`.
+                pass
+        # Re-raised unchanged, so the exit code and stderr a caller sees stay exactly
+        # what they were.
         raise
+    # Every artifact under runs/ now comes from this run, so the accounting is settled.
+    # This one is NOT swallowed, unlike the write above, and the asymmetry is the point:
+    # an unwritable marker only costs a record, while an undeletable one leaves a stale
+    # marker calling current files leftovers — a false audit surface, which is the thing
+    # #372 removes. So the run says it could not honour that invariant instead of exiting
+    # 0 over a lie. Reproduced by placing a directory at the marker path.
+    try:
+        FAILED_OUT.unlink(missing_ok=True)
+    except OSError as exc:
+        raise FactlogError(
+            f"generated {OUTPUT_DL.name} but could not clear {FAILED_OUT.name}: {exc}. "
+            f"That file marks the previous run as failed, and leaving it would describe "
+            f"this run's fresh runs/ files as another run's leftovers. Remove it by hand "
+            f"and re-run."
+        ) from exc
     print(f"policy rules: {len(rules)}")
     print(f"written: {OUTPUT_DL}" if not args.dry_run else f"dry-run: {OUTPUT_DL} not changed")
     print(f"prompt: {PROMPT_OUT}")
