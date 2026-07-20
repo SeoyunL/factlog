@@ -4,16 +4,22 @@
 `classify_query` (the ask gate) never judged "the vocabulary": it judges a subject
 against `entity_set`, a relation name against the accepted relations and their
 declared aliases, a relation object against `value_set` plus the ancestors declared
-UNDER THE QUERIED RELATION, and a policy query's pinned entity against `entity_set`
-again. The report pooled all four into one set of constants, which is a superset of
-every one of them. So on a KB that declares attribute relations or a value hierarchy
-the two disagreed, and always in the dangerous direction: the gate answered
-`entity_not_accepted` while the report rendered the empty extent as `0 rows` — a
-VERIFIED NEGATIVE, the engine asserting "no such fact" about a term the KB never
-adopted in that position (#284's failure mode, reached through #350/#351's rendering).
+UNDER THE QUERIED RELATION, a policy query's pinned entity against `entity_set`
+again, and a PATH argument against `entity_set` as well. The report pooled all five
+into one set of constants, which is a superset of every one of them. So on a KB that
+declares attribute relations or a value hierarchy the two disagreed, and always in
+the dangerous direction: the gate answered `entity_not_accepted` while the report
+rendered the empty extent as `0 rows` — a VERIFIED NEGATIVE, the engine asserting
+"no such fact" about a term the KB never adopted in that position (#284's failure
+mode, reached through #350/#351's rendering).
+
+The path position was the last one outside this property (#366), and it was the
+worst of them: the pooled set carried the RELATION names too, so
+`path("founded_by", X)?` drew no warning at all while the report rendered
+`path results: 0 rows` for a query the gate refuses with `entity_not_accepted`.
 
 Both sides now route every one of those decisions through `common.QueryVocabulary`,
-so the four positions are tested here as one property: for each query, the gate's
+so the five positions are tested here as one property: for each query, the gate's
 accept/reject and the report's `0 rows`/`unverified` must agree.
 """
 from __future__ import annotations
@@ -96,8 +102,8 @@ def _warns(query: str) -> list[str]:
     return rlc.validate_query(query, vocab, {"needs_review"})[1]
 
 
-class TestTheFourPositionsAgree:
-    """One property, four positions. Each query names a constant that the pooled set
+class TestTheFivePositionsAgree:
+    """One property, five positions. Each query names a constant that the pooled set
     admitted and the position does not."""
 
     @pytest.mark.parametrize(
@@ -112,6 +118,16 @@ class TestTheFourPositionsAgree:
             'relation("Alice", "invented_by", "Bob")?',
             # POLICY ENTITY: the same attribute literal, pinned in a policy query.
             'needs_review("2020", R)?',
+            # PATH NODE: a path argument is a true entity, so it takes the SUBJECT
+            # predicate the gate applies to it — the attribute literal is not one.
+            'path("2020", X)?',
+            # A hierarchy ancestor is a legitimate relation OBJECT and never a node.
+            'path("anyone", X)?',
+            # A RELATION NAME in a node position: the pooled set carried the relations,
+            # so this one used to draw no warning at all and still render `0 rows`.
+            'path("founded_by", X)?',
+            # The two-constant form takes the same check; only the label differs.
+            'path("2020", "Alice")?',
         ],
     )
     def test_a_constant_its_position_rejects_is_rejected_on_both_sides(self, kb, query):
@@ -133,6 +149,9 @@ class TestTheFourPositionsAgree:
             'relation("Paper1", "published_year", "2020")?',
             # An accepted entity pinned in a policy query.
             'needs_review("Alice", R)?',
+            # Accepted entities in the path positions, both forms.
+            'path("Alice", X)?',
+            'path("Alice", "Bob")?',
         ],
     )
     def test_a_constant_its_position_accepts_is_accepted_on_both_sides(self, kb, query):
@@ -150,9 +169,16 @@ class TestTheFourPositionsAgree:
             'relation("Alice", R, "anyone")?',
             'relation("Paper1", "published_year", "2020")?',
             'needs_review("Alice", R)?',
+            'path("2020", X)?',
+            'path("anyone", X)?',
+            'path("founded_by", X)?',
+            'path("2020", "Alice")?',
+            'path("Alice", X)?',
             # The discriminator belongs in the parity set too: accepted vocabulary
             # with an absent triple must be accepted by BOTH, not just by the report.
             'relation("Alice", "founded_by", "Paper1")?',
+            # Its path analogue: two accepted entities the engine proved nothing about.
+            'path("Alice", "Bob")?',
         ],
     )
     def test_the_two_verdicts_are_equal(self, kb, query):
@@ -190,6 +216,15 @@ class TestTheDiscriminatorSurvives:
         )
         assert code == QUERY_OK, code
 
+    def test_accepted_path_nodes_with_no_route_are_still_not_found(self, kb):
+        """The verified negative the path branch exists to render. Two accepted
+        entities the engine proved no path between is exactly the case `(not found)`
+        is FOR, and narrowing the vocabulary must not swallow it."""
+        assert _report_line(kb, 'path("Alice", "Bob")?') == "path Alice -> Bob: (not found)"
+
+    def test_an_accepted_path_variable_with_no_pairs_is_still_zero_rows(self, kb):
+        assert _report_line(kb, 'path("Alice", X)?') == "path results: 0 rows"
+
 
 class TestTheWarningPointerIsExact:
     """`unverified — '...' (see Warnings above)` must point at a warning that is
@@ -201,6 +236,10 @@ class TestTheWarningPointerIsExact:
             ('relation("Alice", "published_year", "anyone")?', "anyone"),
             ('relation("2020", R, O)?', "2020"),
             ('needs_review("2020", R)?', "2020"),
+            ('path("2020", X)?', "2020"),
+            ('path("anyone", X)?', "anyone"),
+            ('path("founded_by", X)?', "founded_by"),
+            ('path("2020", "Alice")?', "2020"),
         ],
     )
     def test_every_unverified_result_has_its_warning(self, kb, query, constant):
@@ -208,9 +247,18 @@ class TestTheWarningPointerIsExact:
         assert f"'{constant}' is not accepted vocabulary (see Warnings above)" in line, line
         assert any(constant in warning for warning in _warns(query)), _warns(query)
 
+    def test_the_two_constant_path_form_keeps_its_own_label(self, kb):
+        """`path A -> B:` names the pair asked about; only the VALUE changes."""
+        assert _report_line(kb, 'path("2020", "Alice")?') == (
+            "path 2020 -> Alice: unverified — '2020' is not accepted vocabulary "
+            "(see Warnings above)"
+        )
+
     def test_a_constant_its_position_accepts_draws_no_warning(self, kb):
         assert _warns('relation("Alice", "founded_by", "anyone")?') == []
         assert _warns('needs_review("Alice", R)?') == []
+        assert _warns('path("Alice", X)?') == []
+        assert _warns('path("Alice", "Bob")?') == []
 
     def test_one_unaccepted_constant_is_warned_about_once(self, kb):
         """The position checks return instead of falling through to the generic
@@ -218,3 +266,14 @@ class TestTheWarningPointerIsExact:
         assert _warns('relation("2020", R, O)?') == [
             "query references non-engine entity or relation: 2020"
         ]
+        assert _warns('path("2020", X)?') == [
+            "query references non-engine entity or relation: 2020"
+        ]
+
+    def test_no_position_agnostic_vocabulary_is_left(self):
+        """Every query position now names its own predicate, so the pooled set — the
+        one that admitted a relation name as a path node — has no caller and is gone.
+        Kept as an assertion because re-adding it is how #362 and #366 happened."""
+        from common import QueryVocabulary
+
+        assert not hasattr(QueryVocabulary, "accepts_anywhere")
