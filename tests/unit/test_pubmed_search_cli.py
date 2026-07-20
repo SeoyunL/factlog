@@ -123,6 +123,24 @@ def _print_electronic_article(pmid, *, issue_year, article_date, title="A paper"
     )
 
 
+def _year_less_article(pmid, *, pub_date="<PubDate/>", title="A dateless paper"):
+    """A record whose `<PubDate>` yields no year — front matter gets no `year` (#389).
+
+    Real PubMed data reaches this state with an empty `<PubDate/>`, with a `<Season>`
+    and nothing else, or with a `<MedlineDate>` carrying no four-digit run. Kept as
+    real XML for the same reason as above: the parser, not a stub, decides the year.
+    """
+    return (
+        "<PubmedArticle><MedlineCitation>"
+        f"<PMID Version='1'>{pmid}</PMID>"
+        "<Article>"
+        f"<ArticleTitle>{title}</ArticleTitle>"
+        "<AuthorList><Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author></AuthorList>"
+        f"<Journal><Title>Nature</Title><JournalIssue>{pub_date}</JournalIssue></Journal>"
+        "</Article></MedlineCitation></PubmedArticle>"
+    )
+
+
 def _efetch(*articles):
     return f"<PubmedArticleSet>{''.join(articles)}</PubmedArticleSet>"
 
@@ -325,6 +343,51 @@ class TestSilentZeroGuard:
                   "--target", str(_kb(tmp_path))])
         assert rc == 0
         assert "will be recorded as year" not in capsys.readouterr().err
+
+    def test_a_result_with_no_parseable_year_is_surfaced(self, tmp_path, fake, capsys):
+        # #389 end-to-end: --year was given, and this record will land with no `year`
+        # field at all. Without a word on stderr the run is indistinguishable from one
+        # that passed no --year, so the operator hears it before the file lands.
+        fake(FakePubMedClient(
+            esearch_body=_esearch(count=1, ids=["40000003"]),
+            efetch_body=_efetch(_year_less_article("40000003")),
+        ))
+        rc = run(["pubmed-search", "--query", "base editing", "--year", "2022-2025",
+                  "--target", str(_kb(tmp_path))])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "40000003" in err
+        assert "no year at all" in err and "2022-2025" in err
+        # Its own claim, never the range-mismatch one: this record has no year to be
+        # outside anything, and the electronic-date story is false for it.
+        assert "outside --year" not in err
+        assert "electronic" not in err
+
+    def test_the_missing_year_never_blocks_the_import(self, tmp_path, fake, capsys):
+        # Same floor as #387: surfaced, not filtered. --all still writes the source
+        # and the exit code stays 0 — no CI fails on this warning.
+        kb = _kb(tmp_path)
+        fake(FakePubMedClient(
+            esearch_body=_esearch(count=1, ids=["40000003"]),
+            efetch_body=_efetch(_year_less_article(
+                "40000003", pub_date="<PubDate><Season>Winter</Season></PubDate>")),
+        ))
+        rc = run(["pubmed-search", "--query", "base editing", "--year", "2022-2025",
+                  "--all", "--target", str(kb)])
+        assert rc == 0
+        assert _sources(kb) != []
+        assert "no year at all" in capsys.readouterr().err
+
+    def test_a_missing_year_is_not_reported_without_a_year_filter(self, tmp_path, fake, capsys):
+        # The counterexample at the CLI seam: with no --year there is no range, so a
+        # year-less record is nothing the operator asked to be told about.
+        fake(FakePubMedClient(
+            esearch_body=_esearch(count=1, ids=["40000003"]),
+            efetch_body=_efetch(_year_less_article("40000003")),
+        ))
+        rc = run(["pubmed-search", "--query", "base editing", "--target", str(_kb(tmp_path))])
+        assert rc == 0
+        assert "no year at all" not in capsys.readouterr().err
 
     def test_honest_empty_set_prints_no_guard_warning(self, tmp_path, fake, capsys):
         # No filter, no diagnostic — only the boilerplate every zero carries. Neither the
