@@ -144,18 +144,27 @@ def _is_malformed_compound_term(value: str, spec: object | None = None) -> bool:
     to fix correct data, which is worse than the noise this audit removes.
 
     So exactly ONE step is exempted, and only when the table is unreadable: UNIT
-    RESOLUTION. An amount whose SHAPE already fails — `amount(abc,"억")`,
-    `amount(,"억")`, `amount(5)` — never reaches unit resolution (literal_types'
-    `_AMOUNT_COMPOUND_RE` rejects it on the `num` group), so no unit table could
-    change the verdict and it is judged with or without a spec. Exempting the whole
-    `amount` type instead (#394) silenced precisely the population this section
-    exists for: a KB writing compound terms before declaring them.
+    RESOLUTION. An amount whose SHAPE already fails never reaches unit resolution,
+    so no unit table could change the verdict and it is judged with or without a
+    spec. Exempting the whole `amount` type instead (#394) silenced precisely the
+    population this section exists for: a KB writing compound terms before declaring
+    them.
+
+    SHAPE here means the WHOLE of literal_types' `_AMOUNT_COMPOUND_RE`, not just its
+    `num` group: a failed number (`amount(abc,"억")`, `amount(,"억")`), a missing
+    unit argument (`amount(5)`) and a malformed one (`amount(5,)`) are all rejected
+    before any unit lookup, so all of them are unit-table-independent alike. #394
+    proposed splitting on the `num` group specifically; the whole-regex test is a
+    superset with the same justification, and drawing the line at `num` would have
+    left the arity failures exempt for no reason.
 
     The type is taken from the WRAPPER NAME, not from the relation's declared type,
     for EVERY type including `amount`. So `date(2020,1)` under a relation declared
     `number` reads as well-formed here even though the engine, which parses by the
-    DECLARED type, would reject it. That mismatch is a separate check (relation type
-    vs value type), not this one. *spec* is consulted for one purpose only — to read
+    DECLARED type, would reject it. That mismatch belongs to a separate check
+    (relation type vs value type) which does NOT exist yet — no caller performs it
+    today, so the blind spot is real and merely out of scope here, not covered
+    elsewhere. *spec* is consulted for one purpose only — to read
     a unit table — so a relation declared non-`amount` supplies no table and its
     amounts are treated exactly like the no-spec case: shape is still judged, unit
     resolution is not. That is a narrowing of the unit exemption, not a second
@@ -165,9 +174,12 @@ def _is_malformed_compound_term(value: str, spec: object | None = None) -> bool:
     if type_tag is None:
         return False
     if type_tag == "amount":
-        # Shape first: a `num`-group failure is unit-independent, so it is judged
+        # Shape first: ANY whole-regex failure is unit-independent, so it is judged
         # before any spec/table question. Read-only use of literal_types' regex —
         # re-deriving the shape here would be a second definition to drift from.
+        # (A shape-only public predicate in literal_types would be the cleaner
+        # contract; that file is being changed by #388, so it is left untouched here
+        # and this stays the single private reference to relocate later.)
         if literal_types._AMOUNT_COMPOUND_RE.match(value) is None:
             return True
         if getattr(spec, "type", None) != "amount":

@@ -234,8 +234,15 @@ class TestAmountShapeIsJudgedWithoutADeclaration:
 
     A KB that writes compound terms before declaring them is the population this
     section exists for; exempting `amount` wholesale left exactly that population
-    with no signal. These values fail on literal_types' `num` group, before any
-    unit lookup, so no declaration could ever make them parse.
+    with no signal.
+
+    These values fail literal_types' `_AMOUNT_COMPOUND_RE` AS A WHOLE — not its
+    `num` group specifically. Two of them (`amount(abc,...)`, `amount(,...)`) do
+    fail on `num`, but `amount(5)` matches `num` fine and fails on ARITY: no unit
+    argument. The property that matters is the same for both kinds and is the whole
+    reason the shape gate precedes the spec question — a value the regex rejects
+    never reaches unit lookup, so no declaration and no unit table could change the
+    verdict.
     """
 
     @pytest.mark.parametrize("value", ['amount(abc,"억")', 'amount(,"억")', "amount(5)"])
@@ -243,6 +250,34 @@ class TestAmountShapeIsJudgedWithoutADeclaration:
         found = entity_audit.audit([_row("P1", "예산", value)])
 
         assert found["malformed_literals"] == [value]
+
+    def test_fullwidth_digits_are_not_malformed_today(self):
+        """COUPLING (#388): `amount(１００,"억")` — FULL-WIDTH digits.
+
+        WILL FLIP WHEN #388 MERGES, BY DESIGN. Today `_AMOUNT_COMPOUND_RE`'s `\\d`
+        matches full-width digits, so the shape PASSES and the value falls through to
+        the unit-table question — unjudged with no spec, hence not malformed. #388
+        narrows those classes to ASCII, after which the shape FAILS and this same
+        value becomes malformed with no declaration.
+
+        That direction is #388's intent, not an accident: its own rationale names
+        this audit's malformed section as where such values must surface. So when
+        #388 lands, this test is EXPECTED to fail and the assertion below should be
+        updated to `[value]` — the failure is the notification, which is the whole
+        reason it is pinned to a concrete answer.
+
+        Deliberately NOT written as `[] if _AMOUNT_COMPOUND_RE.match(value) else ...`.
+        Deriving the expectation from the very regex under test passes no matter what
+        that regex says: it survived a simulated #388 narrowing unchanged, proving it
+        pinned nothing. A hard answer is what makes the flip observable.
+        """
+        value = 'amount(１００,"억")'
+        found = entity_audit.audit([_row("P1", "예산", value)])
+
+        assert found["malformed_literals"] == []
+        # Independent of the flip: it is compound-shaped either way, so it is never
+        # an entity and never silently dropped from the report.
+        assert value not in found["entities"]
 
     def test_unit_resolution_failure_stays_unjudged_with_no_declaration(self):
         # The other half of the split, and the half that keeps the fix honest: the
