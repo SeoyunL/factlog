@@ -17,38 +17,55 @@ Porcelain named the rule; it is not the only place that needs it. A stderr warni
 second contract (#396) — and such a caller reuses this rule rather than growing a near-copy
 under a second name, which is how the two integrations drifted apart in the first place.
 
-**Not every porcelain emitter is gated.** That was true when #396 wrote it and it is
-still true; #406 closed three of the holes, not the set. ``_openalex_show_results``,
-``_arxiv_show_results`` and ``_pubmed_show_results`` (``cli.py``) printed their ``result``
-rows with bare f-strings until #406 routed the id and title through this function — but
-at least ten positional emitters remain open (#416), measured on the tree that closed
-those three:
+**The gaps this note tracked are closed; do not read that as "the set is closed".**
+#396 wrote "not every porcelain emitter is gated", #406 closed three ``result`` rows and
+said so, and #416 closed the eleven this paragraph then listed. What is measured today:
+every caller-influenced field on a positional row under ``factlog/`` reaches
+:func:`porcelain_field`. Every bare ``print(f"…\\t…")`` that remains interpolates an
+``int``, a ``len()`` or a ``'0'``/``'1'`` literal — a count cannot carry a tab.
 
-* ``cli.py`` lines 4739 and 4954, ``print(f"query\\t{composed}")`` — carries the user's
-  own ``--query`` argument. Measured: ``arxiv-search --query $'a\\tb' --show-query
-  --porcelain`` emits ``query\\ta\\tb``, three columns where the contract says two.
-* ``cli.py`` lines 3278, 3468 and 3802, the dry-run ``item``/``work`` rows — print
-  ``outcome.key`` and ``name`` ungated. Their fourth sibling at line 3990 (pubmed) *is*
-  gated, so the same row shape is emitted four times with one of them checked, which is
-  exactly the drift one shared definition exists to prevent.
-* ``cli.py`` lines 3292, 3474, 3808, 3998 and 4206, ``print(f"target\\t{...}")`` — print a
-  path derived from the user's ``--target`` argument, and a POSIX filename may contain a
-  tab outright. Their siblings at 5718, 5858 and 6392 emit the same row through ``_f(...)``
-  and are gated: the same split as the bullet above, here eight emissions of one row shape
-  with three of them checked. Recorded from a grep, unlike the two above — no tab-carrying
-  path was run end to end through these five, so "reaches this row unneutralized" is
-  inference, not measurement.
+What #416 closed, with the evidence for each, because the two strengths were not equal:
 
-Those line numbers are a starting point, not an inventory; grep the bare ``print(f"``
-porcelain rows before trusting any count here, including this one. That warning earned
-itself immediately: the ``target`` bullet is a sixth group found *after* this paragraph
-first claimed five, which is why the count above is a floor and reads "at least". The
-point of keeping the note in the present tense is that a reader must not mistake an
-ungated path for a checked one — which is what an earlier revision of this paragraph,
-rewritten entirely into the past tense once #406 landed, quietly did.
+* Both ``query`` rows (``arxiv-search``, ``pubmed-search``) — the user's own ``--query``,
+  the most caller-influenced value on any row here. **Measured:** ``--query $'a\\tb'
+  --show-query --porcelain`` emitted ``query\\ta\\tb``, three columns against a contract
+  of two.
+* All five ``target`` rows — a path built from the user's ``--target``, and a POSIX
+  filename may hold a tab or a newline outright. **Measured, all five**, by putting the
+  KB in a directory whose name carries the character. #406 left four of these five at
+  grep strength and said so; running them settled it in the direction the note feared.
+* Three of the four dry-run ``item``/``work`` rows — the fourth, ``_pubmed_finish``'s, was
+  already gated by #141, which is why this shape existed four times with one checked.
+  **Measured for three of the four:** a tab-carrying Zotero key, a tab-carrying versioned
+  arXiv id from the client response, and — through that pubmed sibling — a tab-carrying
+  PMID from a real efetch body, which arrives and is neutralized to a space, so the gate
+  is doing visible work rather than guarding an unreachable path. The OpenAlex one is the
+  exception and is **not measured**: ``openalex-import`` rejects a response id that is
+  not ``W<digits>``, and a hostile title is slugified before it reaches the filename
+  column, so no route was found that carries a tab there. It is gated regardless —
+  ``outcome.key`` *is* ``work.openalex_id``, the same value ``_openalex_show_results``
+  gates one row over, and a caller gates its value rather than reasoning about what its
+  own parser admits.
+* The ``candidate`` row (``_candidate_porcelain_lines``, #75). **Measured**, through the
+  real importer. This one is worth its own sentence: it was **not in the list #406 wrote**,
+  and it was found by re-running the grep this paragraph tells you to run rather than by
+  trusting the list. The note's own advice caught the note's own omission.
 
-Note what kind of gap that is, because this module has seen both kinds. The ones above
-are **ungated** — no neutralization at all. The three ``*-backfill-provenance`` commands
+Line numbers are deliberately absent now. Every earlier revision carried them, every
+revision's numbers went stale within a merge or two, and the last one was stale on
+arrival — so the instruction is the durable part: **grep the bare ``print(f"`` rows
+before trusting any claim here, including this one.** That instruction has earned itself
+twice: once when the ``target`` group turned up after this paragraph claimed five
+emitters, and once when the ``candidate`` row turned up after it claimed ten.
+
+The tense matters. This paragraph is in the past tense because the holes it names are
+shut, and #406's revision was rewritten into the past tense while ten were still open,
+which quietly invited a reader to mistake an ungated path for a checked one. If you open
+a new emitter, add it here in the present tense and say which strength of evidence you
+have — "measured" and "grep" are different claims and #416 kept them apart on purpose.
+
+Note what kind of gap those were, because this module has seen both kinds. The ones above
+were **ungated** — no neutralization at all. The three ``*-backfill-provenance`` commands
 were something worse to review: **stale, not ungated**. Each kept its own local copy of
 the tab/CR/LF rule, which *looked* checked while silently falling behind when #396 widened
 the shared set, so eight characters it now neutralizes still split those rows in two. They
