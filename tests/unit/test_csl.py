@@ -2,7 +2,7 @@
 """Unit tests for CSL-JSON export core."""
 from __future__ import annotations
 
-from factlog.csl import to_csl
+from factlog.csl import _YEAR_RE, _fold_decimal_digits, to_csl
 
 FM = {
     "item_type": "journalArticle",
@@ -52,3 +52,64 @@ class TestToCsl:
         item = to_csl({"title": "제목", "authors": ["김 무성"]}, "k")
         assert item["title"] == "제목"
         assert item["author"][0] == {"family": "김", "given": "무성"}
+
+
+class TestYearDigitFolding:
+    """The year is folded to ASCII digits explicitly, not by luck of `int()` (#399).
+
+    Every expectation here was ALREADY the observed output before the fold existed
+    — `\\d{4}` matched the whole `Nd` category and `int()` then accepted it. The
+    tests pin that behaviour to the explicit fold so a later narrowing of the
+    regex to `[0-9]` cannot silently drop years, and pin the boundary (`No`
+    characters) that neither spelling ever accepted.
+    """
+
+    def test_ascii_year_unchanged(self):
+        assert to_csl({"year": "2020"}, "k")["issued"] == {"date-parts": [[2020]]}
+
+    def test_full_width_year_folds_to_ascii(self):
+        # Was correct before only because `int("２０２０") == 2020`.
+        assert to_csl({"year": "２０２０"}, "k")["issued"] == {"date-parts": [[2020]]}
+
+    def test_mixed_width_year_folds(self):
+        assert to_csl({"year": "２0２0"}, "k")["issued"] == {"date-parts": [[2020]]}
+
+    def test_non_latin_decimal_digits_fold(self):
+        # Arabic-Indic: `Nd` like the full-width forms, so it folds the same way.
+        assert to_csl({"year": "٢٠٢٠"}, "k")["issued"] == {"date-parts": [[2020]]}
+
+    def test_full_width_year_embedded_in_text(self):
+        item = to_csl({"year": "출판 ２０２０년"}, "k")
+        assert item["issued"] == {"date-parts": [[2020]]}
+
+    def test_folding_does_not_disturb_surrounding_characters(self):
+        assert _fold_decimal_digits("출판 ２０２０년") == "출판 2020년"
+        assert _fold_decimal_digits("n.d.") == "n.d."
+
+    def test_folding_preserves_length(self):
+        # Position-preserving is what makes folding equivalent to the old `\d{4}`:
+        # a fold that changed length could create or destroy a 4-digit run.
+        for value in ("2020", "２０２０", "２0２0", "٢٠٢٠", "출판 ２０２０년"):
+            assert len(_fold_decimal_digits(value)) == len(value)
+
+    def test_year_pattern_is_ascii_only(self):
+        # Pins the intent the issue is about, and it is NOT observable through
+        # output: after folding, no `Nd` character survives, so `\d{4}` and
+        # `[0-9]{4}` accept identical inputs. Reverting the pattern alone breaks
+        # nothing today — it only re-hides what this module accepts, and re-arms
+        # the original bug the moment the fold is touched.
+        assert _YEAR_RE.pattern == r"[0-9]{4}"
+        assert "\\d" not in _YEAR_RE.pattern
+
+    def test_superscript_and_circled_digits_are_not_years(self):
+        # Category `No`, not `Nd`. `\d` never matched them, and the fold must not
+        # start matching them — NFKC would have, which is why it is not used.
+        assert "issued" not in to_csl({"year": "20²0"}, "k")
+        assert "issued" not in to_csl({"year": "①②③④"}, "k")
+        assert _fold_decimal_digits("20²0") == "20²0"
+
+    def test_too_few_digits_still_omits_issued(self):
+        assert "issued" not in to_csl({"year": "１２３"}, "k")
+
+    def test_first_four_digit_run_wins(self):
+        assert to_csl({"year": "１２３４５"}, "k")["issued"] == {"date-parts": [[1234]]}
