@@ -42,12 +42,25 @@ from factlog.text_norm import fold_decimal_digits
 # The digit-bearing patterns below stay ``\d`` — the whole Unicode ``Nd`` category —
 # on purpose: a Zotero library holds whatever it holds, and narrowing to ``[0-9]``
 # would make ``２０２０-06-01`` match nothing and silently lose a year the source did
-# state. The wide match is paired with ``fold_decimal_digits`` at each extractor, so
-# what leaves this module is always ASCII (#398). The fold itself is one Unicode
-# fact shared with the CSL export boundary, so it lives in ``text_norm`` (#410);
-# what stays here is the *policy* — this is an import boundary, where the odd digit
-# is upstream data the user cannot edit from inside factlog, so it is normalized
-# rather than refused the way a hand-written literal is (``literal_types``, #388).
+# state. The policy for that wide match is this module's, and it is an import
+# boundary policy: the odd digit is upstream data the user cannot edit from inside
+# factlog, so it is normalized rather than refused the way a hand-written literal is
+# (``literal_types``, #388). The fold mechanism itself is one Unicode fact shared
+# with the CSL export boundary, so it lives in ``text_norm`` (#410).
+#
+# The pairing is per-pattern, and only two of the three are paired:
+#
+# - ``_YEAR_RE`` / ``_PMID_RE`` -> ``extract_year`` / ``extract_pmid`` fold their
+#   capture, so those two fields leave this module ASCII (#398).
+# - ``_DOI_CORE_RE`` has NO fold. ``_doi_from_extra("DOI: 10.１２３４/abc")`` returns
+#   ``10.１２３４/abc`` verbatim (measured), so a full-width DOI does leave here, and
+#   the ``DOI`` field read straight off the item is untouched too. That is the
+#   defect ``extract_pmid``'s docstring describes and #405 tracks — but #405 fixes
+#   it at the join-key site (``normalize_cross_id``) so already-imported DOIs
+#   collide too, which means this module keeps emitting the full-width spelling
+#   even after #405 lands. Pairing ``_DOI_CORE_RE`` here would be a separate change
+#   (and only a partial one: under ISO 26324 only the ``10.<registrant>`` prefix is
+#   a decimal number, the suffix is opaque and must not be folded).
 _YEAR_RE = re.compile(r"\d{4}")
 _PMID_RE = re.compile(r"\bPMID\s*[:=]?\s*(\d+)", re.IGNORECASE)
 # A DOI in `extra` is taken only from a line that carries a DOI label, and only
