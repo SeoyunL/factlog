@@ -6,8 +6,8 @@
 > 바꿔 주는 도구입니다. LLM이 추출하고, 결정론적 Datalog/wirelog 엔진이 검증합니다.
 >
 > factlog-academic은 [Claude Code](https://code.claude.com) **플러그인**입니다. 세션
-> 안에서는 `/factlog ...` slash command로 쓰고, 검토·승인 같은 사람의 게이트는
-> 터미널에서 Python CLI(`python3 -m factlog ...`)로 직접 실행합니다. 두 입구 모두 같은
+> 안에서는 `/factlog ...` slash command로 쓰고, 검토·승인 같은 사람의 게이트는 같은
+> 세션에 Python CLI(`python3 -m factlog ...`)를 직접 입력해 실행합니다. 두 입구 모두 같은
 > 결정론 엔진을 호출합니다 — slash command · Python CLI · 검증 엔진, 이 셋이 한
 > 도구입니다.
 

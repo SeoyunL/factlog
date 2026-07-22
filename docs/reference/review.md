@@ -8,7 +8,7 @@
 사실만 엔진 입력이 됩니다. `facts/candidates.csv` 를 직접 손대지 않고 승격하거나
 폐기할 수 있습니다.
 
-*터미널에서 실행 (후보를 사람이 검토·승인하는 게이트):*
+*Claude Code에 입력 (후보를 사람이 검토·승인하는 게이트):*
 
 ```bash
 factlog review                       # list the pending queue (candidate + needs_review)
@@ -25,7 +25,7 @@ factlog accept Acme uses FastAPI --dry-run
 
 상태가 아니라 사실의 **값 자체를 교정**하려면 `factlog amend` 를 사용하십시오.
 
-*터미널에서 실행:*
+*Claude Code에 입력:*
 
 ```bash
 factlog amend Widget codename Draft --set-object Falcon --set-note "name finalized" --accept

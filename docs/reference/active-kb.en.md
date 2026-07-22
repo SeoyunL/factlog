@@ -44,7 +44,7 @@ ultimately to the current directory.
 
 ## Checking which KB won
 
-*Run in the terminal:*
+*Type in Claude Code:*
 
 ```bash
 factlog where

@@ -7,7 +7,7 @@
 >
 > factlog-academic is a [Claude Code](https://code.claude.com) **plugin**. Inside a
 > session you use it through `/factlog ...` slash commands; human gates like review and
-> approval you run yourself in the terminal through the Python CLI
+> approval you run yourself by typing the Python CLI into that same session
 > (`python3 -m factlog ...`). Both entry points call the same deterministic engine —
 > slash command · Python CLI · verification engine are one tool.
 
