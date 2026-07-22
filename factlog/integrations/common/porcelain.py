@@ -17,20 +17,44 @@ Porcelain named the rule; it is not the only place that needs it. A stderr warni
 second contract (#396) — and such a caller reuses this rule rather than growing a near-copy
 under a second name, which is how the two integrations drifted apart in the first place.
 
-**Not every porcelain emitter is gated (#406).** ``_openalex_show_results``,
-``_arxiv_show_results`` and ``_pubmed_show_results`` (``cli.py``) print their ``result``
-rows with bare f-strings, so the *first* contract above is open in all three search
-commands. Out of scope for #396, which fixed the warning path in one of them; recorded
-here so the gap is not mistaken for a checked path.
+**Not every porcelain emitter is gated.** That was true when #396 wrote it and it is
+still true; #406 closed three of the holes, not the set. ``_openalex_show_results``,
+``_arxiv_show_results`` and ``_pubmed_show_results`` (``cli.py``) printed their ``result``
+rows with bare f-strings until #406 routed the id and title through this function — but
+at least ten positional emitters remain open (#416), measured on the tree that closed
+those three:
 
-Note what kind of gap that is, because this module has now seen both kinds. Those three
+* ``cli.py`` lines 4739 and 4954, ``print(f"query\\t{composed}")`` — carries the user's
+  own ``--query`` argument. Measured: ``arxiv-search --query $'a\\tb' --show-query
+  --porcelain`` emits ``query\\ta\\tb``, three columns where the contract says two.
+* ``cli.py`` lines 3278, 3468 and 3802, the dry-run ``item``/``work`` rows — print
+  ``outcome.key`` and ``name`` ungated. Their fourth sibling at line 3990 (pubmed) *is*
+  gated, so the same row shape is emitted four times with one of them checked, which is
+  exactly the drift one shared definition exists to prevent.
+* ``cli.py`` lines 3292, 3474, 3808, 3998 and 4206, ``print(f"target\\t{...}")`` — print a
+  path derived from the user's ``--target`` argument, and a POSIX filename may contain a
+  tab outright. Their siblings at 5718, 5858 and 6392 emit the same row through ``_f(...)``
+  and are gated: the same split as the bullet above, here eight emissions of one row shape
+  with three of them checked. Recorded from a grep, unlike the two above — no tab-carrying
+  path was run end to end through these five, so "reaches this row unneutralized" is
+  inference, not measurement.
+
+Those line numbers are a starting point, not an inventory; grep the bare ``print(f"``
+porcelain rows before trusting any count here, including this one. That warning earned
+itself immediately: the ``target`` bullet is a sixth group found *after* this paragraph
+first claimed five, which is why the count above is a floor and reads "at least". The
+point of keeping the note in the present tense is that a reader must not mistake an
+ungated path for a checked one — which is what an earlier revision of this paragraph,
+rewritten entirely into the past tense once #406 landed, quietly did.
+
+Note what kind of gap that is, because this module has seen both kinds. The ones above
 are **ungated** — no neutralization at all. The three ``*-backfill-provenance`` commands
 were something worse to review: **stale, not ungated**. Each kept its own local copy of
 the tab/CR/LF rule, which *looked* checked while silently falling behind when #396 widened
 the shared set, so eight characters it now neutralizes still split those rows in two. They
 were converted to call this function (#396). A near-copy does not stay correct by being
 correct once, which is the whole argument for one definition; an obvious gap at least
-announces itself.
+announces itself — provided a note like this one keeps announcing it.
 """
 from __future__ import annotations
 
