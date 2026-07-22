@@ -18,8 +18,11 @@ both idempotent and fresh:
 * target is NOT ours       -> skip (never clobber a user's own file — P4)
 
 "ours" is detected by a ``source_kind: annotations`` line inside the front-matter
-block (not anywhere in the body), placed at the top so a long title cannot push
-it out of the scanned head. Writes are atomic (temp + os.replace).
+block (not anywhere in the body). Deciding that needs two things inside the
+scanned head, and only the first is under our control: we write the *marker* on
+the line right after the opening fence, but the *closing fence* sits wherever the
+front matter ends. A file whose block does not close inside the head is therefore
+never ours, however early its marker appears. Writes are atomic (temp+os.replace).
 """
 from __future__ import annotations
 
@@ -39,6 +42,11 @@ from factlog.integrations.zotero._textio import (
     yaml_scalar,
 )
 
+# Widening this window is not the safe direction it looks like. It would let a
+# user file whose *own front matter* carries the marker line close inside the head
+# and so be claimed as ours and overwritten — measured at 65536, a file with the
+# fence at 4844 goes from "skipped" back to "updated". The narrow window costs an
+# over-rejection for absurdly long front matter instead (see _is_ours).
 _HEAD_SCAN_BYTES = 4096
 
 # Strip script/style/comment *contents* (not just the tags) before removing tags.
@@ -140,7 +148,16 @@ def _is_ours(path: Path) -> bool:
         return False
     rest = head[3:]
     end = rest.find("\n---")
-    block = rest if end == -1 else rest[:end]
+    if end == -1:
+        # The closing fence is missing or past the scanned head, so we cannot tell
+        # front matter from body. Claiming ownership here would let a marker line
+        # in a user's *body* pass the overwrite gate and destroy their file. The
+        # opposite error costs a silent skip: one of our own files stops being
+        # updated, and reports "not a zotero notes file" while it does so. That is
+        # bad but recoverable, and it needs front matter over _HEAD_SCAN_BYTES to
+        # happen at all. Not knowing where the block ends means not ours.
+        return False
+    block = rest[:end]
     return _MARKER_LINE_RE.search(block) is not None
 
 
