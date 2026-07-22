@@ -22,9 +22,11 @@ track versions. Use **PubMed** for biomedical literature, where MeSH terms and
 retraction status matter.
 
 A paper that exists in several of them still becomes one file. An arXiv, OpenAlex,
-or PubMed import that finds an existing source with the same DOI or PMID writes no
-second file — it folds its own record into that source's provenance ledger instead
-(`merged`). This is why `doi`, `arxiv_id`, and `pmid` are bare front matter keys
+or PubMed import that finds an existing source with the same DOI or PMID written by
+a **different** integration writes no second file — it folds its own record into that
+source's provenance ledger instead (`merged`). Colliding with a source the same
+integration wrote is a plain duplicate rather than a cross-source merge, so it is
+`skipped`: two arXiv deposits sharing a DOI never fold into each other. This is why `doi`, `arxiv_id`, and `pmid` are bare front matter keys
 rather than prefixed ones: the cross-source index looks for those literal keys.
 
 **Zotero is the exception.** It does not fold; a duplicate is `skipped` and leaves
@@ -89,8 +91,9 @@ all, only the Zotero 7 desktop app running with **Settings → Advanced → "All
 other applications on this computer to communicate with Zotero"** checked.
 
 Request cost is a different kind of thing in each. OpenAlex meters **credits** —
-about 1000/day, where a search costs 10 regardless of how many results it returns
-and a single lookup costs 0, so a small `--limit` saves you nothing. PubMed meters
+about 1000/day, where a search costs 10 regardless of how many results it returns,
+a single lookup costs 0, and each `openalex-cite` request costs 1 — so a small
+`--limit` on a search saves you nothing. PubMed meters
 nothing but **blocks your IP** if you exceed 3 requests/second (10 with a key), so
 factlog paces and serialises requests itself; without a key the same batch takes
 over three times as long. arXiv enforces nothing at all — factlog keeps to the
@@ -122,7 +125,8 @@ The `[import]` section is **not** shared. OpenAlex and arXiv read all four of
 `default_limit`, `max_limit`, `skip_duplicates`, and `include_abstract`; Zotero reads
 only the latter two; PubMed does not read the section at all — its limits are fixed
 at 25/200 and abstracts are always included. An `[import]` block in a PubMed config
-is ignored silently, so use `--limit` there.
+is ignored silently; use `pubmed-search --limit` instead (`pubmed-import` takes
+repeatable `--pmid`, up to 200 per run).
 
 ## Flags that mean the same thing everywhere
 
@@ -175,21 +179,28 @@ sending, both offer `--show-query`, and PubMed additionally surfaces upstream
 diagnostics like `PhraseNotFound`. OpenAlex has neither problem — its `search=`
 takes free text and handles phrasing itself.
 
-## Three words for "retracted"
+## "Retracted" means something different in each
 
 The same word covers different procedures, so each **database** integration keeps its
-own prefixed front matter key and its own closing command.
+own prefixed front matter key and its own closing command. Zotero only carries over a
+tag you set, and has no closing command.
 
 | | What it is | Key | Closed by |
 | --- | --- | --- | --- |
 | arXiv | An **author's or administrator's** withdrawal of a preprint | `arxiv_withdrawn`, `arxiv_withdrawn_by` | `arxiv-acknowledge-withdrawal` |
 | PubMed | A **fact** from NLM's curation of journal retractions | `pubmed_retracted`, `pubmed_retraction_notice_pmid` | `pubmed-acknowledge-retraction` |
 | OpenAlex | An automatically derived **opinion** | `openalex_is_retracted` | `openalex-acknowledge-retraction` |
-| Zotero | A **tag you put on the item** (any tag containing `retract`) | `retracted` — the one bare, unprefixed key | nothing (edit the tag yourself) |
+| Zotero | A **tag you put on the item** (any tag containing `retract`) | `retracted` — the only retraction key without a prefix | nothing — see below |
 
-Zotero's key is unprefixed precisely because it is not an upstream claim but your own
-judgement recorded in your own library; nothing upstream can reverse it later, so there
-is no closing command.
+Zotero's key carries no prefix precisely because it is not an upstream claim but your
+own judgement recorded in your own library.
+
+**In place of a closing command, this value simply never updates.** factlog does not
+read Zotero again after the import — `zotero-import` is the only Zotero command — so
+adding or removing the tag in your library does not propagate to the KB, and a
+re-import ends as `skipped` on the `zotero_key` match without rewriting the `.md`. To
+change it, edit the front matter in `sources/*.md` yourself, the same way you would
+add a missing `arxiv_version` below.
 
 When they disagree, trust **PubMed > a Zotero tag > OpenAlex**: OpenAlex marks the
 Lancet Commission dementia report as retracted while PubMed has no retraction record
