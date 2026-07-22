@@ -79,7 +79,18 @@ from factlog import literal_types  # noqa: E402
 # questions: literal_types decides whether a value PARSES, this decides whether a
 # human should LOOK. A prose `２０２０.１` is exactly a value someone must fix, so
 # narrowing this to `[0-9]` would drop it out of "literal suspects" and file it as
-# an ordinary entity — hiding the very row #388 set out to surface.
+# an ordinary entity — hiding the very row #388 set out to surface. This is the ONLY
+# section that catches the prose case: `２０２０.１` is not `_is_compound_term`, so it
+# never reaches "malformed typed literal".
+#
+# The cost is DOUBLE REPORTING, and it is intended, not an oversight: a compound
+# `date(２０２０,１)` is `_looks_literal` by syntax, so it lands in BOTH "literal
+# suspects" and "malformed typed literal". The two sections answer different
+# questions — "should this relation be declared?" and "does this value parse?" — and
+# a human acting on either is right. Suppressing the suspects entry to de-duplicate
+# would trade a visible repeat for an invisible gap in the prose case above.
+# `test_entity_audit_compound_terms.py` asserts BOTH memberships so the overlap
+# cannot be "fixed" silently.
 _LITERAL_RE = re.compile(
     r"^\d{4}[.\-/]\d{1,2}([.\-/]\d{1,2})?$"                       # date
     r"|^\d[\d,]*(\.\d+)?$"                                        # number / comma / decimal

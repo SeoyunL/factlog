@@ -492,16 +492,44 @@ class TestFullWidthDigitsRejected:
     def test_humanize_leaves_full_width_verbatim(self, raw, ascii_raw, shown):
         """humanize must not display a value the parsers reject as if it were clean.
 
-        This is the ONLY place the compound regexes' digit class is observable for
-        `number`: parse_number re-validates the captured group against _NUMBER_RE,
-        so a full-width `number(１２３)` is rejected either way. humanize does not
-        re-validate — it strips the wrapper and prints. Left wide, it would render
-        `number(１２３)` as `123`, i.e. show a human the ASCII value the KB does NOT
-        hold, while the projection warns the fact is excluded. The display and the
-        warning would then contradict each other.
+        This is the only place the compound regexes' digit class is observable for
+        `number` THROUGH BEHAVIOUR: parse_number re-validates the captured group
+        against _NUMBER_RE, so a full-width `number(１２３)` is rejected either way.
+        humanize does not re-validate — it strips the wrapper and prints. Left wide,
+        it would render `number(１２３)` as `123`, i.e. show a human the ASCII value
+        the KB does NOT hold, while the projection warns the fact is excluded. The
+        display and the warning would then contradict each other.
+
+        This test was once the ONLY mutation defence for `_NUMBER_COMPOUND_RE`, which
+        is a bad place for it: `humanize`'s own docstring declares it DISPLAY-ONLY, so
+        a parsing-layer invariant was being held up by a display-layer test — a
+        refactor of the display path would have dropped the coverage silently. The
+        invariant now has a direct anchor in
+        `test_number_compound_regex_rejects_full_width_directly` below; this test
+        keeps only the display claim it is actually about.
         """
         assert lt.humanize(raw) == raw
         assert lt.humanize(ascii_raw) == shown
+
+    def test_number_compound_regex_rejects_full_width_directly(self):
+        """Anchor `_NUMBER_COMPOUND_RE`'s digit class at the parsing layer itself.
+
+        Reaching into a private regex is deliberate here. `_NUMBER_COMPOUND_RE` is the
+        one narrowed regex with NO observable behavioural consequence of its own —
+        parse_number re-validates the captured group against `_NUMBER_RE`, so widening
+        this one back to `\\d` changes no parse result. Every other narrowed regex is
+        covered by a real parsing test (`_AMOUNT_COMPOUND_RE`, for one, feeds
+        parse_amount/canonical_amount directly and fails loudly there).
+
+        Without this assertion the only thing that noticed the mutation was a
+        display-only humanize test. Asserting the regex directly costs a private
+        reference and buys a defence that lives in the same layer as the invariant.
+        """
+        assert lt._NUMBER_COMPOUND_RE.match("number(１２３)") is None
+        assert lt._NUMBER_COMPOUND_RE.match("number(1２3)") is None
+        # the ASCII form must still match, or the narrowing went too far
+        assert lt._NUMBER_COMPOUND_RE.match("number(123)") is not None
+        assert lt._NUMBER_COMPOUND_RE.match('number("-1,234.5")') is not None
 
     def test_every_ascii_digit_still_parses(self):
         """Guard against a fix that narrows too far (e.g. `[1-9]`)."""

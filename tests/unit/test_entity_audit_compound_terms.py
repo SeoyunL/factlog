@@ -244,6 +244,13 @@ class TestFullWidthDigitLiterals:
         assert found["malformed_literals"] == ["date(２０２０,１)"]
         # still not an entity — the wrapper form alone proves it is a value
         assert found["entities"] == ["P1"]
+        # AND it reports a SECOND time under "literal suspects". Pinned because it
+        # is a decision, not an accident: `_LITERAL_RE` stays wide so the prose case
+        # below survives (see test_full_width_prose_value_stays_a_literal_suspect),
+        # and a compound term is `_looks_literal` by syntax, so the overlap follows.
+        # Without this assertion the repeat reads like something nobody noticed, and
+        # the next reader "fixes" it — losing the prose row in the process.
+        assert found["literal_suspects"]["when"] == {"date(２０２０,１)"}
 
     def test_ascii_twin_is_not_malformed(self):
         found = entity_audit.audit([_row("P1", "when", "date(2020,1)")])

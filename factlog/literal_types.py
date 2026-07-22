@@ -30,13 +30,48 @@ full-width row, and without a typed declaration the two became separate entities
 The codebase normalizes to **NFC**, which preserves full-width digits (only NFKC
 folds them), so nothing upstream collapses them either.
 
-So a non-ASCII digit is **rejected**, not silently folded: it degrades to the
-ordinary "does not parse" path, which already has two visible exits — the
-``typed-relations`` projection warning (``common.typed_projection_outcome``) and
-``entity_audit``'s ``malformed typed literal`` section. Rejection is what makes the
-value *visible*; folding it to ASCII would keep the stored/scalar mismatch alive
-one layer deeper. Because a full-width digit is hard to see in a warning, both
-report sites append ``non_ascii_digits`` to name the actual offending characters.
+So a non-ASCII digit is **rejected**, not silently folded. The reason is the one
+#388 gives, and it is a policy choice, not a claim of wider coverage: this
+repository prefers an **explicit refusal over a silent fold** (``--category``
+pre-validation, the silent-zero guard), and a full-width digit in a numeric field
+is far more likely an **input accident** — a CJK source, a PDF conversion, an IME
+left in full-width mode — than a value a human meant to write. Refusing makes the
+accident *visible* at the point a human can still fix it.
+
+Rejection is deliberately **narrow**, and does NOT make the value single-state:
+
+- It only reaches values that go **through a parser**, i.e. objects of relations
+  declared in ``policy/typed-relations.md``. A value under an **undeclared**
+  relation never touches this module, so the full-width and ASCII spellings stay
+  **two separate entities** — measured, unchanged from before this module was
+  narrowed. That is a **residual symptom of #388 that this module does not fix**
+  and cannot: nothing here is on that code path.
+- The value the KB **stores** is untouched either way. Refusing to parse does not
+  rewrite ``accepted.dl``; the full-width string is still what an object-match
+  query has to match.
+
+The place that *could* collapse all three symptoms at once is the **merge stage**,
+where ``tools/merge_candidates.py``'s ``normalize_rows`` already rewrites the
+stored object string **before** computing the dedup key (that is how
+``canonical_amount`` folds ``amount(7,억)`` and ``amount(7,"억")`` into one row).
+A digit fold placed there would change the stored string, so the dedup keys would
+merge and the entity split would go with them. That is a **data rewrite**, a
+different decision from this one, and it is not made here.
+
+What rejection does buy is a **report**: the value degrades to the ordinary
+"does not parse" path and surfaces at
+``common.typed_projection_outcome``'s ``typed-relations`` projection warning.
+``entity_audit``'s ``malformed typed literal`` section is a **second** exit for
+``date``/``number``/``ordinal`` — but **not for** ``amount``: today
+``entity_audit._is_malformed_compound_term`` returns early for a compound
+``amount`` whenever the relation has no ``amount`` spec, so a full-width
+``amount(１００,"억")`` reports through the projection warning ONLY. #393/#394
+narrow that exemption to unit resolution alone, judging the number-group shape
+with or without a spec; once they merge, ``amount`` gains the second exit and the
+four types behave alike. Nothing in this module changes when they do.
+
+Because a full-width digit is hard to see in a warning, the report sites append
+``non_ascii_digits`` to name the actual offending characters.
 """
 from __future__ import annotations
 
