@@ -16,44 +16,51 @@ from factlog.export_types import (
     COLLECTION,
     INFORMAL,
     ISSUER,
-    NO_VENUE,
     PERIODICAL,
     SCHOOL,
+    SERIES,
+    is_preprint,
     resolve_source_type,
     should_promote_to_journal_type,
     venue_role,
 )
 
 # Venue role -> CSL variable, resolved from the same `venue_role` judgement the
-# BibTeX exporter uses. CSL constrains nothing structurally (any variable may sit
-# on any type), so the choice is settled by what styles actually render (#384).
+# BibTeX exporter uses. CSL constrains nothing structurally (any variable may
+# sit on any type), so the choice is settled on semantics, with rendering
+# measured first to check whether it forces the hand (#384). It does not.
 #
-# INFORMAL is the one that looks wrong on paper: the venue is a periodical name,
-# and `container-title` is where a periodical name belongs. But an INFORMAL
-# record is typed `article` (a preprint — #60 forbids retyping a deposit that
-# names where it later appeared), and for a standalone `article` the styles
-# disagree about `container-title` while agreeing about `publisher`. Rendered
-# with pandoc --citeproc, one preprint carrying `Nature 585, 357 (2020)`:
+# INFORMAL is the contested one. Such a record is typed `article` (a preprint —
+# CSL 1.0.2 has no `preprint` type, and #60 forbids retyping a deposit that
+# names where it later appeared). Rendered with pandoc 3.10 --citeproc, one
+# preprint carrying `Nature 585, 357 (2020)`, venue present (Y) or lost (N):
 #
-#   style     container-title                     publisher
-#   ieee      (venue dropped entirely)            "2020, Nature 585, 357 (2020)"
-#   apa       "In Nature 585, 357 (2020)."        "Nature 585, 357 (2020)."
-#   chicago   "In Nature 585...  Preprint."       "Preprint, Nature 585, 357..."
-#   ama/nature  renders                           renders
+#   variable          chicago  apa  ieee  nature  ama
+#   container-title      Y      Y    N      Y      Y     4/5
+#   publisher            Y      Y    Y      N      Y     4/5
 #
-# So `container-title` reintroduces the very defect #384 fixes (IEEE silently
-# loses the venue) and reads as a containment claim the record does not make;
-# `publisher` renders everywhere, and the styles phrase it as "Preprint at" /
-# "Preprint posted online", which is what the record means. It also agrees with
-# the BibTeX side after a round trip, since pandoc reads `howpublished` back as
-# `publisher` — a corroboration, not the reason.
+# An exact tie: `container-title` is dropped by IEEE, `publisher` by Nature
+# (whose `type="article"` branch never references it). Preprint status ties too
+# at 4/5 either way once `genre` is emitted. So rendering does not decide it,
+# and the tiebreak is what the value *is*: an arXiv `journal_ref` or a Zotero
+# `publicationTitle` is a periodical's name, not a publisher's. `publisher`
+# would be a false statement that happens to print; `container-title` is a true
+# one that IEEE happens to ignore. This is also what `main` already emitted, so
+# it holds CSL output steady while the BibTeX side is corrected.
+#
+# The BibTeX side keeps `howpublished` (the only venue field `@misc` defines),
+# so the two formats deliberately diverge here, exactly as they do for
+# dataset/software types. Note this means a pandoc BibTeX->CSL round trip
+# yields `publisher`, disagreeing with the CSL we emit directly; the export we
+# emit is the accurate one, and a lossy third-party conversion is not a reason
+# to make it wrong.
 _VENUE_FIELDS = {
     PERIODICAL: "container-title",
     COLLECTION: "container-title",
     ISSUER: "publisher",
     SCHOOL: "publisher",
-    INFORMAL: "publisher",
-    NO_VENUE: "",
+    INFORMAL: "container-title",
+    SERIES: "collection-title",
 }
 
 # Work type -> CSL type; anything else falls back to "document". Keyed by the
@@ -146,6 +153,12 @@ def to_csl(fm: dict, item_id: str) -> dict:
     venue_key = _VENUE_FIELDS[venue_role(fm)]
     if journal and venue_key:
         item[venue_key] = str(journal)
+
+    # CSL 1.0.2 has no `preprint` type, so the status rides in `genre`. Styles
+    # that check it render it (APA prints `[Preprint]`, which it otherwise
+    # omits); styles that infer it from the type alone are unchanged.
+    if is_preprint(fm):
+        item["genre"] = "Preprint"
 
     if fm.get("doi"):
         item["DOI"] = str(fm["doi"])

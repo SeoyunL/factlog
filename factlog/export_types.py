@@ -93,7 +93,12 @@ COLLECTION = "collection"     # a larger work containing this one: book, proceed
 ISSUER = "issuer"             # the institution that issued a report
 SCHOOL = "school"             # the degree-granting institution of a thesis
 INFORMAL = "informal"         # self-deposited or unclassified: no formal container
-NO_VENUE = "no-venue"         # the work IS the container (a whole book)
+# The work is itself the container, so a venue value can only be the *series* it
+# belongs to. Every other role moves the value to a differently-named field;
+# this one must too. Dropping it (an earlier revision did) is the one outcome
+# worse than the misfiled `journal` this change set out to fix, because a
+# misfiled value can still be recovered by hand and a discarded one cannot.
+SERIES = "series"
 
 _VENUE_ROLES = {
     # Zotero itemType
@@ -104,7 +109,7 @@ _VENUE_ROLES = {
     "bookSection": COLLECTION,
     "encyclopediaArticle": COLLECTION,
     "dictionaryEntry": COLLECTION,
-    "book": NO_VENUE,
+    "book": SERIES,
     "report": ISSUER,
     "thesis": SCHOOL,
     "preprint": INFORMAL,
@@ -132,14 +137,17 @@ def venue_role(fm: dict) -> str:
     """What kind of venue this record's ``journal`` field names.
 
     Shared for the same reason as :func:`should_promote_to_journal_type`: when
-    each exporter picked the venue field on its own condition, the same record
-    was published in a ``howpublished`` in BibTeX and a ``container-title`` in
-    CSL, and a BibTeX->CSL round trip (pandoc reads ``howpublished`` as
-    ``publisher``) made the two outputs contradict each other outright.
+    each exporter picked the venue field on its own condition, the same record's
+    venue landed in fields the two formats disagreed about.
 
-    An unknown type gets :data:`INFORMAL`, whose field is valid on every entry
-    type, so a type this table has never heard of cannot produce an invalid
-    pairing.
+    The role says what the value *is*; each exporter names its own field for it.
+    The two need not pick corresponding names, and for :data:`INFORMAL` they
+    deliberately do not — see the field tables in :mod:`factlog.bibtex` and
+    :mod:`factlog.csl`.
+
+    An unknown type gets :data:`INFORMAL`, whose BibTeX field (`howpublished`)
+    is valid on the `@misc` such a type falls back to, so a type this table has
+    never heard of cannot produce an invalid pairing.
     """
     source_type = resolve_source_type(fm)
     if should_promote_to_journal_type(fm, source_type):
@@ -147,3 +155,20 @@ def venue_role(fm: dict) -> str:
     if source_type is None:
         return INFORMAL
     return _VENUE_ROLES.get(source_type, INFORMAL)
+
+
+def is_preprint(fm: dict) -> bool:
+    """True when the record is specifically a preprint.
+
+    Narrower than ``venue_role(fm) is INFORMAL``, which also covers datasets,
+    software and unmapped types: those share the *venue* treatment but are not
+    preprints, and labelling them so in CSL ``genre`` would assert something
+    the record does not say.
+
+    CSL 1.0.2 has no ``preprint`` type, so these records are typed ``article``
+    and the preprint status has to travel separately. Styles that check
+    ``genre`` render it (measured: APA gains ``[Preprint]``, which it omits
+    without it); styles that infer preprint status from the type alone are
+    unaffected.
+    """
+    return resolve_source_type(fm) == "preprint"

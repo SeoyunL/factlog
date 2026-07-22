@@ -16,9 +16,9 @@ from factlog.export_types import (
     COLLECTION,
     INFORMAL,
     ISSUER,
-    NO_VENUE,
     PERIODICAL,
     SCHOOL,
+    SERIES,
     resolve_source_type,
     should_promote_to_journal_type,
     venue_role,
@@ -72,15 +72,17 @@ _ENTRY_TYPES = {
 # @phdthesis, `howpublished` for @misc. Emitting `journal` on any other entry
 # type is the same defect as the @misc+journal pairing this fixes — the field is
 # dropped, and @inproceedings/@incollection additionally warn on the now-empty
-# `booktitle` they require. `NO_VENUE` maps to "" (the field is omitted): a whole
-# book is not contained in anything.
+# `booktitle` they require. `SERIES` goes to `series`, which @book defines: a
+# whole book has no containing venue, but a venue value on one names the series
+# it belongs to, and every role here must *move* the value rather than discard
+# it — a misfiled venue can be recovered by hand, a dropped one cannot.
 _VENUE_FIELDS = {
     PERIODICAL: "journal",
     COLLECTION: "booktitle",
     ISSUER: "institution",
     SCHOOL: "school",
     INFORMAL: "howpublished",
-    NO_VENUE: "",
+    SERIES: "series",
 }
 
 # Char-by-char LaTeX escaping (one pass, so inserted braces are not re-escaped).

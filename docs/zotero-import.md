@@ -281,47 +281,65 @@ OpenAlex writer가 실제로 남긴 레코드에서만 신뢰합니다.
 | 수록 저작 | 학회 논문, 단행본 장, 사전·백과 항목 | `booktitle` | `container-title` |
 | 발행 기관 | 보고서 | `institution` | `publisher` |
 | 학위 수여 기관 | 학위논문 | `school` | `publisher` |
-| 비정형 | preprint, dataset, software, 미분류 | `howpublished` | `publisher` |
-| 없음 | 단행본 전체 | (생략) | (생략) |
+| 비정형 | preprint, dataset, software, 미분류 | `howpublished` | `container-title` |
+| 시리즈 | 단행본 전체 | `series` | `collection-title` |
 
 `@inproceedings`/`@incollection`은 `booktitle`을 요구하므로, 이전처럼 `journal`에 넣으면
 게재지를 잃는 동시에 `Warning--empty booktitle`까지 발생합니다.
 
-**비정형(preprint 등)의 게재지는 왜 `publisher`인가**: 이 한 칸만은 표기상 어색해
-보입니다. 값은 정기간행물 이름인데 `container-title`이 아니라 `publisher`로 나가기
-때문입니다. 근거는 실측입니다. 비정형 레코드의 CSL 타입은 `article`(preprint)인데
-(#60이 게재 후에도 deposit의 재분류를 금지합니다), 단독 `article`에 붙은
-`container-title`의 처리는 스타일마다 갈리는 반면 `publisher`는 모든 스타일이 냅니다.
-`Nature 585, 357 (2020)`을 담은 preprint 1건을 `pandoc --citeproc`으로 렌더한 결과:
+**어떤 역할도 값을 버리지 않습니다.** 여섯 역할 모두 값을 *다른 이름의 필드로 옮길* 뿐
+삭제하지 않습니다. 단행본 전체는 담긴 상위 저작이 없지만, 그 위치의 값은 그 책이 속한
+시리즈 이름이므로 `series`/`collection-title`로 보냅니다. 잘못 놓인 값은 사람이 되살릴
+수 있지만 버려진 값은 되살릴 수 없습니다.
 
-| 스타일 | `container-title` | `publisher` |
-|---|---|---|
-| ieee | **게재지가 통째로 사라짐** | `2020, Nature 585, 357 (2020).` |
-| apa | `In Nature 585, 357 (2020).` | `Nature 585, 357 (2020).` |
-| chicago | `In Nature 585… Preprint.` | `Preprint, Nature 585, 357 (2020).` |
-| ama·nature | 출력됨 | 출력됨 |
+**비정형(preprint 등)의 CSL 변수는 왜 `container-title`인가**: 비정형 레코드의 CSL
+타입은 `article`(preprint)입니다 — CSL 1.0.2에 `preprint` 타입이 없고, #60이 게재 후에도
+deposit의 재분류를 금지하기 때문입니다. 렌더링을 먼저 실측해 이 축이 선택을 강제하는지
+확인했고, **강제하지 않습니다.** `Nature 585, 357 (2020)`을 담은 preprint 1건을
+`pandoc 3.10 --citeproc`으로 렌더해 게재지가 남는지(Y)/사라지는지(N) 본 결과:
 
-즉 `container-title`은 IEEE에서 **#384가 고치려던 게재지 소실을 그대로 재현**하고,
-레코드가 하지 않은 "수록됨(In)" 주장을 덧붙입니다. `publisher`는 어디서도 사라지지
-않고 스타일들이 "Preprint at" / "Preprint posted online"으로 표현해 주므로 의미도
-맞습니다. pandoc이 BibTeX `howpublished`를 `publisher`로 되읽어 양쪽 산출물이 round
-trip에서 일치한다는 점은 이 선택의 **결과적 방증**이지 근거가 아닙니다.
+| 변수 | chicago | apa | ieee | nature | ama | 계 |
+|---|---|---|---|---|---|---|
+| `container-title` | Y | Y | **N** | Y | Y | 4/5 |
+| `publisher` | Y | Y | Y | **N** | Y | 4/5 |
 
-BibTeX 쪽 트레이드오프도 남습니다. 고전 스타일(plain/unsrt/alpha)은 `journal`을 조용히
-버리고 `howpublished`는 출력하므로 **개선**이지만, pandoc은 `journal`을
-`container-title`로 읽던 것을 `howpublished`에서는 `publisher`로 읽습니다. 위 실측대로
-그 `publisher`가 preprint에서 더 잘 렌더되므로 이 경로도 손해가 아닙니다.
+**완전한 무승부입니다.** `container-title`은 IEEE가 버리고, `publisher`는 nature가
+버립니다(`nature.csl`의 `type="article"` 분기가 `publisher`를 아예 참조하지 않습니다).
+`genre`를 함께 내보내면 preprint 신분 표기도 양쪽 4/5로 같습니다.
+
+따라서 렌더링은 결정 근거가 못 되고, 남는 기준은 **값이 무엇이냐**입니다. arXiv의
+`journal_ref`나 Zotero preprint의 `publicationTitle`은 **정기간행물 이름이지 출판사가
+아닙니다.** `publisher`는 우연히 출력되는 거짓 진술이고, `container-title`은 IEEE가
+우연히 무시하는 참인 진술입니다. 그래서 `container-title`을 씁니다. 이는 `main`이 이미
+내보내던 값이기도 해서 CSL 출력이 그만큼 덜 흔들립니다.
+
+**남는 손실을 양쪽 다 적습니다.** `container-title`을 택했으므로 **IEEE에서는 preprint의
+게재지가 렌더되지 않습니다.** 반대로 `publisher`를 택했다면 nature에서 사라졌을
+것입니다. 어느 쪽도 5/5는 아닙니다.
+
+BibTeX 쪽은 `@misc`가 정의하는 유일한 게재지 필드가 `howpublished`이므로 그대로 씁니다.
+즉 이 역할에서 두 포맷은 **의도적으로 다른 필드명**을 씁니다(dataset/software에서 이미
+그러하듯이). 그 결과 pandoc으로 BibTeX→CSL 왕복을 하면 `publisher`가 나와 우리가 직접
+내보내는 CSL과 어긋나는데, **정확한 쪽은 우리가 직접 내보내는 출력**이며 손실이 있는
+제3자 변환에 맞추려고 그것을 틀리게 만들지는 않습니다.
+
+한편 고전 BibTeX 스타일(plain/unsrt/alpha)은 `journal`을 조용히 버리고 `howpublished`는
+출력하므로, BibTeX 쪽은 이전보다 **개선**입니다.
+
+**`genre: "Preprint"`**: CSL에 `preprint` 타입이 없으므로 preprint 신분을 `genre`로
+함께 내보냅니다. 실측상 apa가 `[Preprint]`를 새로 붙이고(없으면 누락) 나머지 스타일은
+변화가 없어 순이득입니다. dataset·software·미분류는 게재지 역할만 같을 뿐 preprint가
+아니므로 `genre`를 붙이지 않습니다.
 
 ### 기존 KB 영향
 
 Zotero 전용 KB의 출력도 바뀝니다. 재실행하면 반영되며, 별도 마이그레이션 명령은
-필요 없습니다. Zotero itemType 13종(아래 표의 12종 + 변화 없는 `journalArticle`)을
-`main`과 이 브랜치에서 각각 내보내 비교한 실측입니다 — **BibTeX 12종, CSL 10종**이
-바뀝니다.
+필요 없습니다. Zotero itemType 13종을 `main`과 이 브랜치에서 각각 내보내 비교한
+실측입니다 — **BibTeX 12종, CSL 8종**이 바뀝니다(`journalArticle`은 양쪽 다 불변).
 
 | itemType | BibTeX 이전 → 이후 | CSL 이전 → 이후 |
 |---|---|---|
-| `journalArticle` | `@article` / `journal` (변화 없음) | `article-journal` / `container-title` (변화 없음) |
+| `journalArticle` | 변화 없음 (`@article` / `journal`) | 변화 없음 (`article-journal` / `container-title`) |
 | `magazineArticle` | `@misc` / `journal` → `@article` / `journal` | `document` → `article-magazine` |
 | `newspaperArticle` | `@misc` / `journal` → `@article` / `journal` | `document` → `article-newspaper` |
 | `encyclopediaArticle` | `@misc` / `journal` → `@incollection` / `booktitle` | `document` → `entry-encyclopedia` |
@@ -330,9 +348,9 @@ Zotero 전용 KB의 출력도 바뀝니다. 재실행하면 반영되며, 별도
 | `bookSection` | `journal` → `booktitle` | 변화 없음 (`container-title`) |
 | `report` | `journal` → `institution` | `container-title` → `publisher` |
 | `thesis` | `journal` → `school` | `container-title` → `publisher` |
-| `book` | `journal` → 생략 | `container-title` → 생략 |
-| `preprint` | `journal` → `howpublished` | `container-title` → `publisher` |
-| `blogPost`·`webpage` | `journal` → `howpublished` | `container-title` → `publisher` |
+| `book` | `journal` → `series` | `container-title` → `collection-title` |
+| `preprint` | `journal` → `howpublished` | `container-title` 유지 + `genre` 추가 |
+| `blogPost`·`webpage` | `journal` → `howpublished` | 변화 없음 (`container-title`) |
 
 타입이 바뀐 네 건(`magazineArticle`·`newspaperArticle`·`encyclopediaArticle`·
 `dictionaryEntry`)은 매핑이 없어 기본값으로 떨어지던 것을 정식 매핑으로 채운 결과입니다.

@@ -78,48 +78,67 @@ and both follow that one judgement:
 | a containing work | conference paper, book chapter, dictionary/encyclopedia entry | `booktitle` | `container-title` |
 | an issuing body | report | `institution` | `publisher` |
 | a degree-granting school | thesis | `school` | `publisher` |
-| informal | preprint, dataset, software, unmapped | `howpublished` | `publisher` |
-| absent | a whole book | (omitted) | (omitted) |
+| informal | preprint, dataset, software, unmapped | `howpublished` | `container-title` |
+| a series | a whole book | `series` | `collection-title` |
 
 `@inproceedings`/`@incollection` require `booktitle`, so the previous `journal`
 placement both misfiled the venue and triggered `Warning--empty booktitle`.
 
-**Why informal venues use CSL `publisher`.** This is the one cell that looks
-wrong on paper: the value is a periodical name, yet it goes to `publisher` and
-not `container-title`. The grounds are measured. An informal record is CSL-typed
-`article` (a preprint — #60 forbids retyping a deposit once `journal` records
-where it landed), and for a standalone `article` the styles disagree about
-`container-title` while agreeing about `publisher`. One preprint carrying
-`Nature 585, 357 (2020)`, rendered with `pandoc --citeproc`:
+**No role discards the value.** All six *move* the venue to a differently-named
+field; none deletes it. A whole book has no containing venue, but a value in
+that position names the series the book belongs to, so it goes to
+`series`/`collection-title`. A misfiled value can be recovered by hand; a
+dropped one cannot.
 
-| Style | `container-title` | `publisher` |
-|---|---|---|
-| ieee | **venue dropped entirely** | `2020, Nature 585, 357 (2020).` |
-| apa | `In Nature 585, 357 (2020).` | `Nature 585, 357 (2020).` |
-| chicago | `In Nature 585… Preprint.` | `Preprint, Nature 585, 357 (2020).` |
-| ama, nature | renders | renders |
+**Why informal venues use CSL `container-title`.** Such a record is CSL-typed
+`article` (a preprint — CSL 1.0.2 has no `preprint` type, and #60 forbids
+retyping a deposit once `journal` records where it landed). Rendering was
+measured first, to see whether it forces the choice. It does not. One preprint
+carrying `Nature 585, 357 (2020)`, rendered with `pandoc 3.10 --citeproc`,
+venue present (Y) or lost (N):
 
-So `container-title` reproduces, under IEEE, the very venue loss #384 set out to
-fix, and asserts a containment ("In") the record does not claim. `publisher`
-survives every style and is phrased as "Preprint at" / "Preprint posted online",
-which is what the record means. That pandoc reads BibTeX `howpublished` back as
-`publisher` — making the two exports agree on a round trip — corroborates the
-choice but is not the reason for it.
+| Variable | chicago | apa | ieee | nature | ama | Total |
+|---|---|---|---|---|---|---|
+| `container-title` | Y | Y | **N** | Y | Y | 4/5 |
+| `publisher` | Y | Y | Y | **N** | Y | 4/5 |
 
-A BibTeX-side tradeoff remains: classic styles (plain/unsrt/alpha) silently drop
-`journal` but render `howpublished`, so those improve; pandoc read `journal` as
-`container-title` and reads `howpublished` as `publisher`. Per the table above,
-that `publisher` renders better for a preprint, so this path does not lose either.
+**An exact tie.** IEEE drops `container-title`; Nature drops `publisher` (its
+`type="article"` branch never references it). Preprint status also ties at 4/5
+either way once `genre` is emitted.
+
+Rendering therefore cannot decide it, and the remaining criterion is what the
+value *is*: an arXiv `journal_ref` or a Zotero preprint's `publicationTitle` is
+**a periodical's name, not a publisher's**. `publisher` would be a false
+statement that happens to print; `container-title` is a true one that IEEE
+happens to ignore. It is also what `main` already emitted, so CSL output moves
+less.
+
+**Both remaining losses, stated.** Having chosen `container-title`, **a
+preprint's venue does not render under IEEE.** Had we chosen `publisher`, it
+would have vanished under Nature instead. Neither option is 5/5.
+
+On the BibTeX side `howpublished` is the only venue field `@misc` defines, so it
+stays. The two formats thus use deliberately different field names for this role
+(as they already do for dataset/software). A pandoc BibTeX->CSL round trip
+consequently yields `publisher`, disagreeing with the CSL we emit directly; the
+export we emit is the accurate one, and a lossy third-party conversion is not a
+reason to make it wrong. Classic BibTeX styles (plain/unsrt/alpha) silently drop
+`journal` but render `howpublished`, so the BibTeX side is an improvement.
+
+**`genre: "Preprint"`.** With no CSL `preprint` type, the status travels in
+`genre`. Measured: APA gains `[Preprint]` (omitted without it) and the other
+styles are unchanged — a pure gain. Datasets, software and unmapped types share
+the venue role but are not preprints, so they get no `genre`.
 
 ### Effect on existing Zotero KBs
 
 Re-running the export is enough; no migration command. Measured by exporting 13
 Zotero item types on `main` and on this branch and diffing: **12 change in
-BibTeX, 10 in CSL** (`journalArticle` is unchanged in both).
+BibTeX, 8 in CSL** (`journalArticle` is unchanged in both).
 
 | itemType | BibTeX before → after | CSL before → after |
 |---|---|---|
-| `journalArticle` | `@article` / `journal` (unchanged) | `article-journal` / `container-title` (unchanged) |
+| `journalArticle` | unchanged (`@article` / `journal`) | unchanged (`article-journal` / `container-title`) |
 | `magazineArticle` | `@misc` / `journal` → `@article` / `journal` | `document` → `article-magazine` |
 | `newspaperArticle` | `@misc` / `journal` → `@article` / `journal` | `document` → `article-newspaper` |
 | `encyclopediaArticle` | `@misc` / `journal` → `@incollection` / `booktitle` | `document` → `entry-encyclopedia` |
@@ -128,9 +147,9 @@ BibTeX, 10 in CSL** (`journalArticle` is unchanged in both).
 | `bookSection` | `journal` → `booktitle` | unchanged (`container-title`) |
 | `report` | `journal` → `institution` | `container-title` → `publisher` |
 | `thesis` | `journal` → `school` | `container-title` → `publisher` |
-| `book` | `journal` → omitted | `container-title` → omitted |
-| `preprint` | `journal` → `howpublished` | `container-title` → `publisher` |
-| `blogPost`, `webpage` | `journal` → `howpublished` | `container-title` → `publisher` |
+| `book` | `journal` → `series` | `container-title` → `collection-title` |
+| `preprint` | `journal` → `howpublished` | `container-title` kept, `genre` added |
+| `blogPost`, `webpage` | `journal` → `howpublished` | unchanged (`container-title`) |
 
 The four type changes fill mappings that previously fell back to the default.
 The field moves correct entries that carried a field their own type does not

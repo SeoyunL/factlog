@@ -146,8 +146,8 @@ _IN_BOOK = ("incollection", "booktitle", "chapter", "container-title")
 _IN_PROC = ("inproceedings", "booktitle", "paper-conference", "container-title")
 _REPORT = ("techreport", "institution", "report", "publisher")
 _THESIS = ("phdthesis", "school", "thesis", "publisher")
-_WHOLE_BOOK = ("book", "", "book", "")
-_PREPRINT = ("misc", "howpublished", "article", "publisher")
+_WHOLE_BOOK = ("book", "series", "book", "collection-title")
+_PREPRINT = ("misc", "howpublished", "article", "container-title")
 
 # Zotero itemType
 ZOTERO_EXPECTED = {
@@ -189,8 +189,8 @@ OPENALEX_EXPECTED = {
     # Standard BibTeX has no @dataset/@software (those are biblatex); CSL does,
     # so these diverge by design — BibTeX is the coarser vocabulary, not a
     # contradiction. Both still place the venue in the same role (INFORMAL).
-    "dataset": ("misc", "howpublished", "dataset", "publisher"),
-    "software": ("misc", "howpublished", "software", "publisher"),
+    "dataset": ("misc", "howpublished", "dataset", "container-title"),
+    "software": ("misc", "howpublished", "software", "container-title"),
 }
 
 ALL_EXPECTED = {**ZOTERO_EXPECTED, **OPENALEX_EXPECTED}
@@ -365,7 +365,7 @@ class TestTypeMaps:
     def test_unknown_type_falls_back_to_a_universally_valid_pairing(self):
         fm = _fm_for("holotape", "zotero")
         # @misc + howpublished is valid whatever the unknown type turns out to be.
-        assert _resolution_of(fm) == ("misc", "howpublished", "document", "publisher")
+        assert _resolution_of(fm) == ("misc", "howpublished", "document", "container-title")
 
 
 class TestVenueFieldValidity:
@@ -474,20 +474,65 @@ class TestCslTypes:
         assert to_csl(_pubmed_fm(), "k")["type"] == "article-journal"
         assert to_csl(_arxiv_fm(), "k")["type"] == "article"  # preprint
 
-    def test_no_document_item_ever_carries_a_container_title(self):
-        for build in ALL_SOURCES.values():
-            item = to_csl(build(), "k")
-            assert not (item["type"] == "document" and item.get("container-title"))
+    def test_preprints_carry_genre_and_others_do_not(self):
+        """CSL 1.0.2 has no `preprint` type, so the status rides in `genre`.
+
+        Scoped to actual preprints: datasets, software and unmapped types share
+        the preprint *venue* treatment (INFORMAL) but are not preprints, and
+        labelling them so would assert something the record does not say.
+        """
+        assert to_csl(_arxiv_fm(), "k")["genre"] == "Preprint"
+        assert to_csl(_zotero_fm("preprint"), "k")["genre"] == "Preprint"
+        assert to_csl(_openalex_fm(work_type="preprint"), "k")["genre"] == "Preprint"
+        for fm in (_zotero_fm(), _pubmed_fm(), _openalex_fm(),
+                   _openalex_fm(work_type="dataset"),
+                   _openalex_fm(work_type="software"),
+                   _zotero_fm("holotape")):
+            assert "genre" not in to_csl(fm, "k")
+
+
+class TestVenueValueIsNeverDiscarded:
+    """Every role *moves* the venue to a differently-named field; none drops it.
+
+    A `SERIES` role once mapped to "" in both exporters, so a Zotero `book`
+    carrying a venue lost the value outright in BibTeX *and* CSL — worse than
+    the misfiled `journal` this change set out to fix, because a misfiled value
+    can still be recovered by hand and a discarded one cannot.
+    """
+
+    @pytest.mark.parametrize("source_type", sorted(ZOTERO_EXPECTED))
+    def test_zotero_venue_survives_into_some_field(self, source_type):
+        self._assert_venue_survives(_fm_for(source_type, "zotero"))
+
+    @pytest.mark.parametrize("source_type", sorted(OPENALEX_EXPECTED))
+    def test_openalex_venue_survives_into_some_field(self, source_type):
+        self._assert_venue_survives(_fm_for(source_type, "openalex"))
+
+    @staticmethod
+    def _assert_venue_survives(fm: dict) -> None:
+        assert _bibtex_venue_field(fm), f"BibTeX dropped the venue for {fm}"
+        assert _csl_venue_field(fm), f"CSL dropped the venue for {fm}"
+
+    def test_no_role_maps_to_an_empty_field_name(self):
+        from factlog.bibtex import _VENUE_FIELDS as BIB_FIELDS
+        from factlog.csl import _VENUE_FIELDS as CSL_FIELDS
+
+        assert all(BIB_FIELDS.values()), "a BibTeX role discards the venue"
+        assert all(CSL_FIELDS.values()), "a CSL role discards the venue"
 
 
 class TestExportersAgree:
-    """Both exporters must make the same judgement, on types *and* on venues.
+    """Both exporters must resolve the same *role*, on types and on venues.
 
-    Checked on resolved output rather than on the static maps: the two once
-    applied the `journal` inference on different conditions, and later placed
-    the same venue in `howpublished` (BibTeX) and `container-title` (CSL) —
-    which pandoc turns into `publisher` vs `container-title`, i.e. two exports
-    of one KB contradicting each other about where the work was published.
+    Checked on resolved output rather than on the static maps, because the two
+    once applied the `journal` inference on different conditions and a static
+    comparison could not see it.
+
+    Agreeing on the role does not mean agreeing on the field name: for INFORMAL
+    the exporters deliberately diverge (`howpublished` vs `container-title`),
+    since standard BibTeX gives `@misc` only `howpublished` while CSL can state
+    the venue accurately. The same divergence-by-design already exists for
+    dataset/software, where BibTeX has the coarser vocabulary.
     """
 
     @pytest.mark.parametrize(("fm", "expected"), [
@@ -500,7 +545,7 @@ class TestExportersAgree:
         (_openalex_fm(), _PERIODICAL),
         (_openalex_fm(work_type="conference-paper"), _IN_PROC),
         (_openalex_fm(work_type="dataset"),
-         ("misc", "howpublished", "dataset", "publisher")),
+         ("misc", "howpublished", "dataset", "container-title")),
         (_arxiv_fm(journal_ref="Nature 585, 357 (2020)"), _PREPRINT),
         (_pubmed_fm(), _PERIODICAL),
     ])
