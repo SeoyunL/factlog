@@ -94,11 +94,11 @@ factlog ingest: 0 converted, 2 skipped, 0 failed
 > 를 다시 실행하십시오(이후 남은 구 변환본은 `factlog eject --orphans` 로 정리).
 > 특히 어간이 충돌하던 KB는 재적재해야 유실되었던 원본이 복원됩니다.
 
-*터미널에서 실행:*
+*Claude Code에서 `!` 로 실행:*
 
 ```bash
-factlog ingest report.docx --target ~/wiki   # → ~/wiki/runs/sources/report.docx.md (pandoc)
-factlog ingest --scan --target ~/wiki        # auto-convert every binary under sources/
+!factlog ingest report.docx --target ~/wiki   # → ~/wiki/runs/sources/report.docx.md (pandoc)
+!factlog ingest --scan --target ~/wiki        # auto-convert every binary under sources/
 ```
 
 `/factlog sync` 는 첫 단계로 `factlog ingest --scan` 을 실행하므로, `sources/` 에

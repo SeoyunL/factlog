@@ -8,13 +8,15 @@ Extraction marks facts `candidate` or `needs_review`; only `confirmed`/`accepted
 facts become engine input. Promote or retire them without hand-editing
 `facts/candidates.csv`:
 
+*Run in Claude Code with `!` (the human gate for reviewing and approving candidates):*
+
 ```bash
-factlog review                       # list the pending queue (candidate + needs_review)
-factlog review --status needs_review # narrow to one pending status
-factlog accept Acme uses FastAPI     # pending → accepted (compiled into accepted.dl)
-factlog accept Acme                  # accept every pending fact about a subject ('-' wildcards a position)
-factlog reject Acme uses Datadog     # pending → superseded (retired, kept for audit)
-factlog accept Acme uses FastAPI --dry-run
+!factlog review                       # list the pending queue (candidate + needs_review)
+!factlog review --status needs_review # narrow to one pending status
+!factlog accept Acme uses FastAPI     # pending → accepted (compiled into accepted.dl)
+!factlog accept Acme                  # accept every pending fact about a subject ('-' wildcards a position)
+!factlog reject Acme uses Datadog     # pending → superseded (retired, kept for audit)
+!factlog accept Acme uses FastAPI --dry-run
 ```
 
 `accept`/`reject` change **only pending rows**; a `confirmed`/`accepted`/
@@ -23,9 +25,11 @@ a non-pending fact). Both recompile `accepted.dl`.
 
 To **correct** a fact's value (not just its status), use `factlog amend`:
 
+*Run in Claude Code with `!`:*
+
 ```bash
-factlog amend Widget codename Draft --set-object Falcon --set-note "name finalized" --accept
-factlog amend Acme uses FastApi --set-object FastAPI    # fix a typo
+!factlog amend Widget codename Draft --set-object Falcon --set-note "name finalized" --accept
+!factlog amend Acme uses FastApi --set-object FastAPI    # fix a typo
 ```
 
 The positional triple identifies the fact (exact match); `--set-subject` /

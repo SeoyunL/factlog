@@ -107,9 +107,11 @@ extraction reads.
 > conversions to their mirrored paths (then delete any stale flat conversions).
 > Top-level (non-nested) sources are unaffected.
 
+*Run in Claude Code with `!`:*
+
 ```bash
-factlog ingest report.docx --target ~/wiki   # → ~/wiki/runs/sources/report.docx.md (pandoc)
-factlog ingest --scan --target ~/wiki        # auto-convert every binary under sources/
+!factlog ingest report.docx --target ~/wiki   # → ~/wiki/runs/sources/report.docx.md (pandoc)
+!factlog ingest --scan --target ~/wiki        # auto-convert every binary under sources/
 ```
 
 `/factlog sync` runs `factlog ingest --scan` as its first step, so binaries you

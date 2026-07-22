@@ -5,7 +5,7 @@
 > **Plugin vs skill.** What you install is the **plugin** (factlog-academic); the prompt
 > it installs and runs is the `/factlog` **skill**. The `/factlog ...` commands below are
 > slash commands that invoke that skill, while human gates like review and approval you
-> run yourself in the terminal through the Python CLI (`python3 -m factlog ...`). Both
+> run yourself in that same session by prefixing `!` to the Python CLI (`!factlog ...`). Both
 > entry points call the same deterministic engine — slash command · Python CLI ·
 > verification engine are one tool.
 

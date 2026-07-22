@@ -6,15 +6,17 @@ After `factlog init`/`setup` (or `factlog use <kb>`), the chosen KB is recorded
 as the **active KB**, so `ingest`/`ask`/`sync` and the tools target it from any
 working directory — no `--target`/`--wiki` needed:
 
+*Run in Claude Code with `!`:*
+
 ```bash
-factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
-factlog where             # show the active KB and how it was resolved
-factlog sources           # list registered sources (original, conversion, fact count)
-factlog status            # KB state: facts by status, vocabulary, conflicts, logic freshness, engine
-cd /anywhere && factlog ingest report.pdf   # → ~/wiki/runs/sources/report.txt
-factlog eject report.pdf  # inverse of ingest: remove the conversion + retire its facts
-factlog ignore drafts/*.md   # exclude sources from sync (re-extraction)
-factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
+!factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
+!factlog where             # show the active KB and how it was resolved
+!factlog sources           # list registered sources (original, conversion, fact count)
+!factlog status            # KB state: facts by status, vocabulary, conflicts, logic freshness, engine
+!cd /anywhere && factlog ingest report.pdf   # → ~/wiki/runs/sources/report.txt
+!factlog eject report.pdf  # inverse of ingest: remove the conversion + retire its facts
+!factlog ignore drafts/*.md   # exclude sources from sync (re-extraction)
+!factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 ```
 
 Resolution precedence: `--target`/`--wiki` flag > `$FACTLOG_ROOT` > active-KB
@@ -44,10 +46,10 @@ ultimately to the current directory.
 
 ## Checking which KB won
 
-*Run in the terminal:*
+*Run in Claude Code with `!`:*
 
 ```bash
-factlog where
+!factlog where
 ```
 
 ```text

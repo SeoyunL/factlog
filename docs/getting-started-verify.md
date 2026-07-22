@@ -10,15 +10,15 @@
 ```
 
 - **추출·검증**은 Claude Code에서 `/factlog ...` 슬래시 명령으로 (LLM/엔진이 함).
-- **승인**은 사람이 터미널에서 `factlog ...` 명령으로 (신뢰 경계 = P1).
+- **승인**은 사람이 같은 Claude Code 세션에서 `!factlog ...` 명령으로 (신뢰 경계 = P1).
 
 ## 최소 경로 (이것만 하면 됩니다)
 
 | 순서 | 위치 | 명령 | 하는 일 |
 |---|---|---|---|
 | 1 | Claude Code | `/factlog sync` | 소스에서 **후보** 추출 → `facts/candidates.csv` |
-| 2 | 터미널 | `factlog review` | 후보 목록 확인 (아직 사실 아님) |
-| 3 | 터미널 | `factlog accept ...` | **사람 승인** → 사실로 확정 |
+| 2 | Claude Code (`!`) | `!factlog review` | 후보 목록 확인 (아직 사실 아님) |
+| 3 | Claude Code (`!`) | `!factlog accept ...` | **사람 승인** → 사실로 확정 |
 | 4 | Claude Code | `/factlog check` | 결정론 엔진으로 논리 검증 |
 
 `review`는 마지막 줄에서 **정확히 어떤 accept 명령을 쓸지** 알려줍니다. 그대로 복사해 쓰면 됩니다.

@@ -6,17 +6,17 @@
 기록됩니다. 그래서 `ingest`/`ask`/`sync` 및 도구들이 어느 작업 디렉터리에서든
 그 KB를 대상으로 동작합니다 — `--target`/`--wiki` 가 필요 없습니다.
 
-*터미널에서 실행:*
+*Claude Code에서 `!` 로 실행:*
 
 ```bash
-factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
-factlog where             # show the active KB and how it was resolved
-factlog sources           # list registered sources (original, conversion, fact count)
-factlog status            # KB state: facts by status, vocabulary, conflicts, logic freshness, engine
-cd /anywhere && factlog ingest report.pdf   # → ~/wiki/runs/sources/report.txt
-factlog eject report.pdf  # inverse of ingest: remove the conversion + retire its facts
-factlog ignore drafts/*.md   # exclude sources from sync (re-extraction)
-factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
+!factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
+!factlog where             # show the active KB and how it was resolved
+!factlog sources           # list registered sources (original, conversion, fact count)
+!factlog status            # KB state: facts by status, vocabulary, conflicts, logic freshness, engine
+!cd /anywhere && factlog ingest report.pdf   # → ~/wiki/runs/sources/report.txt
+!factlog eject report.pdf  # inverse of ingest: remove the conversion + retire its facts
+!factlog ignore drafts/*.md   # exclude sources from sync (re-extraction)
+!factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 ```
 
 > **슬래시 명령(`/factlog …`)도 활성 KB에서 동작합니다.** 다만 factlog **소스
@@ -52,10 +52,10 @@ factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 
 ## 어느 KB가 이겼는지 확인하기
 
-*터미널에서 실행:*
+*Claude Code에서 `!` 로 실행:*
 
 ```bash
-factlog where
+!factlog where
 ```
 
 ```text
