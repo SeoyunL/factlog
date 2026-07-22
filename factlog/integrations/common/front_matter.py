@@ -2,7 +2,7 @@
 """Read scalar fields out of a source file's YAML front matter.
 
 Only the leading front-matter block (between the opening ``---`` and its closing
-``---``) is consulted, and only the first bytes are read — so a plain user
+``---``) is consulted, and the read stops at that closing fence — so a plain user
 source, or the literal text ``zotero_key:`` inside a body, is never mistaken for
 a prior import.
 
@@ -15,8 +15,22 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# How many leading bytes of a source file to scan for its front matter.
-FRONT_MATTER_SCAN_BYTES = 2048
+# How much to pull per read while looking for the closing fence, and the point at
+# which an *unclosed* front matter stops being read. The cap bounds only the
+# pathological file (an opening ``---`` whose fence is never closed); a well-formed
+# block stops at its own fence, however long it is.
+#
+# The chunk size is not a free performance knob — it is load-bearing twice over:
+#
+# * below 3 it breaks correctness outright. The opening-fence test runs on the
+#   first read alone, so a 1- or 2-char chunk makes ``startswith("---")`` false
+#   for a perfectly well-formed file and every source reads as empty.
+# * it quantises the cap. The loop checks the length *before* reading, so the
+#   effective ceiling is ``ceil(FRONT_MATTER_MAX_CHARS / chunk) * chunk``, and
+#   changing the chunk moves where an unclosed block is actually cut. Powers of
+#   two that divide the cap keep that boundary put; other values shift it.
+FRONT_MATTER_CHUNK_CHARS = 8192
+FRONT_MATTER_MAX_CHARS = 1 << 20
 
 
 def _key_pattern(key: str) -> re.Pattern[str]:
@@ -26,14 +40,46 @@ def _key_pattern(key: str) -> re.Pattern[str]:
 def front_matter_block(path: Path) -> str | None:
     """The text between the opening ``---`` and the closing fence, or None.
 
+    Reads to the block's **closing fence**, not to a fixed byte count. A fixed
+    2048-byte window truncated the block mid-way and silently dropped every key
+    past it: the arXiv writer emits one long ``authors:`` line ahead of ``year``/
+    ``journal``/``imported_from``, so 50 authors (2104-byte block) already lost
+    ``imported_from`` and 60 lost ``year`` and ``journal`` too, leaving
+    ``arxiv_id``/``title`` alone (#409). The ID-keyed paths survived — the writers
+    emit their identity keys first — but the title+author+year fallback, which
+    needs ``year`` and ``imported_from``, did not.
+
+    The window was never a read budget either: the read stops at the fence, so a
+    well-formed source costs its front matter and nothing more, whatever the body
+    weighs. Returning early when there is no opening fence keeps that true for the
+    ingest conversions that carry an HTML provenance comment instead of YAML.
+
     Returns None for an unreadable file or one with no opening fence.
+
+    One cost went *up*. A block with no closing fence is taken to run to the end of
+    what was read, so such a file absorbs its body into the block — and widening the
+    read from 2048 chars to ``FRONT_MATTER_MAX_CHARS`` multiplies how much by up to
+    512x. It stays bounded by the cap, and the readers above name the keys they want,
+    so a *value* only changes where the body happens to carry a matching ``key:``
+    line (or, for ``ignore_re``, a body line the caller's marker pattern matches —
+    which reads that unclosed file as carrying nothing). Both need a missing closing
+    fence to begin with; the routine price is transient memory, which is why the cap
+    is not merely decorative.
     """
     try:
         with path.open("r", encoding="utf-8") as fh:
-            head = fh.read(FRONT_MATTER_SCAN_BYTES)
+            head = fh.read(FRONT_MATTER_CHUNK_CHARS)
+            if not head.startswith("---"):
+                # No opening fence: nothing to find, and no reason to read the body.
+                return None
+            # Re-scan the accumulated text each pass, so a fence straddling a chunk
+            # boundary is still found.
+            while "\n---" not in head[3:] and len(head) < FRONT_MATTER_MAX_CHARS:
+                chunk = fh.read(FRONT_MATTER_CHUNK_CHARS)
+                if not chunk:
+                    break
+                head += chunk
     except OSError:
-        return None
-    if not head.startswith("---"):
         return None
     rest = head[3:]
     end = rest.find("\n---")
