@@ -141,8 +141,11 @@ def extract_pmid(extra: object) -> str:
     only strips and lowercases, so ``10.１２３４/abc`` and ``10.1234/abc`` are
     different join keys and the same paper imports as two files. DOI is the primary
     cross-source join key, so this silently defeats later OpenAlex/PubMed matching.
-    That is a pre-existing bug, out of scope here, and tracked separately — see
+    That is a pre-existing bug, out of scope here, and tracked as #405 — see
     ``tests/unit/test_zotero_item_parser.py`` for the pinned current behaviour.
+    The likely fix belongs at the join-key site (``normalize_cross_id``) rather
+    than here at ``_DOI_CORE_RE``, so that already-imported full-width DOIs
+    collide correctly too instead of only newly-imported ones.
     """
     if not isinstance(extra, str):
         return ""

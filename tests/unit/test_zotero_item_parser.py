@@ -172,7 +172,8 @@ class TestPmidAndDoi:
         # OpenAlex/PubMed imports (always ASCII) then fail to match in silence.
         #
         # Pre-existing, out of scope for #398 (which fixes the producer of the
-        # #388 warnings), tracked as a follow-up issue.
+        # #388 warnings), tracked as #405. When #405 lands, this test is the
+        # one to invert — the assertions below are exactly what it must change.
         out = parse_item(_item(DOI="10.１２３４/abc"))
         assert out["doi"] == "10.１２３４/abc"
         # The defect this leaves behind, pinned explicitly so it cannot be
