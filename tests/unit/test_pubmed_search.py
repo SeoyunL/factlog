@@ -511,11 +511,18 @@ class TestQuotedTextCannotForgeAWarningLine:
     def _assert_block_shape(line):
         """Exactly two lines: the "⚠" claim, then the indented reason. Nothing else.
 
+        Split with `splitlines()`, never `split("\\n")`. The first cut of this helper
+        used `split("\\n")` and was *structurally blind* to U+0085/U+2028/U+2029 — the
+        exact characters that cut's gate let through — so it reported a forged
+        three-line block as two lines and passed. `splitlines()` recognizes every
+        character a Python consumer would break a line on, which is the claim being
+        made; matching the gate's own list here would only re-assert the gate.
+
         The claim is about *line structure*, not about the "⚠" character — a warning
         marker inside the quoted text forges nothing while it stays mid-line, and
         asserting it away would be asserting the gate deletes text (it does not).
         """
-        rows = line.split("\n")
+        rows = line.splitlines()
         assert len(rows) == 2
         assert rows[0].startswith("⚠")
         assert rows[1].startswith("  ") and not rows[1].lstrip().startswith("⚠")
@@ -553,6 +560,35 @@ class TestQuotedTextCannotForgeAWarningLine:
         line = year_range_report([_Work("40000003", 1998, "1998\tDec")], year="2022-2025")[0]
         assert "\t" not in line
         assert "1998 Dec" in line
+
+    @pytest.mark.parametrize("char, name", [
+        ("\u2028", "LINE SEPARATOR"),
+        ("\u2029", "PARAGRAPH SEPARATOR"),
+        ("\x85", "NEL"),
+        ("\v", "VT"),
+        ("\f", "FF"),
+    ])
+    def test_a_non_c0_line_break_cannot_forge_a_line_either(self, char, name):
+        # The hole this fix's first cut shipped with. U+0085/U+2028/U+2029 are NOT in
+        # the C0 range, are legal XML 1.0 (`&#133;`/`&#8232;`/`&#8233;` parse fine where
+        # `&#27;` is a parse error), and still break a line under `str.splitlines()`.
+        # A gate derived from "XML admits no C0 but tab/CR/LF" let all three through and
+        # produced the very three-line forgery #396 is about.
+        forged = f"1998 Dec{char}⚠ 99 results were silently dropped"
+        for work in (_Work("40000003", 1998, forged),   # MedlineDate block
+                     _Work("40000009", None, forged),   # no-year block
+                     _Work(f"4000{char}⚠ forged", 2026)):  # electronic block, via PMID
+            self._assert_block_shape(year_range_report([work], year="2022-2025")[0])
+
+    def test_a_del_is_left_alone(self):
+        # The counterexample that keeps the gate from creeping into "make it render
+        # nicely". U+007F is a control character and DOES reach here through a real
+        # efetch (`_text` does not collapse it — it is not Python whitespace), but it
+        # adds no line and no column, so it breaks neither contract and is not this
+        # function's to strip. Recorded so a later widening is a deliberate act.
+        line = year_range_report([_Work("40000003", 1998, "1998\x7fDec")], year="2022-2025")[0]
+        self._assert_block_shape(line)
+        assert "\x7f" in line
 
     def test_every_control_character_maps_to_one_space(self):
         # Neutralized, never deleted: dropping characters would silently rewrite the very

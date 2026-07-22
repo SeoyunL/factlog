@@ -263,9 +263,12 @@ def _journal(article: ET.Element) -> str | None:
 def _pub_date(article: ET.Element) -> tuple[int | None, str | None]:
     """Resolve (year, medline_date_raw) from ``Journal/JournalIssue/PubDate``.
 
-    ``<Year>`` wins → ``(year, None)``: nothing was derived, so there is nothing to
-    audit. Otherwise a ``<MedlineDate>``'s verbatim text is returned whether or not a
-    year comes out of it — ``(year, text)`` when its first four-digit run supplies one,
+    ``<Year>`` wins **when it is all digits** → ``(year, None)``: nothing was derived,
+    so there is nothing to audit. A non-numeric ``<Year>`` does not win — it falls
+    through to ``<MedlineDate>`` below exactly as an absent one would, so the element
+    being *present* is not what decides. Otherwise a ``<MedlineDate>``'s verbatim text
+    is returned whether or not a year comes out of it — ``(year, text)`` when its first
+    four-digit run supplies one,
     ``(None, text)`` when the free text carries no four-digit run at all ("Winter",
     "Spring"). That third shape is deliberate, not a fallthrough: ``pub_date_raw`` is
     what lets a caller tell "no year, and here is the text that failed to yield one"
