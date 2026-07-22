@@ -100,6 +100,14 @@ class TestRender:
         out = render_annotations(BIB, [_hl(text="", comment="just a thought")], [])
         assert "just a thought" in out and "## Highlights" in out
 
+    def test_marker_is_first_line_after_opening_fence(self):
+        # _is_ours only reads the head, so the marker's position in the block is a
+        # contract, not a formatting choice. Asserted on the rendered text because
+        # every round-trip test keeps the whole front matter inside the head and so
+        # passes no matter where in the block the marker sits.
+        out = render_annotations({"zotero_key": "K", "title": "T" * 600}, [_hl()], [])
+        assert out.split("\n")[:2] == ["---", "source_kind: annotations"]
+
     def test_no_imported_at_timestamp(self):
         assert "imported_at" not in render_annotations(BIB, [_hl()], [])
 
@@ -170,6 +178,28 @@ class TestWrite:
         assert first.status == "written"
         res = write_annotations(bib, [_hl("first"), _hl("second")], [], "s", tmp_path)
         assert res.status == "updated"  # our own file recognized despite long title
+
+    def test_over_long_front_matter_stops_updating_our_own_file(self, tmp_path):
+        # CHARACTERIZATION, NOT AN ENDORSEMENT. Front matter that does not close
+        # inside the head makes us disown a file we wrote ourselves: it is written
+        # once, never updated again, and the skip reason ("not a zotero notes file")
+        # is false. Left as-is because reaching it needs a ~4000-character title and
+        # the alternative — a wider head — puts real user files back at risk of
+        # being overwritten (see _HEAD_SCAN_BYTES). Follow-up: #430.
+        probe_len = 100
+        probe = render_annotations({"zotero_key": "K", "title": "T" * probe_len}, [_hl()], [])
+        # Accepted while the whole "\n---" fence fits in the head, so the last title
+        # length still recognized puts the fence at exactly _HEAD_SCAN_BYTES - 4.
+        last_ok = probe_len + (_HEAD_SCAN_BYTES - 3 - probe.index("\n---", 3)) - 1
+        assert last_ok == 4016  # measured cliff for the current front-matter layout
+
+        for title_len, expected in ((last_ok, "updated"), (last_ok + 1, "skipped")):
+            bib = {"zotero_key": "K", "title": "T" * title_len}
+            target = tmp_path / str(title_len)
+            assert write_annotations(bib, [_hl("first")], [], "s", target).status == "written"
+            res = write_annotations(bib, [_hl("first"), _hl("second")], [], "s", target)
+            assert res.status == expected
+        assert "not a zotero notes file" in res.reason  # the false reason, pinned
 
     def test_large_body_still_detected_as_ours(self, tmp_path):
         # Our own fence sits at the top, so a body far past the scanned head must
