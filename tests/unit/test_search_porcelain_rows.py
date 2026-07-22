@@ -28,7 +28,7 @@ from factlog.integrations.common.porcelain import _LINE_BREAKS
 # Exactly the set the gate covers — tab plus every `_LINE_BREAKS` character — plus U+0020
 # SPACE, which it does not. The space is a negative control: it must stay green even with
 # the gate disabled, which is what shows the rest of the suite goes red for the gate and
-# not because these assertions reject everything. Twelve members; U+0020 is the twelfth.
+# not because these assertions reject everything. Twelve members; U+0020 is the ninth.
 #
 # Write that space as a literal space and check it stayed one. An earlier revision of this
 # line held U+2028 where the space belongs — it renders as a space in a terminal, so the
