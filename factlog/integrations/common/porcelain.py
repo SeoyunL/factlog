@@ -17,12 +17,20 @@ Porcelain named the rule; it is not the only place that needs it. A stderr warni
 second contract (#396) — and such a caller reuses this rule rather than growing a near-copy
 under a second name, which is how the two integrations drifted apart in the first place.
 
-**Not every porcelain emitter is gated yet.** ``_pubmed_show_results`` and
-``_arxiv_show_results`` (``cli.py``) print their ``result`` rows with bare f-strings, so
-the *first* contract above is open in the two search commands — every other porcelain
-emitter in the tree goes through this function. Out of scope for #396, which fixed the
-warning path in the same command; recorded here so the gap is not mistaken for a checked
-path. (Issue number to follow.)
+**Not every porcelain emitter is gated (#406).** ``_openalex_show_results``,
+``_arxiv_show_results`` and ``_pubmed_show_results`` (``cli.py``) print their ``result``
+rows with bare f-strings, so the *first* contract above is open in all three search
+commands. Out of scope for #396, which fixed the warning path in one of them; recorded
+here so the gap is not mistaken for a checked path.
+
+Note what kind of gap that is, because this module has now seen both kinds. Those three
+are **ungated** — no neutralization at all. The three ``*-backfill-provenance`` commands
+were something worse to review: **stale, not ungated**. Each kept its own local copy of
+the tab/CR/LF rule, which *looked* checked while silently falling behind when #396 widened
+the shared set, so eight characters it now neutralizes still split those rows in two. They
+were converted to call this function (#396). A near-copy does not stay correct by being
+correct once, which is the whole argument for one definition; an obvious gap at least
+announces itself.
 """
 from __future__ import annotations
 
@@ -53,16 +61,30 @@ def porcelain_field(text: str) -> str:
     still left untouched; what earns the gate is output where the character changes how
     the reader parses the line, not merely how it looks.
 
-    **What is deliberately NOT neutralized.** A non-line-breaking control character —
-    U+007F DEL is the reachable one, and it reaches the #396 gate through a real efetch
-    today (measured) — is left alone. It cannot add a column or a row, so it breaks
-    neither contract; it can only look odd. Stripping it would put this function in the
-    business of deciding what renders nicely, which is the "all human-readable output"
-    scope both contracts above are written to exclude. ESC, the one that could forge a
-    line by moving a terminal's cursor, is not reachable: XML 1.0 rejects it outright.
+    **What is deliberately NOT neutralized**, and why that is a decision about the two
+    contracts rather than about any one caller's input: a control character that adds
+    neither a column nor a row is left alone. It can only look odd, and stripping it would
+    put this function in the business of deciding what renders nicely — the "all
+    human-readable output" scope both contracts above exclude.
 
-    That last fact is a reason this gate need not grow, never a reason it may be skipped
-    — the caller's job is to gate the value, not to prove which characters its parser
-    happens to admit today.
+    Two such characters are known to reach here, by different routes, and neither is
+    universal — this function has several consumers and they do not share a parser:
+
+    * **U+007F DEL** reaches the #396 warning gate through a real PubMed efetch
+      (measured); XML 1.0 admits it and ``work_parser._text`` does not collapse it,
+      since it is not Python whitespace.
+    * **ESC** is *not* reachable through that XML path — XML 1.0 rejects it outright —
+      but it very much is elsewhere: JSON admits it (``json.loads('"a\\u001bb"')`` →
+      ``'a\\x1bb'``), so an OpenAlex ``reason`` can carry one, and a POSIX filename may
+      contain it outright, so a ``ledger`` path can too. A row carrying ``\\x1b[2K``
+      (ANSI erase-line) was emitted through this gate and still measured three fields on
+      one line. It is left alone for the same reason DEL is: a terminal may erase what is
+      already drawn, but the row's field count and line count — all either contract
+      claims — are untouched.
+
+    Do not read either bullet as "this gate is narrow enough". Both are notes about what
+    happens to reach it today, from parsers this function does not control and callers it
+    has not met; a caller gates its value rather than reasoning about what its own parser
+    admits (the error #396's first cut shipped, in the opposite direction).
     """
     return text.translate(_NEUTRALIZE)

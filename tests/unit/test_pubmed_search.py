@@ -586,6 +586,12 @@ class TestQuotedTextCannotForgeAWarningLine:
         # efetch (`_text` does not collapse it — it is not Python whitespace), but it
         # adds no line and no column, so it breaks neither contract and is not this
         # function's to strip. Recorded so a later widening is a deliberate act.
+        #
+        # One honest cost, since this line exists to make a derived year AUDITABLE: a
+        # terminal may drop DEL when drawing, so the MedlineDate the operator reads can
+        # differ by that character from the one stored. Not a forgery — no line or column
+        # moves — and outside what the gate claims, but worth knowing before treating the
+        # displayed text as byte-exact.
         line = year_range_report([_Work("40000003", 1998, "1998\x7fDec")], year="2022-2025")[0]
         self._assert_block_shape(line)
         assert "\x7f" in line
