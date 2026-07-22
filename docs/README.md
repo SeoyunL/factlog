@@ -49,6 +49,11 @@ factlog의 상세 문서입니다. 프로젝트 소개는 [저장소 README](../
 각 연동은 별도 extra 설치가 필요하고(`pip install 'factlog-academic[<이름>] @ git+...'`),
 가져온 레코드는 여전히 **후보**입니다 — `sync → review → accept` 게이트를 거칩니다.
 
+넷 중 무엇을 쓸지 고르는 중이거나 넷이 공유하는 계약부터 보고 싶다면
+[학술 서지 연동 통합 사용법](academic-import.md)을 먼저 읽으세요 — 선택 기준, 공통
+front matter 키와 cross-source 조인, 명령 대조표가 한 장에 있습니다. 연동별 상세는
+아래 네 페이지입니다.
+
 | 페이지 | 내용 |
 |--------|------|
 | [Zotero 가져오기](zotero-import.md) | `factlog zotero-import`, Zotero 7 Local API, `--pdf` · `--annotations` |

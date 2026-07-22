@@ -50,6 +50,11 @@ To walk the whole flow through once without your own data, start with the
 Each integration needs its own extra (`pip install 'factlog-academic[<name>] @ git+...'`)
 and imports records as **candidates** — they still pass the `sync → review → accept` gate.
 
+If you are picking between the four, or want the contract they share, start with
+[Academic bibliography integrations](academic-import.en.md) — which one to use, the
+shared front matter keys and cross-source join, and a command comparison table on one
+page. The four pages below cover what is specific to each.
+
 | Page | Contents |
 |--------|------|
 | [Zotero import](zotero-import.en.md) | `factlog zotero-import`, Zotero 7 Local API, `--pdf` · `--annotations` |
