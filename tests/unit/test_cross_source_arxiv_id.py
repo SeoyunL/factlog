@@ -112,6 +112,84 @@ class TestNormalizeCrossId:
         assert normalize_cross_id("arxiv_id", "NotAnId") == "NotAnId"
 
 
+class TestDoiDigitSpelling:
+    """Where the DOI fold stops: prefix normalized, suffix preserved (#405).
+
+    Under ISO 26324 the registrant code in ``10.<registrant>`` is a decimal
+    number, so a non-ASCII spelling of it names the same registrant and must
+    produce the same join key — otherwise a full-width DOI from Zotero never
+    matches the ASCII one from OpenAlex and one paper imports as two files. The
+    suffix is an opaque string, where respelling a character would name a
+    *different* identifier, so it is left exactly as written. The boundary is the
+    first ``/``.
+    """
+
+    def test_full_width_prefix_collides_with_ascii(self):
+        assert normalize_cross_id("doi", "10.１２３４/abc") == "10.1234/abc"
+
+    def test_non_latin_digit_scripts_in_the_prefix_fold(self):
+        # The counter-case for NFKC, as in the parser: `\d` matches these but
+        # NFKC does not fold them.
+        assert normalize_cross_id("doi", "10.٢٣٤/abc") == "10.234/abc"  # Arabic-Indic
+        assert normalize_cross_id("doi", "10.२३४/abc") == "10.234/abc"  # Devanagari
+        assert normalize_cross_id("doi", "10.１2٣/abc") == "10.123/abc"  # mixed
+
+    def test_directory_code_folds_too(self):
+        # `10` is as much a decimal number as the registrant code.
+        assert normalize_cross_id("doi", "１０.1234/abc") == "10.1234/abc"
+
+    def test_suffix_is_preserved_not_folded(self):
+        # The opaque half. Folding here would invent a different identifier.
+        assert normalize_cross_id("doi", "10.1234/ａ１b") == "10.1234/ａ１b"
+
+    def test_suffixes_that_differ_only_in_digit_spelling_stay_distinct_keys(self):
+        # The consequence of preserving the suffix, asserted rather than implied:
+        # these are two identifiers, not two spellings of one.
+        assert normalize_cross_id("doi", "10.1234/abc１") != normalize_cross_id(
+            "doi", "10.1234/abc1"
+        )
+
+    def test_lowercasing_still_applies_to_the_whole_value(self):
+        assert normalize_cross_id("doi", "10.１２３４/ABC") == "10.1234/abc"
+
+    def test_non_digit_lookalikes_do_not_become_a_prefix(self):
+        # `²` and `①` are category `No`, never matched by `\d`, so the head does
+        # not fold into a DOI prefix and the value is only lowercased. Folding
+        # them would invent a registrant the source never named.
+        assert normalize_cross_id("doi", "10.1²/abc") == "10.1²/abc"
+        assert normalize_cross_id("doi", "10.①/abc") == "10.①/abc"
+
+    def test_a_value_that_is_not_a_doi_prefix_is_left_alone(self):
+        # Junk in a hand-edited file must not be quietly rewritten; it simply
+        # fails to match anything. The URL form is out of scope either way — it
+        # was never a matching key.
+        assert normalize_cross_id("doi", "https://doi.org/10.１２３４/abc") == \
+            "https://doi.org/10.１２３４/abc"
+        assert normalize_cross_id("doi", "not-a-doi") == "not-a-doi"
+        assert normalize_cross_id("doi", "10.1234") == "10.1234"
+
+    def test_full_width_and_ascii_doi_import_as_one_file(self, tmp_path):
+        # End-to-end repro from #405: before the fix these wrote
+        # kim-2020-paper-one.md and kim-2020-paper-one-2.md.
+        def item(key, doi):
+            return {
+                "zotero_key": key,
+                "title": "Paper One",
+                "doi": doi,
+                "authors": [{"last": "Kim", "first": "A"}],
+                "year": "2020",
+            }
+
+        first = ZoteroWriter().write(item("K1", "10.１２３４/abc"), tmp_path)
+        second = ZoteroWriter().write(item("K2", "10.1234/abc"), tmp_path)
+        assert first.status == "imported"
+        assert second.status == "skipped"
+        assert "duplicate DOI" in second.reason
+        assert second.path == first.path
+        assert [p.name for p in sorted((tmp_path / "sources").glob("*.md"))] == \
+            [first.path.name]
+
+
 class TestProbeCases:
     """The four measured cases from the issue's architecture-review comment."""
 

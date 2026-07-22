@@ -110,21 +110,18 @@ def extract_pmid(extra: object) -> str:
     of the same identifier and converting it yields the PubMed record actually
     meant.
 
-    **The DOI path is left alone for scope, not because it is correct.** An earlier
-    draft of this note claimed DOIs are opaque and therefore must not be touched.
-    That is only half true and the half it gets wrong matters: under ISO 26324 a DOI
-    prefix ``10.<registrant>`` is a *decimal* number — ``_DOI_CORE_RE`` even spells
-    it ``10\\.\\d+/`` — and only the suffix is an opaque string. So the honest
-    asymmetry is "normalize the prefix, preserve the suffix", not "leave DOIs
-    alone", and a full-width DOI really is broken today: ``normalize_cross_id``
-    only strips and lowercases, so ``10.１２３４/abc`` and ``10.1234/abc`` are
-    different join keys and the same paper imports as two files. DOI is the primary
-    cross-source join key, so this silently defeats later OpenAlex/PubMed matching.
-    That is a pre-existing bug, out of scope here, and tracked as #405 — see
-    ``tests/unit/test_zotero_item_parser.py`` for the pinned current behaviour.
-    The likely fix belongs at the join-key site (``normalize_cross_id``) rather
-    than here at ``_DOI_CORE_RE``, so that already-imported full-width DOIs
-    collide correctly too instead of only newly-imported ones.
+    **The DOI path is deliberately left alone, and is not broken by that.** An
+    earlier draft of this note claimed DOIs are opaque and therefore must not be
+    touched. That is only half true: under ISO 26324 a DOI prefix
+    ``10.<registrant>`` is a *decimal* number — ``_DOI_CORE_RE`` even spells it
+    ``10\\.\\d+/`` — and only the suffix is an opaque string, so the honest
+    asymmetry is "normalize the prefix, preserve the suffix". #405 applies that
+    asymmetry at the join-key site
+    (:func:`~factlog.integrations.common.source_writer.normalize_cross_id`), not
+    here, so a full-width DOI **already sitting in** ``sources/`` collides with
+    the ASCII one too; folding at ``_DOI_CORE_RE`` would have fixed only newly
+    imported records. This function keeps the DOI exactly as the library spelled
+    it, and the derived comparison key does the folding.
     """
     if not isinstance(extra, str):
         return ""
