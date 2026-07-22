@@ -71,6 +71,8 @@ import re
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
+from factlog.integrations.common.porcelain import porcelain_field
+
 __all__ = [
     "SEARCH_FIELD_TAGS",
     "MESH_FIELD",
@@ -607,6 +609,21 @@ def year_range_report(works, *, year: str | None = None) -> list[str]:
     too: ``pub_date_raw`` exists to keep a "derived-**or-absent**" year auditable,
     and a season with no year in it is the absent half.
 
+    **Every quoted value passes the control-character gate (#396).** A block is one
+    line of claim plus one indented continuation, and ``MedlineDate`` is *free text
+    PubMed hands us* — a newline inside it split one block into three and let the
+    record's own bytes appear where factlog's warning line belongs, prefixed ``⚠``
+    and indistinguishable from something factlog said. So the interpolated ``pmid``
+    and ``MedlineDate`` both go through :func:`~factlog.integrations.common.porcelain
+    .porcelain_field`, which is reused rather than re-derived here: its guarantee —
+    no tab, CR or LF survives, each becoming one space — is exactly the guarantee
+    this block needs, and tab/CR/LF are exactly the control characters that can
+    reach here, because XML 1.0 admits no other C0 character (a literal or
+    ``&#27;``-referenced ESC is a parse error, measured), so no escape-sequence
+    residue is left unhandled by borrowing the porcelain rule. The gate sits at the
+    single point where all three blocks assemble their entries, not per block, so a
+    fourth cause added later cannot be added ungated.
+
     Pure, duck-typed over ``.pmid``/``.year``/``.pub_date_raw`` (no import of
     ``work_parser``), and silent — ``[]`` — when no ``--year`` was given (there is no
     range to check anything against, missing year included) or every result lands
@@ -627,10 +644,12 @@ def year_range_report(works, *, year: str | None = None) -> list[str]:
     unknown: list[str] = []
     for work in works:
         work_year = getattr(work, "year", None)
-        pmid = getattr(work, "pmid", "?")
+        pmid = porcelain_field(str(getattr(work, "pmid", "?")))
         # Non-None exactly when `_pub_date` read MedlineDate free text — whether or
         # not a year could be derived from it.
         raw = getattr(work, "pub_date_raw", None)
+        if raw:
+            raw = porcelain_field(str(raw))
         if work_year is None:
             unknown.append(f'PMID {pmid} (MedlineDate "{raw}")' if raw else f"PMID {pmid}")
             continue
