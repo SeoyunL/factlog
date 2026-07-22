@@ -313,9 +313,16 @@ def normalize_cross_id(kind: str, value: str) -> str:
     with less hesitation, having no opaque half to preserve (#421). The Zotero
     parser already folds one at the import boundary (#398), so this is not about
     *new* imports: it is about the full-width PMIDs that path wrote **before**
-    #398 and does not repair, hand-edited files, and import paths that do not fold
-    — OpenAlex's ``normalize_pmid`` admits a full-width id, because ``str.isdigit``
-    is true of every Unicode decimal digit.
+    #398 and does not repair, and hand-edited files. Both reach the index through
+    :meth:`BaseSourceWriter._index`, which reads whatever a file on disk says, so
+    a boundary-only fold could never have touched them.
+
+    No current write path produces one otherwise — OpenAlex takes its PMID from
+    the API's ``ids.pmid`` and PubMed from the response ``<PMID>``, both ASCII
+    upstream. The validators those paths pass through (``normalize_pmid``, in both
+    ``openalex.api_client`` and ``pubmed.client``) would nonetheless *admit* a
+    full-width id, because ``str.isdigit`` is true of every Unicode decimal digit;
+    that is a latent gap (#427), not a route a value travels today.
 
     An ``arxiv_id`` is canonicalised the way :func:`normalize_arxiv_id` does —
     version stripped, subject class dropped, archive lowercased — so

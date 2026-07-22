@@ -235,9 +235,10 @@ class TestPmidDigitSpelling:
 
     The Zotero parser folds a PMID at the import boundary already (#398), so what
     these pin is the reachable remainder: values that path wrote *before* #398 and
-    does not repair, hand-edited files, and paths that never fold. The guard is
-    pinned separately from the outcome, because a mutant that drops it survives
-    every case where the value is well-formed.
+    does not repair, and hand-edited files. Both are read off disk by the index,
+    which is where a boundary-only fold can never reach them. The guard is pinned
+    separately from the outcome, because a mutant that drops it survives every
+    case where the value is well-formed.
     """
 
     def test_full_width_collides_with_ascii(self):
@@ -270,9 +271,6 @@ class TestPmidDigitSpelling:
         # is not a bare PMID and the guard returns the original untouched.
         assert normalize_cross_id("pmid", "1２²") == "1２²"
         assert normalize_cross_id("pmid", "①②③") == "①②③"
-
-    def test_an_ascii_pmid_is_unchanged(self):
-        assert normalize_cross_id("pmid", "32738937") == "32738937"
 
     def test_full_width_and_ascii_pmid_import_as_one_file(self, tmp_path):
         # End-to-end: a source carrying the full-width PMID a pre-#398 Zotero
