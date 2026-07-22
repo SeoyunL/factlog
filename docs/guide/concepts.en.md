@@ -153,12 +153,12 @@ read and write.
 | Category | Where it runs | Examples | Role |
 |------|-----------|------|------|
 | **Claude Code slash command** | Inside a Claude Code session | `/factlog setup`, `/factlog sync`, `/factlog query`, `/factlog check`, `/factlog ask` | The agent reads sources to extract candidate facts, drafts a query from a natural-language question, and invokes the engine verification flow (compile, logic check, answer) — the verification itself is performed by the deterministic engine. |
-| **Python CLI command** | Terminal (shell) | `factlog status`, `factlog review`, `factlog accept`, `factlog reject`, `factlog amend` | Check KB status, and let **a human** review, accept, retire, or correct candidate facts. `accept`/`reject` are the **human gate** that confirms a candidate as accepted or retires it (not an automated step). |
+| **Python CLI command** | Inside a Claude Code session | `factlog status`, `factlog review`, `factlog accept`, `factlog reject`, `factlog amend` | Check KB status, and let **a human** review, accept, retire, or correct candidate facts. `accept`/`reject` are the **human gate** that confirms a candidate as accepted or retires it (not an automated step). |
 | **KB file** (not a command — output/location) | The project KB folder | `sources/`, `facts/candidates.csv`, `facts/accepted.dl`, `facts/logic_report.txt` | Where the originals (`sources/`), the candidates (`candidates.csv`), and the engine input (`accepted.dl`) live. `facts/logic_report.txt` is **where the engine-generated verification result is recorded**; it is not hand-edited. |
 
 This table meshes with the [trust boundary](#candidate-vs-accepted--the-trust-boundary)
 above. A slash command (`/factlog sync`) only produces **candidates**;
-confirmation as accepted goes through the CLI gate a human runs in the terminal
+confirmation as accepted goes through the CLI gate a human runs by typing it
 (`factlog accept` / `factlog reject` / `factlog amend --accept`). Only an
 `accepted.dl` confirmed that way becomes engine input.
 

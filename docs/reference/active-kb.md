@@ -6,7 +6,7 @@
 기록됩니다. 그래서 `ingest`/`ask`/`sync` 및 도구들이 어느 작업 디렉터리에서든
 그 KB를 대상으로 동작합니다 — `--target`/`--wiki` 가 필요 없습니다.
 
-*터미널에서 실행:*
+*Claude Code에 입력:*
 
 ```bash
 factlog use ~/wiki        # make ~/wiki the active KB (recorded in config)
@@ -52,7 +52,7 @@ factlog provenance Acme uses FastAPI   # trace a fact to its source(s)
 
 ## 어느 KB가 이겼는지 확인하기
 
-*터미널에서 실행:*
+*Claude Code에 입력:*
 
 ```bash
 factlog where

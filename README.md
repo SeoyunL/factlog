@@ -16,9 +16,9 @@
 [candidate vs accepted 신뢰 경계](docs/guide/concepts.md).
 
 factlog는 [Claude Code](https://code.claude.com) 플러그인입니다. 세션 안에서는
-`/factlog ...` slash command로 쓰고, 사람이 직접 검토하고 승인하는 단계는 터미널에서
-Python CLI(`python3 -m factlog ...`)로 실행합니다. 두 입구 모두 같은 검증 엔진을
-호출합니다 — slash command · Python CLI · 검증 엔진, 이 셋이 한 도구입니다.
+`/factlog ...` slash command로 쓰고, 사람이 직접 검토하고 승인하는 단계는 같은 세션에
+Python CLI(`python3 -m factlog ...`)를 직접 입력해 실행합니다. 두 입구 모두 같은 검증
+엔진을 호출합니다 — slash command · Python CLI · 검증 엔진, 이 셋이 한 도구입니다.
 
 ![factlog 동작 방식: Claude가 제안하고, 엔진이 검증하며, 사람이 확인합니다](docs/how-it-works.svg)
 
@@ -38,10 +38,13 @@ subject,relation,object,source,status,confidence,note
 Anthropic,develops,Claude Code,sources/example.md#what-is-claude-code,needs_review,0.90,inferred from developed_by relation
 ```
 
-터미널에서 사람이 승인하면, 그때 검증 엔진의 입력이 됩니다.
+사람이 승인하면, 그때 검증 엔진의 입력이 됩니다.
 
-```console
-$ factlog accept "Anthropic" develops "Claude Code"    # 또는 python3 -m factlog accept ...
+```bash
+factlog accept "Anthropic" develops "Claude Code"    # 또는 python3 -m factlog accept ...
+```
+
+```text
   Anthropic / develops / Claude Code  [needs_review → accepted]  ← sources/example.md#what-is-claude-code
 factlog accept: 1 row(s) → accepted; accepted.dl recompiled
 ```

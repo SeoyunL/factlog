@@ -57,7 +57,7 @@ Windows에서 `python` / `python3` 실행 파일 문제로 `setup` 이 실패하
 `setup` 은 이전에 분리돼 있던 설치 후 단계들을 한 명령으로 합칩니다. 수동으로 하면
 동등하게 다음과 같습니다.
 
-*터미널에서 실행:*
+*Claude Code에 입력:*
 
 ```bash
 pip install -r ~/git/semantic-reasoning/factlog/requirements.txt   # pyrewire>=1.0.3,<2.0

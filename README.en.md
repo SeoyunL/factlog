@@ -21,7 +21,7 @@ judgement call goes into a review queue, and a human has to approve it with
 
 factlog is a [Claude Code](https://code.claude.com) plugin. Inside a session you use
 it through `/factlog ...` slash commands; the steps where a human reviews and
-approves you run yourself in the terminal through the Python CLI
+approves you run yourself by typing the Python CLI into that same session
 (`python3 -m factlog ...`). Both entry points call the same verification engine —
 slash command · Python CLI · verification engine are one tool.
 
@@ -44,10 +44,13 @@ subject,relation,object,source,status,confidence,note
 Anthropic,develops,Claude Code,sources/example.md#what-is-claude-code,needs_review,0.90,inferred from developed_by relation
 ```
 
-Approve it in the terminal, and it becomes input to the verification engine:
+Approve it, and it becomes input to the verification engine:
 
-```console
-$ factlog accept "Anthropic" develops "Claude Code"    # or: python3 -m factlog accept ...
+```bash
+factlog accept "Anthropic" develops "Claude Code"    # or: python3 -m factlog accept ...
+```
+
+```text
   Anthropic / develops / Claude Code  [needs_review → accepted]  ← sources/example.md#what-is-claude-code
 factlog accept: 1 row(s) → accepted; accepted.dl recompiled
 ```
