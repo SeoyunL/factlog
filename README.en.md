@@ -152,6 +152,7 @@ The detailed documentation lives in [`docs/`](docs/README.en.md).
 Each integration needs its own extra, and imported records are still **candidates** —
 they pass the `sync → review → accept` gate like anything else.
 
+- [All four together](docs/academic-import.en.md) — which one to use, the contract they share, command comparison
 - [Zotero import](docs/zotero-import.en.md) — `factlog zotero-import`, Zotero 7 Local API
 - [OpenAlex import](docs/openalex.en.md) — `factlog openalex-*`, search · citation graph · refresh
 - [arXiv import](docs/arxiv.en.md) — `factlog arxiv-*`, version tracking, withdrawals
