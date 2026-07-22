@@ -16,7 +16,8 @@ patching only `OpenAlexClient.get_work`:
    refuses BEFORE the query (zero API requests) when there is no ledger / an unreadable
    ledger / a front-matter-only work, writes nothing on a failed query or a merged-away
    id, refuses to acknowledge under an old key when OpenAlex answers a merged id, silences
-   the repeat once run, clears the flag by REMOVING the key on an un-retraction, keeps
+   the repeat once run, refuses to CLEAR under `--yes` (#106/#414 — a clear needs a human
+   at the prompt), clears the flag by REMOVING the key on an un-retraction, keeps
    re-import `errors == 0` in either direction (is_retracted is not identifying), and never
    opens the `.md` (byte- and `mtime_ns`-identical). "Withdrawn" never appears.
 """
@@ -287,11 +288,15 @@ class TestAcknowledgeCommand:
         assert "OpenAlex's opinion" in out
         assert "PubMed" in out
 
-    def test_un_retraction_clears_the_key_and_silences(self, tmp_path, fake, capsys):
+    def test_un_retraction_clears_the_key_and_silences(self, tmp_path, fake, capsys,
+                                                       monkeypatch):
+        # Interactive, not `--yes`: a clear is gated on a human (#106, see TestYesCannotClear).
         _seed(tmp_path, "W1", is_retracted=True)
         fake(FakeClient({"W1": _raw_work("W1", is_retracted=False)}))
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
         code = run(["openalex-acknowledge-retraction", "--id", "W1",
-                    "--target", str(tmp_path), "--yes"])
+                    "--target", str(tmp_path)])
         out = capsys.readouterr().out
         assert code == 0
         assert "Cleared the retraction" in out
@@ -547,8 +552,86 @@ class TestNoteProvenance:
 # --------------------------------------------------------------------------- #
 # is_retracted is not identifying: re-import errors == 0 in either direction
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# #106 / #414 — `--yes` may RECORD a retraction, never CLEAR one
+#
+# The rule was established (31138a2) after this command was written (52f146e) and never
+# applied back to it; #414 closed that gap. The gate does not rest on a parsing weakness —
+# `is_retracted` is a structured boolean — but on direction: recording makes noise,
+# clearing creates silence, and silence needs a human at the prompt (#93).
+# --------------------------------------------------------------------------- #
+class TestYesCannotClear:
+    def test_yes_refuses_the_clear_and_leaves_the_kb_byte_identical(
+        self, tmp_path, fake, capsys
+    ):
+        _seed(tmp_path, "W1", is_retracted=True)
+        before = _kb_snapshot(tmp_path)
+        fake(FakeClient({"W1": _raw_work("W1", is_retracted=False)}))
+        code = run(["openalex-acknowledge-retraction", "--id", "W1",
+                    "--target", str(tmp_path), "--yes"])
+        err = capsys.readouterr().err
+        assert code == 1
+        assert "refusing to clear the retraction recorded for W1 with --yes" in err
+        # It names the working path: an interactive re-run without --yes.
+        assert "without --yes" in err and "terminal" in err and "prompt" in err
+        assert "Nothing written." in err
+        # Byte- and mtime_ns-identical: no ledger write, no .md write.
+        assert _kb_snapshot(tmp_path) == before
+        assert _ledger_is_retracted(tmp_path, "W1") is True
+
+    def test_the_refusal_does_not_claim_openalex_misread_anything(
+        self, tmp_path, fake, capsys
+    ):
+        # Unlike arXiv's, this refusal must not blame a parse miss: OpenAlex's answer is a
+        # structured boolean. It concedes the flag may be OpenAlex correcting a false
+        # positive and still refuses, because --yes means nobody reads the note.
+        _seed(tmp_path, "W1", is_retracted=True)
+        fake(FakeClient({"W1": _raw_work("W1", is_retracted=False)}))
+        code = run(["openalex-acknowledge-retraction", "--id", "W1",
+                    "--target", str(tmp_path), "--yes"])
+        captured = capsys.readouterr()
+        assert code == 1
+        assert "false positive" in captured.err
+        assert "nobody sees it" in captured.err
+        # The note a human would have read is never printed under --yes.
+        assert captured.out == ""
+
+    def test_yes_still_records_a_retraction(self, tmp_path, fake, capsys):
+        # The loud direction is untouched: the gate is on the clear only.
+        _seed(tmp_path, "W1", is_retracted=False)
+        fake(FakeClient({"W1": _raw_work("W1", is_retracted=True)}))
+        code = run(["openalex-acknowledge-retraction", "--id", "W1",
+                    "--target", str(tmp_path), "--yes"])
+        assert code == 0
+        assert "refusing to clear" not in capsys.readouterr().err
+        assert _ledger_is_retracted(tmp_path, "W1") is True
+
+    def test_yes_on_an_already_matching_clear_is_not_refused(self, tmp_path, fake, capsys):
+        # Ledger records no retraction and OpenAlex flags none: there is nothing to clear,
+        # so this exits 0 without the refusal (the gate keys on a recorded retraction, not
+        # on OpenAlex answering False).
+        _seed(tmp_path, "W1", is_retracted=False)
+        fake(FakeClient({"W1": _raw_work("W1", is_retracted=False)}))
+        code = run(["openalex-acknowledge-retraction", "--id", "W1",
+                    "--target", str(tmp_path), "--yes"])
+        captured = capsys.readouterr()
+        assert code == 0
+        assert "refusing to clear" not in captured.err
+        assert "nothing to acknowledge" in captured.out
+
+    def test_the_three_closing_commands_agree_on_the_yes_help(self, tmp_path):
+        # #414's regression guard: the asymmetry started as an undocumented help string.
+        parser = cli.build_parser()
+        actions = parser._subparsers._group_actions[0].choices
+        for name in ("openalex-acknowledge-retraction", "arxiv-acknowledge-withdrawal",
+                     "pubmed-acknowledge-retraction"):
+            help_text = next(a.help for a in actions[name]._actions if a.dest == "yes")
+            assert "never clear one" in help_text, name
+
+
 class TestReimportStaysClean:
-    def test_reimport_after_un_retraction_clear_has_zero_errors(self, tmp_path, fake):
+    def test_reimport_after_un_retraction_clear_has_zero_errors(self, tmp_path, fake,
+                                                                monkeypatch):
         # Seed a ledger-backed work recorded as retracted; OpenAlex reverses it.
         _seed(tmp_path, "W1", is_retracted=True, doi="10.1/a", journal="J")
         un_retracted = parse_work(_raw_work("W1", is_retracted=False, doi="10.1/a",
@@ -560,11 +643,14 @@ class TestReimportStaysClean:
                                  imported_at="2026-02-01T00:00:00+00:00")
         assert divergent.errors == 0
 
-        # The human acknowledges the un-retraction; the flag is cleared by removing the key.
+        # The human acknowledges the un-retraction at the prompt (a clear is never `--yes`);
+        # the flag is cleared by removing the key.
         fake(FakeClient({"W1": _raw_work("W1", is_retracted=False, doi="10.1/a",
                                          journal="J")}))
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
         code = run(["openalex-acknowledge-retraction", "--id", "W1",
-                    "--target", str(tmp_path), "--yes"])
+                    "--target", str(tmp_path)])
         assert code == 0
         assert _ledger_is_retracted(tmp_path, "W1") is False
 

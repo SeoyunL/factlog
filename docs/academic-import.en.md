@@ -211,14 +211,16 @@ Each closing command takes exactly one `--id`; there is no `--all` and no wildca
 Each checks the ledger *before* spending a request, so a paper with no ledger is
 refused without any network call and pointed at the backfill command.
 
-In `arxiv-acknowledge-withdrawal` and `pubmed-acknowledge-retraction`, **`--yes` can
-record a retraction but never clear one**: upstream going quiet may mean a genuine
-reversal or merely a sentence that could not be read, and the code cannot tell those
-apart. Recording makes noise; clearing creates silence, and silence needs a human at
-the prompt. **`openalex-acknowledge-retraction` has no such gate** — under `--yes` it
-will clear (drop `is_retracted` from the ledger) with no prompt, so leave `--yes` off
-unless you mean to. Whether that asymmetry is intent or a defect is
-[#414](https://github.com/SeoyunL/factlog-academic/issues/414).
+In **all three** closing commands, **`--yes` can record a retraction but never clear
+one** (#106): upstream going quiet is not the same as upstream reversing itself. For
+arXiv it may be a withdrawal sentence that could not be read; for PubMed, a marker not
+yet emitted. OpenAlex's `is_retracted` is a structured boolean with no such reading
+failure, but OpenAlex is a known false-positive source (it flags works PubMed does
+not), so in every case there is something for a human to weigh in the note. Recording
+wrongly is a nuisance; clearing wrongly means citing a retracted paper. Recording makes
+noise; clearing creates silence, and silence needs a human at the prompt — so a clear
+under `--yes` is refused and nothing is written. To clear, re-run in a terminal without
+`--yes` and confirm.
 
 ## What `--auto-update` is allowed to write
 
