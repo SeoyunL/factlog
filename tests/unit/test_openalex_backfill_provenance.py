@@ -147,7 +147,8 @@ class TestTheGraduation:
         assert "front matter" in capsys.readouterr().err
         assert client.call_count == 0
 
-    def test_after_backfill_it_is_acknowledgeable_and_the_repeat_stops(self, kb, fake, capsys):
+    def test_after_backfill_it_is_acknowledgeable_and_the_repeat_stops(self, kb, fake, capsys,
+                                                                       monkeypatch):
         md = _front_matter_only(kb, is_retracted=True)
         client = fake(FakeClient({"W123": _raw_work(is_retracted=True)}))
 
@@ -163,10 +164,13 @@ class TestTheGraduation:
         assert "Retracted (new):      0" in capsys.readouterr().out
 
         # And an un-retraction is now acknowledgeable: OpenAlex reverses its flag, the
-        # human clears it, and the signal stops repeating.
+        # human clears it at the prompt, and the signal stops repeating. A clear is never
+        # `--yes` (#106/#414), so this confirms interactively.
         client._works["W123"] = _raw_work(is_retracted=False)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
         assert run(["openalex-acknowledge-retraction", "--target", str(kb),
-                    "--id", "W123", "--yes"]) == 0
+                    "--id", "W123"]) == 0
         capsys.readouterr()
         assert "is_retracted" not in _records(md)["openalex"]
 

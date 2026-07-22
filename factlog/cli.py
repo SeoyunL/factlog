@@ -6049,8 +6049,11 @@ def cmd_openalex_acknowledge_retraction(args: argparse.Namespace) -> int:
     diverge from what an import writes, where retraction absent *means* not retracted).
     ``is_retracted`` is **not** an identifying field, so no re-import ever errors over it in
     either direction; the clear path exists so a reversed retraction can stop surfacing and
-    the ledger can record that it was reversed. It never opens the ``.md`` (P4): after
-    acknowledgement the ledger is the sole audit record.
+    the ledger can record that it was reversed. But ``--yes`` may only *record* a
+    retraction, never *clear* one (#106, #414): clearing silences a recorded signal, and the
+    un-retraction note is printed for a human to weigh, which ``--yes`` skips. A clear needs
+    an interactive re-run. It never opens the ``.md`` (P4): after acknowledgement the ledger
+    is the sole audit record.
     """
     from factlog.integrations.common.acknowledge import (
         ACK_ERROR,
@@ -6224,6 +6227,35 @@ def cmd_openalex_acknowledge_retraction(args: argparse.Namespace) -> int:
                 "no retraction; nothing to acknowledge."
             )
         return 0
+
+    # #106: a CLEAR (recorded retracted, OpenAlex no longer flags it) may not be confirmed
+    # by `--yes`. Recording a retraction is the loud direction `--yes` may do; clearing one
+    # is the silencing direction, and this project gates the silencing direction on a human
+    # (#93). Under `--yes` nobody reads the un-retraction note printed below, so the clear
+    # is refused. This is knowable only after the fetch.
+    #
+    # Note the argument this does NOT rest on. arXiv gates its clear because
+    # `detect_withdrawal` cannot tell a reversal from a withdrawal sentence it failed to
+    # parse; OpenAlex has no such weakness — `is_retracted` is a structured boolean, so a
+    # `False` really is OpenAlex's current answer. OpenAlex is in fact a known
+    # false-positive source (#51: it flags the Lancet Commission report PubMed does not),
+    # so `True -> False` may well be OpenAlex correcting itself. That is a reason to keep
+    # the *interactive* clear easy — one prompt, no extra ceremony — not a reason to let
+    # `--yes` skip the human: recording wrongly is a nuisance, clearing wrongly means
+    # citing a retracted paper. (#414: the rule was established 2h38m after this command
+    # was written and was never applied back to it, which is why this gate arrived late.)
+    if assume_yes and recorded_is_retracted and not current_is_retracted:
+        print(
+            f"factlog {command}: refusing to clear the retraction recorded for "
+            f"{openalex_id} with --yes. OpenAlex no longer flags it as retracted, and that "
+            "may well be OpenAlex correcting its own false positive — but a recorded "
+            "retraction flipping back is exactly what a human should read the note for, "
+            "and --yes means nobody sees it. Clearing silences a recorded signal, so it "
+            "needs a human: re-run in a terminal without --yes and confirm at the prompt. "
+            "Nothing written.",
+            file=sys.stderr,
+        )
+        return 1
 
     note_source = rf.RefreshCheck(
         openalex_id=openalex_id,
@@ -6966,7 +6998,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true",
         help="skip the confirmation prompt (only ever paired with --id). Required to run "
              "without a terminal; without it a non-interactive run refuses and writes "
-             "nothing.",
+             "nothing. It may record a retraction, never clear one: clearing silences a "
+             "recorded signal and is refused unless a human confirms it interactively.",
     )
     oa_ack.set_defaults(func=cmd_openalex_acknowledge_retraction)
 

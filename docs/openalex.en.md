@@ -59,6 +59,14 @@ OpenAlex specifics:
   OpenAlex flags some works PubMed does not, so the front-matter key is
   `openalex_is_retracted`, never a bare `retracted:`. Acknowledge with
   `factlog openalex-acknowledge-retraction --id <id>`.
+- `--yes` on that command **can record a retraction but never clear one**. Recording
+  makes noise; clearing silences a recorded signal, and recording wrongly is a
+  nuisance while clearing wrongly means citing a retracted paper. `is_retracted` is a
+  structured boolean, so there is no misread sentence to fear as there is for arXiv —
+  but OpenAlex is a known false-positive source, so `true → false` may be a genuine
+  reversal or OpenAlex correcting itself, and only a human reading the note can tell.
+  A clear under `--yes` is refused and nothing is written; re-run in a terminal
+  without `--yes` and confirm at the prompt. arXiv and PubMed follow the same rule.
 - A front-matter-only work (imported before #84) has no ledger to close, so
   acknowledge refuses it and points to `factlog openalex-backfill-provenance`,
   which builds one from front matter (no network, never touches `sources/*.md`).

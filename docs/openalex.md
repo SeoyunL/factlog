@@ -128,13 +128,14 @@ OpenAlex는 저작을 병합하기도 합니다. `W_a` 를 요청했는데 `W_b`
 
 ```bash
 factlog openalex-acknowledge-retraction --id W2741809807
-factlog openalex-acknowledge-retraction --id W2741809807 --yes   # 확인 프롬프트 생략
+factlog openalex-acknowledge-retraction --id W2741809807 --yes   # 확인 프롬프트 생략 (기록만)
 ```
 
 - `--id` (필수) — 단 하나의 OpenAlex work id (`W2741809807` 또는 `openalex.org/W...` URL).
   `--all` 도 와일드카드도 없습니다. 영향 범위는 사람이 고른 id 하나입니다.
 - `--yes` — 확인 프롬프트를 건너뜁니다. 터미널이 아닌 환경에서는 필수이며, 없으면
-  비대화형 실행은 거부하고 아무것도 쓰지 않습니다.
+  비대화형 실행은 거부하고 아무것도 쓰지 않습니다. **철회를 기록할 수는 있어도 해제할
+  수는 없습니다** (#106).
 
 실행할 때마다 **실시간으로** `GET /works/{id}` 를 조회합니다(0 크레딧). 캐시로 기록한
 철회는 거짓일 수 있기 때문입니다 — OpenAlex가 이미 철회를 되돌렸을 수도 있습니다.
@@ -143,6 +144,15 @@ factlog openalex-acknowledge-retraction --id W2741809807 --yes   # 확인 프롬
 
 OpenAlex가 철회를 되돌린 경우 이 명령이 원장의 키를 **제거**해 신호를 멈춥니다.
 원본 `.md` 는 열지 않습니다 — 종결 이후로는 원장이 유일한 감사 기록입니다.
+
+다만 그 **해제는 `--yes` 로 할 수 없습니다** (#106). 기록은 소리를 내는 방향이지만 해제는
+신호를 침묵시키는 방향이고, 잘못 기록하면 성가신 데서 끝나는 반면 잘못 해제하면 철회된
+논문을 인용하게 됩니다. OpenAlex의 `is_retracted` 는 구조화된 불리언이라 arXiv 처럼 문장을
+잘못 읽을 여지는 없지만, OpenAlex는 오탐이 알려진 출처입니다 (#51) — `true → false` 가
+자기 오탐 정정일 수도, 실제 되돌림일 수도 있습니다. 어느 쪽인지는 사람이 노트를 보고
+판단해야 하는데 `--yes` 는 그 노트를 아무도 읽지 않게 합니다. 그래서 `--yes` 아래의 해제는
+거부하고 아무것도 쓰지 않습니다. 해제하려면 `--yes` 없이 터미널에서 다시 실행해 프롬프트에
+확인하세요. arXiv · PubMed 의 종결 명령도 같은 규칙을 따릅니다.
 
 ### `openalex-backfill-provenance`
 
