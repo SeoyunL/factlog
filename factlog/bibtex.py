@@ -12,18 +12,77 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from factlog.export_types import (
+    COLLECTION,
+    INFORMAL,
+    ISSUER,
+    PERIODICAL,
+    SCHOOL,
+    SERIES,
+    resolve_source_type,
+    should_promote_to_journal_type,
+    venue_role,
+)
+
 _LIST_ITEM_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 _KV_RE = re.compile(r"^([A-Za-z0-9_]+):\s*(.*)$")
 
-# Zotero itemType -> BibTeX entry type; anything else falls back to @misc.
+# Work type -> BibTeX entry type; anything else falls back to @misc. Keyed by
+# both vocabularies `resolve_source_type` can return: Zotero's camelCase
+# itemType and OpenAlex's hyphenated work type. The two never collide — where
+# they share a spelling ("book", "report", "preprint") they also share a meaning.
 _ENTRY_TYPES = {
+    # Zotero itemType
     "journalArticle": "article",
+    "magazineArticle": "article",
+    "newspaperArticle": "article",
     "conferencePaper": "inproceedings",
     "book": "book",
     "bookSection": "incollection",
+    "encyclopediaArticle": "incollection",
+    "dictionaryEntry": "incollection",
     "report": "techreport",
     "thesis": "phdthesis",
     "preprint": "misc",
+    # OpenAlex work type (a subset of api_client.WORK_TYPES; see
+    # tests/unit/test_export_entry_types.py, which pins that containment)
+    "article": "article",
+    "review": "article",
+    "book-review": "article",
+    "letter": "article",
+    "editorial": "article",
+    "erratum": "article",
+    "retraction": "article",
+    "data-paper": "article",
+    "conference-paper": "inproceedings",
+    "book-chapter": "incollection",
+    "book-section": "incollection",
+    "reference-entry": "incollection",
+    "dissertation": "phdthesis",
+    "report-component": "techreport",
+    # Standard BibTeX has no @dataset/@software (those are biblatex), so these
+    # stay @misc — but CSL does have them, hence no matching _CSL_TYPES value.
+    "dataset": "misc",
+    "software": "misc",
+}
+
+# Venue role -> the standard-BibTeX field that holds it. Standard BibTeX scopes
+# venue fields tightly: `journal` is defined for @article ALONE, `booktitle` for
+# @inproceedings/@incollection, `institution` for @techreport, `school` for
+# @phdthesis, `howpublished` for @misc. Emitting `journal` on any other entry
+# type is the same defect as the @misc+journal pairing this fixes — the field is
+# dropped, and @inproceedings/@incollection additionally warn on the now-empty
+# `booktitle` they require. `SERIES` goes to `series`, which @book defines: a
+# whole book has no containing venue, but a venue value on one names the series
+# it belongs to, and every role here must *move* the value rather than discard
+# it — a misfiled venue can be recovered by hand, a dropped one cannot.
+_VENUE_FIELDS = {
+    PERIODICAL: "journal",
+    COLLECTION: "booktitle",
+    ISSUER: "institution",
+    SCHOOL: "school",
+    INFORMAL: "howpublished",
+    SERIES: "series",
 }
 
 # Char-by-char LaTeX escaping (one pass, so inserted braces are not re-escaped).
@@ -107,8 +166,13 @@ def is_annotation_source(fm: dict) -> bool:
     return fm.get("source_kind") == "annotations"
 
 
-def _entry_type(item_type: object) -> str:
-    return _ENTRY_TYPES.get(item_type, "misc") if isinstance(item_type, str) else "misc"
+def _entry_type(fm: dict) -> str:
+    source_type = resolve_source_type(fm)
+    if should_promote_to_journal_type(fm, source_type):
+        # PubMed declares no type at all; naming a journal is the only evidence
+        # its front matter gives that the record is a journal article (#384).
+        return "article"
+    return _ENTRY_TYPES.get(source_type, "misc") if source_type else "misc"
 
 
 def _esc(value: str) -> str:
@@ -127,15 +191,17 @@ def to_bibtex(fm: dict, cite_key: str) -> str:
     authors = fm.get("authors")
     if isinstance(authors, list) and authors:
         fields.append(("author", " and ".join(str(a) for a in authors)))
+    entry_type = _entry_type(fm)
+    venue_key = _VENUE_FIELDS[venue_role(fm)]
     for fm_key, bib_key in (("title", "title"), ("year", "year"),
-                            ("journal", "journal"), ("doi", "doi")):
+                            ("journal", venue_key), ("doi", "doi")):
         value = fm.get(fm_key)
-        if value:
+        if value and bib_key:
             fields.append((bib_key, str(value)))
     if fm.get("pmid"):
         fields.append(("note", f"PMID: {fm['pmid']}"))
 
-    lines = [f"@{_entry_type(fm.get('item_type'))}{{{safe_cite_key(cite_key)},"]
+    lines = [f"@{entry_type}{{{safe_cite_key(cite_key)},"]
     for name, value in fields:
         lines.append(f"  {name} = {{{_esc(value)}}},")
     lines.append("}")

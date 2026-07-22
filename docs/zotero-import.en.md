@@ -47,10 +47,118 @@ factlog zotero-import --collection "Systematic Review" --pdf            # biblio
 factlog zotero-import --collection "Systematic Review" --annotations    # + highlights & notes
 ```
 
+## Citation export
+
+`factlog export --bibtex|--csl` emits one entry per source. Each integration
+records the work type under a different front-matter key, so the exporters take
+the **first key that answers** (#384):
+
+| Order | Key | Written by | Example |
+|---|---|---|---|
+| 1 | `item_type` | Zotero | `journalArticle` → `@article` / `article-journal` |
+| 2 | `type` (only when `imported_from: openalex`) | OpenAlex | `conference-paper` → `@inproceedings` / `paper-conference` |
+| 3 | `preprint: true` | arXiv | → `@misc` / `article` |
+| 4 | presence of `journal`, *only if no key above answered* | PubMed | → `@article` / `article-journal` |
+
+Step 4 never overrides a declared type: Zotero copies `publicationTitle` into
+`journal` for every item type (so magazine and newspaper articles would be
+mistyped as journal articles), and an arXiv deposit stays a preprint even once
+`journal` records where it was published (#60). A declared type with no mapping
+keeps the default (`@misc` / `document`) rather than being guessed at.
+
+### Where the venue goes
+
+Standard BibTeX scopes venue fields per entry type — `journal` belongs to
+`@article` alone — so the exporters first decide *what the* `journal` *value is*
+and both follow that one judgement:
+
+| Venue is | Types | BibTeX field | CSL variable |
+|---|---|---|---|
+| a periodical | journal/magazine/newspaper article | `journal` | `container-title` |
+| a containing work | conference paper, book chapter, dictionary/encyclopedia entry | `booktitle` | `container-title` |
+| an issuing body | report | `institution` | `publisher` |
+| a degree-granting school | thesis | `school` | `publisher` |
+| informal | preprint, dataset, software, unmapped | `howpublished` | `container-title` |
+| a series | a whole book | `series` | `collection-title` |
+
+`@inproceedings`/`@incollection` require `booktitle`, so the previous `journal`
+placement both misfiled the venue and triggered `Warning--empty booktitle`.
+
+**No role discards the value.** All six *move* the venue to a differently-named
+field; none deletes it. A whole book has no containing venue, but a value in
+that position names the series the book belongs to, so it goes to
+`series`/`collection-title`. A misfiled value can be recovered by hand; a
+dropped one cannot.
+
+**Why informal venues use CSL `container-title`.** Such a record is CSL-typed
+`article` (a preprint — CSL 1.0.2 has no `preprint` type, and #60 forbids
+retyping a deposit once `journal` records where it landed). Rendering was
+measured first, to see whether it forces the choice. It does not. One preprint
+carrying `Nature 585, 357 (2020)`, rendered with `pandoc 3.10 --citeproc`,
+venue present (Y) or lost (N):
+
+| Variable | chicago | apa | ieee | nature | ama | Total |
+|---|---|---|---|---|---|---|
+| `container-title` | Y | Y | **N** | Y | Y | 4/5 |
+| `publisher` | Y | Y | Y | **N** | Y | 4/5 |
+
+**An exact tie.** IEEE drops `container-title`; Nature drops `publisher` (its
+`type="article"` branch never references it). Preprint status also ties at 4/5
+either way once `genre` is emitted.
+
+Rendering therefore cannot decide it, and the remaining criterion is what the
+value *is*: an arXiv `journal_ref` or a Zotero preprint's `publicationTitle` is
+**a periodical's name, not a publisher's**. `publisher` would be a false
+statement that happens to print; `container-title` is a true one that IEEE
+happens to ignore. It is also what `main` already emitted, so CSL output moves
+less.
+
+**Both remaining losses, stated.** Having chosen `container-title`, **a
+preprint's venue does not render under IEEE.** Had we chosen `publisher`, it
+would have vanished under Nature instead. Neither option is 5/5.
+
+On the BibTeX side `howpublished` is the only venue field `@misc` defines, so it
+stays. The two formats thus use deliberately different field names for this role
+(as they already do for dataset/software). A pandoc BibTeX->CSL round trip
+consequently yields `publisher`, disagreeing with the CSL we emit directly; the
+export we emit is the accurate one, and a lossy third-party conversion is not a
+reason to make it wrong. Classic BibTeX styles (plain/unsrt/alpha) silently drop
+`journal` but render `howpublished`, so the BibTeX side is an improvement.
+
+**`genre: "Preprint"`.** With no CSL `preprint` type, the status travels in
+`genre`. Measured: APA gains `[Preprint]` (omitted without it) and the other
+styles are unchanged — a pure gain. Datasets, software and unmapped types share
+the venue role but are not preprints, so they get no `genre`.
+
+### Effect on existing Zotero KBs
+
+Re-running the export is enough; no migration command. Measured by exporting 13
+Zotero item types on `main` and on this branch and diffing: **12 change in
+BibTeX, 8 in CSL** (`journalArticle` is unchanged in both).
+
+| itemType | BibTeX before → after | CSL before → after |
+|---|---|---|
+| `journalArticle` | unchanged (`@article` / `journal`) | unchanged (`article-journal` / `container-title`) |
+| `magazineArticle` | `@misc` / `journal` → `@article` / `journal` | `document` → `article-magazine` |
+| `newspaperArticle` | `@misc` / `journal` → `@article` / `journal` | `document` → `article-newspaper` |
+| `encyclopediaArticle` | `@misc` / `journal` → `@incollection` / `booktitle` | `document` → `entry-encyclopedia` |
+| `dictionaryEntry` | `@misc` / `journal` → `@incollection` / `booktitle` | `document` → `entry-dictionary` |
+| `conferencePaper` | `journal` → `booktitle` | unchanged (`container-title`) |
+| `bookSection` | `journal` → `booktitle` | unchanged (`container-title`) |
+| `report` | `journal` → `institution` | `container-title` → `publisher` |
+| `thesis` | `journal` → `school` | `container-title` → `publisher` |
+| `book` | `journal` → `series` | `container-title` → `collection-title` |
+| `preprint` | `journal` → `howpublished` | `container-title` kept, `genre` added |
+| `blogPost`, `webpage` | `journal` → `howpublished` | unchanged (`container-title`) |
+
+The four type changes fill mappings that previously fell back to the default.
+The field moves correct entries that carried a field their own type does not
+define — `main` emitted `journal` on `@book`/`@incollection`/`@inproceedings`/
+`@techreport`/`@phdthesis` as well.
+
 ## Further reading
 
 The Korean [Zotero 가져오기](zotero-import.md) covers more than this page does:
 the Local API setup walkthrough, the output format, the shape of the generated
-source file, the `--pdf` and `--annotations` flows in detail, BibTeX export
-(`factlog export --bibtex`), the optional config file, and what is not supported
-yet.
+source file, the `--pdf` and `--annotations` flows in detail, the optional
+config file, and what is not supported yet.
