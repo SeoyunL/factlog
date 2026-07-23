@@ -82,3 +82,53 @@ class TestToBibtex:
     def test_non_ascii_kept(self):
         out = to_bibtex({"title": "제목", "authors": ["김 무성"]}, "k")
         assert "제목" in out and "김 무성" in out
+
+
+class TestIdentifierDigitFolding:
+    """`doi` and the `PMID:` note are folded on the way out (#428).
+
+    The BibTeX twin of `test_csl.py::TestIdentifierDigitFolding`, kept as its own
+    class rather than shared: the two exporters reach the same two folds by
+    separate code paths, and a fix applied to only one of them has to fail
+    somewhere.
+    """
+
+    def test_full_width_doi_prefix_is_folded(self):
+        out = to_bibtex({"doi": "10.１２３４/abc"}, "k")
+        assert "doi = {10.1234/abc}," in out
+
+    def test_full_width_pmid_in_the_note_is_folded(self):
+        out = to_bibtex({"pmid": "１２３４５６７８"}, "k")
+        assert "note = {PMID: 12345678}," in out
+
+    def test_doi_suffix_is_not_folded(self):
+        out = to_bibtex({"doi": "10.１２３４/abc１"}, "k")
+        assert "doi = {10.1234/abc１}," in out
+
+    def test_doi_case_is_preserved(self):
+        # `fold_doi_prefix`, not the lowercasing `normalize_cross_id` join key —
+        # the assertion that separates the two here as it does in the CSL twin.
+        out = to_bibtex({"doi": "10.１３７８/CHEST.128"}, "k")
+        assert "doi = {10.1378/CHEST.128}," in out
+
+    def test_an_unrecognised_wrapper_is_exported_as_stored(self):
+        out = to_bibtex({"doi": "https://doi.org/10.１２３４/abc", "pmid": "pmid:１２３"}, "k")
+        assert "doi = {https://doi.org/10.１２３４/abc}," in out
+        assert "note = {PMID: pmid:１２３}," in out
+
+    def test_field_order_is_unchanged(self):
+        # `doi` was lifted out of the loop it shared with title/year/journal so it
+        # could be folded. Order is part of this module's output, so pin it: an
+        # existing `.bib` must still diff clean.
+        out = to_bibtex(
+            {"authors": ["A B"], "title": "T", "year": "2005", "journal": "Chest",
+             "doi": "10.1/x", "pmid": "163"},
+            "k",
+        )
+        names = [line.split(" = ", 1)[0].strip() for line in out.splitlines()
+                 if " = {" in line]
+        assert names == ["author", "title", "year", "journal", "doi", "note"]
+
+    def test_absent_identifiers_emit_no_field(self):
+        out = to_bibtex({"title": "T"}, "k")
+        assert "doi" not in out and "note" not in out

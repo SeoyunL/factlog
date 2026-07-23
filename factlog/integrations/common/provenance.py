@@ -399,8 +399,8 @@ def excluded_sources_by_id(kb_root: Path | str, id_key: str) -> dict[str, tuple[
     """The papers named by a source that can have no provenance ledger: the front-matter
     *id_key* value mapped to the sorted KB-relative paths of the sources naming it.
 
-    *id_key* is the integration's front-matter identity key (``arxiv_id`` /
-    ``openalex_id``), so a conversion or a hand-placed note that names no paper is silent —
+    *id_key* is the integration's front-matter identity key (``arxiv_id`` / ``openalex_id`` /
+    ``pmid``), so a conversion or a hand-placed note that names no paper is silent —
     a warning that fires on every run for every ingested PDF is how an operator learns to
     skim past the alarm the KB most needs read (#93). A source that *does* name a paper is
     loud: the command that cannot act on it reports it rather than leaving it out of the
@@ -409,13 +409,41 @@ def excluded_sources_by_id(kb_root: Path | str, id_key: str) -> dict[str, tuple[
     Keyed by id (not a flat list) so ``arxiv-acknowledge-withdrawal --id X`` can tell "X is
     not in this KB" from "X is in this KB, in a place that cannot hold a ledger" — the
     second sentence was the first one's lie in #112's measurement.
+
+    **The key is normalized; the stored value is not** (#428). Every ``--id`` caller looks a
+    key up with an id its own CLI has already validated and canonicalised
+    (``normalize_pmid``, ``normalize_arxiv_id(...).base``, ``normalize_work_id``), while a
+    front-matter value keeps the spelling its source wrote (P4). Keying on the raw value made
+    that lookup miss on any legitimate difference of spelling — a full-width ``pmid`` written
+    before #398, a version-pinned ``arxiv_id: 2311.09277v2`` — and the caller then printed
+    "not in this KB" about a paper that is in it: exactly the lie the paragraph above says
+    this function exists to stop telling. Measured on both keys.
+
+    ``normalize_cross_id`` does the normalizing rather than each caller's own validator,
+    because it is the one built to run over hand-editable files — it returns junk unchanged
+    instead of raising, so a single malformed ``arxiv_id:`` cannot abort a whole KB's report.
+    That tolerance is also the limit of the fix, and the limit is worth stating: it repairs a
+    *spelling* of a well-formed id, never a *wrapping* of one. ``pmid: "pmid:123"`` and
+    ``arxiv_id: "https://arxiv.org/abs/2311.09277"`` still fail to match, and an
+    ``openalex_id`` gets only ``.strip()`` — ``normalize_cross_id`` has no ``openalex_id``
+    branch — so a stored ``https://openalex.org/W1`` misses as before (measured). Widening
+    any of those changes the join key too, and belongs with it.
+
+    Two sources whose ids differ only by spelling now collapse into one entry listing both
+    paths. That is the answer the enumerating callers (``backfill``, the refresh and version
+    checks) want as well: they report one row per paper, and those rows were one paper.
     """
+    # Deferred import: `source_writer` imports this module at module level, so naming it at
+    # the top here would close a cycle. Hoisted out of the loop — resolved once per call.
+    from factlog.integrations.common.source_writer import normalize_cross_id
+
     root = Path(kb_root)
     by_id: dict[str, list[str]] = {}
     for path in _partition_sources(root)[1]:
         entry_id = read_scalars(path, (id_key,)).get(id_key)
         if entry_id:
-            by_id.setdefault(entry_id, []).append(path.relative_to(root).as_posix())
+            key = normalize_cross_id(id_key, entry_id)
+            by_id.setdefault(key, []).append(path.relative_to(root).as_posix())
     return {entry_id: tuple(sorted(refs)) for entry_id, refs in by_id.items()}
 
 

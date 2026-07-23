@@ -24,6 +24,8 @@ from factlog.export_types import (
     venue_role,
 )
 from factlog.front_matter_scan import front_matter_block
+from factlog.integrations.common.doi import fold_doi_prefix
+from factlog.integrations.common.pmid import fold_pmid
 
 _LIST_ITEM_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 _KV_RE = re.compile(r"^([A-Za-z0-9_]+):\s*(.*)$")
@@ -239,12 +241,27 @@ def to_bibtex(fm: dict, cite_key: str) -> str:
     entry_type = _entry_type(fm)
     venue_key = _VENUE_FIELDS[venue_role(fm)]
     for fm_key, bib_key in (("title", "title"), ("year", "year"),
-                            ("journal", venue_key), ("doi", "doi")):
+                            ("journal", venue_key)):
         value = fm.get(fm_key)
         if value and bib_key:
             fields.append((bib_key, str(value)))
+    # `doi` leaves the loop it used to share because it is the one field here a
+    # machine resolves rather than a human reads, and it is folded on the way out
+    # (#428) for the reason spelled out in `csl.py`: a full-width `10.１２３４/abc`
+    # in a `.bib` is a DOI no LaTeX tool, publisher pipeline or `doi.org` lookup
+    # can follow. Field order is unchanged — appending here still puts `doi`
+    # after the venue and before the note, so an existing `.bib` diffs clean.
+    #
+    # Only the prefix folds and the case is kept; `csl.py` carries the argument
+    # for `fold_doi_prefix` over the lowercasing join key.
+    if fm.get("doi"):
+        fields.append(("doi", fold_doi_prefix(str(fm["doi"]))))
+    # The PMID rides in `note` because BibTeX defines no field for it, but it is
+    # still an identifier a reader copies into PubMed rather than prose, so the
+    # value folds whole (a PMID has no opaque half). The `PMID: ` label around it
+    # is this module's text; only the value is touched.
     if fm.get("pmid"):
-        fields.append(("note", f"PMID: {fm['pmid']}"))
+        fields.append(("note", f"PMID: {fold_pmid(str(fm['pmid']))}"))
 
     lines = [f"@{entry_type}{{{safe_cite_key(cite_key)},"]
     for name, value in fields:

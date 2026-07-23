@@ -73,10 +73,16 @@ from factlog.text_norm import fold_decimal_digits
 # normalized, and #405 did that at ``normalize_cross_id`` — a derived value, so it
 # collides DOIs already sitting in ``sources/`` too, which no import-boundary fold
 # can. This module's fold is about the **stored** value instead, and the consumer
-# that makes it worth doing is ``csl.py``: it puts the stored DOI straight into
-# exported CSL JSON, where a citation processor cannot resolve a full-width one.
-# That path is reached from the front matter dict alone, so it does not care which
-# integration wrote the file, and the join key never touches it.
+# that made it worth doing is the export: ``csl.py`` (and ``bibtex.py``) puts the
+# stored DOI straight into exported CSL JSON, where a citation processor cannot
+# resolve a full-width one. That path is reached from the front matter dict alone,
+# so it does not care which integration wrote the file, and the join key never
+# touches it.
+#
+# Since #428 both exporters fold what they emit too, which does NOT make this fold
+# redundant — the two cover disjoint gaps. This one cannot reach a value already on
+# disk; theirs cannot reach anything but the export, so a full-width DOI stored here
+# would remain the value every *other* reader of that file sees.
 #
 # ``openalex/refresh.py``'s raw ``!=`` drift compare was originally cited here as a
 # second such consumer. It is not one, measured: a Zotero-written full-width DOI

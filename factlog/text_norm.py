@@ -14,9 +14,15 @@ deliberately disagree. :mod:`factlog.literal_types` **refuses** these characters
 in hand-written literals so the author sees the accident while the front matter
 is still editable (#388). The import boundary
 (:mod:`factlog.integrations.zotero.item_parser`, #398) and the export boundary
-(:mod:`factlog.csl`, #399) **fold** them, because there the odd digit comes from
-an external library or is already in the store, and refusing would only drop a
-value that reads perfectly well. Vocabulary here, policy there.
+(:mod:`factlog.csl`, #399; identifiers in :mod:`factlog.csl` and
+:mod:`factlog.bibtex` too, #428) **fold** them, because there the odd digit comes
+from an external library or is already in the store, and refusing would only drop
+a value that reads perfectly well. Vocabulary here, policy there.
+
+The export boundary reaches this module's fold indirectly for identifiers: what
+counts as a DOI prefix or a PMID is identifier syntax rather than a Unicode fact,
+so those two rules live in :mod:`factlog.integrations.common.doi` and
+:mod:`factlog.integrations.common.pmid`, which call in here for the fold itself.
 
 Both functions key on ``str.isdecimal``, which is EXACTLY the Unicode ``Nd``
 category — the set Python's ``\\d`` matches. That equality is the whole reason

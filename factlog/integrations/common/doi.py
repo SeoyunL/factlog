@@ -9,8 +9,8 @@ registrant code in ``10.<registrant>`` is a decimal number, so ``10.１２３４
 *spelling* of ``10.1234`` and both name one registrant. The suffix is an opaque
 string, where respelling a character would invent a different identifier.
 
-Two call sites need that fold and they are not the same kind of site, which is
-why the grammar lives here rather than at either of them:
+Three kinds of call site need that fold, which is why the grammar lives here
+rather than at any one of them:
 
 - :func:`~factlog.integrations.common.source_writer.normalize_cross_id` folds a
   **derived comparison key** (#405), additionally lowercasing it because DOIs are
@@ -18,6 +18,11 @@ why the grammar lives here rather than at either of them:
 - :mod:`factlog.integrations.zotero.item_parser` folds the **stored value** at
   the import boundary (#420), on both of its independent DOI paths, and does not
   lowercase: a stored value keeps the case the library spelled.
+- :mod:`factlog.csl` and :mod:`factlog.bibtex` fold the **exported value** at the
+  export boundary (#428), and do not lowercase either, for that same reason. The
+  import fold does not make this one redundant: it repairs what a *new* import
+  writes, while an export reads whatever is on disk — including DOIs stored
+  before #420 and files edited by hand.
 
 Before #420 the grammar sat privately in ``source_writer``; a second copy at the
 import boundary would have been exactly the duplication #410 removed elsewhere,
