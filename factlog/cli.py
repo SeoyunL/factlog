@@ -884,9 +884,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     # `factlog use` on a path that will soon vanish would be wrong. Tell them why
     # it was skipped and how to opt in instead (#461).
     if is_temp and not active_kb_is_usable(current):
-        print(f"factlog init: active KB left unchanged")
+        print("factlog init: active KB left unchanged")
         print(f"  {target} is under a temporary directory, so it was NOT adopted automatically.")
-        print(f"  A temp KB can vanish and would then silently retarget your commands (#461).")
+        print("  A temp KB can vanish and would then silently retarget your commands (#461).")
         print(f"  To adopt it anyway: factlog init --target {target} --activate")
         print(
             f"factlog init: warning — {target} is under a temporary directory and was not adopted; "
