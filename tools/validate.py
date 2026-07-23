@@ -18,9 +18,13 @@ from common import FACT_HEADER, KNOWN_STATUSES, source_files
 # module is run as a script from tools/, so ``factlog`` is not importable before
 # that line. Reordering these two breaks `python tools/validate.py`.
 from factlog.front_matter_scan import (  # noqa: E402
+    FRONT_MATTER_NO_OPENING_FENCE,
     FRONT_MATTER_UNCLOSED,
     FRONT_MATTER_UNSCANNED,
     front_matter_absence,
+)
+from factlog.integrations.common.source_writer import (  # noqa: E402
+    IDENTITY_KEYS_BY_SOURCE,
 )
 
 # An unregistered status is an *error* here, not a warning — so this set drifting
@@ -40,6 +44,62 @@ FRONT_MATTER_CONSEQUENCE = (
     "the source reads as not yet imported, so it drops out of de-duplication and "
     "a re-import writes a duplicate .md instead of updating this one"
 )
+
+# The far side of #422: a source whose *opening* fence a human deleted, not its
+# closing one. That reads as ``FRONT_MATTER_NO_OPENING_FENCE`` — the same reason an
+# ingest conversion (HTML provenance comment) or a hand-written note carries, which
+# is the ordinary majority of a source tree and must not be warned on (measured: in
+# a real KB every source read as no-opening-fence). What sets the damaged file apart
+# is its first line. Each writer emits ``---`` and then its integration's identity
+# key (``IDENTITY_KEYS_BY_SOURCE``: ``arxiv_id``/``pmid``/``openalex_id``/
+# ``zotero_key``), so once the ``---`` is gone the file opens with, e.g., ``arxiv_id:``
+# at column 0 — a line no conversion header (``<!--``) or prose note (``#``) begins
+# with. That is the signal, reused from the writers' own map so it cannot drift from
+# what they emit.
+#
+# Reused, not restated: this regex is built from ``IDENTITY_KEYS_BY_SOURCE`` at import,
+# so a fifth integration's key is covered here the day it is added there.
+_OPENING_IDENTITY_KEY_RE = re.compile(
+    r"^(" + "|".join(re.escape(k) for k in sorted(IDENTITY_KEYS_BY_SOURCE.values())) + r"):"
+)
+
+# How far to read while looking for the first non-empty line. The identity key is
+# line 1 of a rendered source, so the only way it sits past this is a file that opens
+# with kilobytes of blank lines — not a real source. Bounded so a pathological file
+# cannot pull its whole body through the codec here (the reader made the same trade,
+# front_matter_scan).
+_IDENTITY_SCAN_CHARS = 4096
+
+
+def _opening_identity_key(path: Path) -> str | None:
+    """The importer identity key a file *opens* with, or None.
+
+    Answered only for a file that already has no opening fence, to tell a source whose
+    ``---`` a human deleted from the ordinary no-front-matter file it otherwise looks
+    exactly like. Reads the **first non-empty line** — not the first line — because
+    removing only the three dashes can leave the blank line that followed them behind
+    (measured: ``\\n`` after ``---`` survives a fence deletion), and a first-line test
+    would then read the blank and miss the key.
+
+    An observation, not a verdict (following #422/#430): a hand-written note that
+    happens to open with ``pmid:`` answers the same way. That is a false positive, but
+    the caller only *warns* — the exit code does not move — so the cost is a line of
+    output against catching the real deletion. The converse is a gap, not a lie: a
+    source whose opening fence was removed in a way that does not leave an identity key
+    first is not caught here. No writer emits such a shape today (every one puts its
+    identity key first), so the gap is empty in practice and named rather than hidden.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            head = fh.read(_IDENTITY_SCAN_CHARS)
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in head.splitlines():
+        if not line.strip():
+            continue
+        match = _OPENING_IDENTITY_KEY_RE.match(line)
+        return match.group(1) if match else None
+    return None
 
 
 def read(path: Path) -> str:
@@ -272,18 +332,29 @@ def validate(root: Path) -> list[str]:
     return errors
 
 
-def front_matter_warnings(root: Path) -> list[str]:
-    """Sources whose front matter opens and whose closing fence is not found (#422).
+def front_matter_warnings(root: Path) -> list[tuple[str, str]]:
+    """Sources whose front matter a human damaged, as ``(tag, message)`` pairs.
 
-    A warning, not an error. The reader treats such a file as carrying no front
-    matter at all, and that choice is right — trusting an unclosed block let a
-    user's own note hand its body lines to the writers' caches as a paper's
-    identity, which fails silently (#409). But the cost lands the other way: a
-    tool-written source whose fence a human deleted stops being recognised as
-    imported, and the operator finds out when a ``…-2.md`` appears next to it.
+    Two damage shapes, one per grep tag, both fail-closed to the same silent cost.
+    The reader treats either as carrying no front matter at all, and that choice is
+    right — trusting a block it cannot delimit let a user's own note hand its body
+    lines to the writers' caches as a paper's identity, which fails silently (#409).
+    But the cost lands the other way: a tool-written source whose fence a human
+    deleted stops being recognised as imported, and the operator finds out when a
+    ``…-2.md`` appears next to it.
+
+    * ``no_closing_fence`` — the block opens with ``---`` and no closing fence is
+      found (#422). Reported for both reasons that shape produces: an unclosed block
+      and one whose fence sits past the search cap.
+    * ``no_opening_fence`` — the block's *opening* ``---`` is gone but its first line
+      is still an importer identity key, the shape a source takes when a human deletes
+      the opening fence (#445). Distinguished from the ordinary no-front-matter file
+      by :func:`_opening_identity_key`, because a bare missing opening fence is the
+      normal shape of an ingest conversion and a hand-written note.
+
     Nothing in the KB is invalid meanwhile — the facts, the refs and the schema all
-    still hold — so this cannot fail the run without breaking every KB that has one
-    such file. It is reported so the cost is visible *before* the duplicate, which
+    still hold — so neither can fail the run without breaking every KB that has one
+    such file. They are reported so the cost is visible *before* the duplicate, which
     is the whole of what the fail-closed trade was missing.
 
     The file set is ``common.source_files``, the single enumeration point every
@@ -300,14 +371,25 @@ def front_matter_warnings(root: Path) -> list[str]:
     writers put a block in one, so scanning them would report on files that were
     never meant to carry one.
     """
-    warnings: list[str] = []
+    warnings: list[tuple[str, str]] = []
     for path in source_files(root):
         if path.suffix.lower() != ".md":
             continue
         reason = front_matter_absence(path)
+        rel = path.relative_to(root).as_posix()
         if reason in WARNED_FRONT_MATTER_ABSENCES:
-            rel = path.relative_to(root).as_posix()
-            warnings.append(f"{rel}: {reason} — {FRONT_MATTER_CONSEQUENCE}")
+            warnings.append(
+                ("no_closing_fence", f"{rel}: {reason} — {FRONT_MATTER_CONSEQUENCE}")
+            )
+        elif reason == FRONT_MATTER_NO_OPENING_FENCE:
+            key = _opening_identity_key(path)
+            if key is not None:
+                warnings.append((
+                    "no_opening_fence",
+                    f"{rel}: {reason}, but its first line is the importer identity "
+                    f"key {key!r}, the shape of a source whose opening --- was "
+                    f"deleted — {FRONT_MATTER_CONSEQUENCE}",
+                ))
     return warnings
 
 
@@ -328,11 +410,12 @@ def main() -> int:
     # Printed on both outcomes and ahead of the verdict, so a failing run does not
     # swallow them and a passing one does not bury them under its own last line.
     # They never move the exit code: see front_matter_warnings for why.
-    for warning in front_matter_warnings(root):
-        # ``no_closing_fence`` and not ``unclosed``: one of the two reasons is that
-        # the search stopped, which is not the same claim. A tag that holds for
-        # both is greppable without asserting the stronger one.
-        print(f"warning: no_closing_fence: {warning}")
+    for tag, warning in front_matter_warnings(root):
+        # The tag is what a script greps for, and each is chosen not to assert more
+        # than the reader knows. ``no_closing_fence`` holds for both closing-fence
+        # reasons (unclosed and search-stopped), and ``no_opening_fence`` names the
+        # deleted-opening-fence shape without calling it a verdict on the file's owner.
+        print(f"warning: {tag}: {warning}")
     if errors:
         print("Fact sync validation failed:")
         for error in errors:
