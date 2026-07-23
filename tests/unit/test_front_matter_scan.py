@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for how much of a source ``common/front_matter`` reads (#409).
 
-The reader used to take a fixed 2048-byte window, which a long ``authors:`` line
+The reader used to take a fixed 2048-character window, which a long ``authors:`` line
 pushed the later keys straight out of: 50 authors already cost ``imported_from``
 and 60 cost ``year`` and ``journal``. The identity keys survived because the
 writers emit them first, so the damage was invisible from the ID-keyed paths and
@@ -56,10 +56,24 @@ from factlog.integrations.zotero.source_writer import SourceWriter as ZoteroSour
 N_AUTHORS = 200
 
 # The window the reader used to take. Kept explicit: a fixture whose block fits
-# inside it would pass even against the unfixed reader.
-OLD_SCAN_BYTES = 2048
+# inside it would pass even against the unfixed reader. ``fh.read(2048)`` is a text
+# handle, so the window is 2048 *characters*, not bytes — the guard below counts
+# accordingly.
+OLD_SCAN_CHARS = 2048
 
 _AUTHORS = tuple(f"Author {i} of a large collaboration" for i in range(N_AUTHORS))
+
+
+def _exceeds_old_window(block: str) -> bool:
+    """True when *block* is longer than the reader's old ``fh.read(2048)`` window.
+
+    Counts characters, not bytes: the old reader read from a text handle, so its
+    2048 was a character count. A block can overrun 2048 *bytes* while still fitting
+    inside the 2048-*character* window the reader actually took — a CJK ``authors:``
+    line is exactly that — so a byte count would wrongly certify such a block as
+    stressing the window when the old reader would have swallowed it whole.
+    """
+    return len(block) > OLD_SCAN_CHARS
 
 
 # --------------------------------------------------------------------------
@@ -168,10 +182,26 @@ def source(tmp_path):
         path.write_text(text, encoding="utf-8")
         # Guards the guard: a block inside the old window would pass unfixed.
         block = text.split("---")[1]
-        assert len(block.encode()) > OLD_SCAN_BYTES, f"{kind} block fits the old window"
+        assert _exceeds_old_window(block), f"{kind} block fits the old window"
         return path
 
     return _write
+
+
+def test_the_old_window_guard_counts_characters_not_bytes():
+    """Pin ``_exceeds_old_window`` to the character count the reader actually used.
+
+    A block of 2000 CJK characters is 6000 UTF-8 bytes: it overruns 2048 *bytes*
+    but sits inside the 2048-*character* window ``fh.read(2048)`` took, so the old
+    reader would have read it whole and it does *not* stress that window. The guard
+    must say so — counting bytes would wrongly certify it as oversized. Reverting
+    ``_exceeds_old_window`` to ``len(block.encode())`` makes this fail, which is
+    what keeps the guard honest once the 200-author ASCII fixtures (bytes == chars)
+    can no longer tell the two measures apart.
+    """
+    block = "가" * 2000
+    assert len(block) <= OLD_SCAN_CHARS < len(block.encode())
+    assert not _exceeds_old_window(block)
 
 
 class TestReadsToTheClosingFence:
@@ -179,7 +209,7 @@ class TestReadsToTheClosingFence:
     def test_every_emitted_key_survives_a_large_collaboration(self, kind, source):
         """No key the writer emitted falls off the end of the read.
 
-        The old window cut at a byte count, so which keys survived depended on
+        The old window cut at a character count, so which keys survived depended on
         where the writer happened to put its ``authors:`` line. Asked key by key
         against the writer's own output, nothing is left to that accident.
         """
@@ -373,7 +403,7 @@ class TestUnclosedBlockCarriesNothing:
 
         Widening the read made a body `source_kind: annotations` visible to
         Zotero's `ANNOTATION_MARKER_RE`, which reads the whole file as carrying
-        nothing — while the same file with that line inside the old 2048-byte
+        nothing — while the same file with that line inside the old 2048-character
         window read as nothing before the change too. The answer was decided by an
         offset. It is now decided by the missing fence: nothing, either way.
         """

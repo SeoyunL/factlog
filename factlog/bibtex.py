@@ -193,8 +193,8 @@ def read_front_matter(path: Path | str) -> dict:
     takes a block over ``FRONT_MATTER_MAX_CHARS`` — **characters, not bytes**: the
     read is a text handle, so ``fh.read`` yields characters and ``len(head)`` counts
     them, which is what the ``_CHARS`` in the name says. The equivalent author count
-    is therefore not a constant but ``cap / chars-per-author``, measured at 22,795
-    authors for 46-character names, 29,959 for 35-character, 65,535 for
+    is therefore not a constant but the ``cap // chars-per-author`` quotient: 22,795
+    authors for 46-character names, 29,959 for 35-character, 65,536 for
     16-character. Those three are ASCII, where characters and bytes coincide; a
     35-character CJK name costs 81 bytes and still thresholds at 29,959 authors —
     identical to the 35-character ASCII case, since the count is of characters — where

@@ -156,7 +156,7 @@ def front_matter_absence(path: Path | str) -> str | None:
 def front_matter_block(path: Path | str) -> str | None:
     """The text between the opening ``---`` and the closing fence, or None.
 
-    Reads to the block's **closing fence**, not to a fixed byte count. A fixed
+    Reads to the block's **closing fence**, not to a fixed character count. A fixed
     window truncated the block mid-way and silently dropped every key past it, and
     both readers were measured losing real metadata to it: the arXiv writer emits
     one long ``authors:`` line ahead of ``year``/``journal``/``imported_from``, so
@@ -184,7 +184,7 @@ def front_matter_block(path: Path | str) -> str | None:
       (``by_identity``/``by_cross_id``/``match_rows`` in
       ``common/source_writer``). An unrelated note then matches a real paper and
       the import is skipped or paired wrongly. Reading to the cap rather than to
-      2048 bytes widened how much body could be absorbed, but the defect predates
+      2048 characters widened how much body could be absorbed, but the defect predates
       that — the fixed window only made it smaller, and where the offending line
       sat in the body decided whether it appeared at all (#409).
     * ``export --bibtex`` used to do the same and emit the result. A reading note
