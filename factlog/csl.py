@@ -24,6 +24,8 @@ from factlog.export_types import (
     should_promote_to_journal_type,
     venue_role,
 )
+from factlog.integrations.common.doi import fold_doi_prefix
+from factlog.integrations.common.pmid import fold_pmid
 from factlog.text_norm import fold_decimal_digits
 
 # Venue role -> CSL variable, resolved from the same `venue_role` judgement the
@@ -176,8 +178,31 @@ def to_csl(fm: dict, item_id: str) -> dict:
     if is_preprint(fm):
         item["genre"] = "Preprint"
 
+    # Identifier fields are folded on the way out (#428). A CSL `DOI` is what a
+    # citation processor turns into `https://doi.org/<DOI>`, and a full-width
+    # `10.１２３４/abc` resolves to nothing — the exact leak #420 named when it
+    # folded the DOI the Zotero parser *stores*. That fold repairs new imports
+    # only; a value written before it, or typed into a file by hand, still
+    # arrives here full-width, so this is the boundary that has to be sure.
+    #
+    # This is not a departure from P4, which governs what may be written back
+    # into `sources/`: nothing here writes. An export is a derived artifact, and
+    # this module already folds one — `issued` comes from `fold_decimal_digits`
+    # over the raw `year` (#399) — so "the export mirrors the file byte for
+    # byte" was never true. The identifiers now obey the rule the year already
+    # did, which is also the rule `text_norm` states for this boundary.
+    #
+    # Each fold declines on a value it does not recognise (a `doi.org` URL, a
+    # `pmid:` label), deliberately: a wrapped identifier is exported as stored
+    # rather than rewritten into a confident-looking wrong one. So this narrows
+    # the leak; it does not promise ASCII digits in either field.
     if fm.get("doi"):
-        item["DOI"] = str(fm["doi"])
+        # `fold_doi_prefix`, not `normalize_cross_id`. Both leave the suffix
+        # opaque, but the join key also lowercases, and the case is the
+        # registrant's to spell in a value going out to a bibliography. DOIs
+        # resolve case-insensitively, so lowercasing would buy nothing here and
+        # would flatten `10.1378/CHEST.128`.
+        item["DOI"] = fold_doi_prefix(str(fm["doi"]))
     if fm.get("pmid"):
-        item["PMID"] = str(fm["pmid"])
+        item["PMID"] = fold_pmid(str(fm["pmid"]))
     return item

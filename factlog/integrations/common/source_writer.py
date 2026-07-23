@@ -58,6 +58,7 @@ from factlog.integrations.common.merge_candidates import (
     read_candidates,
     write_candidates,
 )
+from factlog.integrations.common.pmid import fold_pmid
 from factlog.integrations.common.provenance import (
     Provenance,
     ProvenanceConflict,
@@ -68,7 +69,6 @@ from factlog.integrations.common.provenance import (
     sidecar_path,
     write_provenance,
 )
-from factlog.text_norm import fold_decimal_digits
 
 # Byte budgets for the filename (most filesystems cap a name at 255 bytes).
 # Author and title are individually bounded, then the whole stem is capped with
@@ -257,14 +257,6 @@ def _normalize_doi(value: str) -> str:
     return fold_doi_prefix(value.lower())
 
 
-# A PMID, ASCII-spelled: decimal digits and nothing else. ``\d`` would behave
-# identically here — measured — because this is matched against an already-folded
-# value, which by construction holds no ``Nd`` character outside ``[0-9]``. The
-# ASCII class is written anyway, so the guard states its own intent instead of
-# resting on what the caller happens to have done first.
-_PMID_RE = re.compile(r"[0-9]+")
-
-
 def _normalize_pmid(value: str) -> str:
     """Comparison form of a PMID: decimal digits folded to ASCII.
 
@@ -274,14 +266,15 @@ def _normalize_pmid(value: str) -> str:
     Unlike a DOI there is **no opaque half**: nothing here can be respelled into a
     different identifier, so the whole value folds rather than a leading part of it.
 
-    Folded only when the folded value is entirely ASCII digits; anything else (a
-    ``pmid:`` label or a URL left in a hand-edited file, plain junk) is returned
-    unchanged, for the same reason the DOI path refuses to rewrite a head it does
-    not recognise: a value this function does not understand must fail to match
-    rather than be quietly rewritten into something that might.
+    The fold, and the condition under which it declines to apply, live in
+    :func:`~factlog.integrations.common.pmid.fold_pmid`, which the export boundary
+    folds a *stored* PMID with too (#428); keeping one copy is why the two cannot
+    drift apart on when the fold gives up. This function adds nothing of its own —
+    a PMID has no case to normalize, unlike the DOI key one line up — and exists
+    to name the comparison-form role at the point :func:`normalize_cross_id` uses
+    it.
     """
-    folded = fold_decimal_digits(value)
-    return folded if _PMID_RE.fullmatch(folded) else value
+    return fold_pmid(value)
 
 
 def normalize_cross_id(kind: str, value: str) -> str:

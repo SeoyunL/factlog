@@ -116,3 +116,65 @@ class TestYearDigitFolding:
 
     def test_first_four_digit_run_wins(self):
         assert to_csl({"year": "１２３４５"}, "k")["issued"] == {"date-parts": [[1234]]}
+
+
+class TestIdentifierDigitFolding:
+    """`DOI` and `PMID` are folded on the way out (#428).
+
+    Separate from `TestYearDigitFolding` because it is a separate decision: the
+    year fold (#399) reads a human-facing date, these read machine-resolvable
+    identifiers, and each obeys a different rule about how much of the value may
+    be respelled.
+    """
+
+    def test_full_width_doi_prefix_is_folded(self):
+        # The leak this closes: a citation processor renders `DOI` as
+        # `https://doi.org/<DOI>`, and the full-width form resolves to nothing.
+        assert to_csl({"doi": "10.１２３４/abc"}, "k")["DOI"] == "10.1234/abc"
+
+    def test_full_width_pmid_is_folded(self):
+        assert to_csl({"pmid": "１２３４５６７８"}, "k")["PMID"] == "12345678"
+
+    def test_other_decimal_scripts_fold_too(self):
+        # `Nd` is wider than the full-width forms, and NFKC would leave these be.
+        assert to_csl({"doi": "10.٢٠٢٠/abc"}, "k")["DOI"] == "10.2020/abc"
+        assert to_csl({"pmid": "२३४"}, "k")["PMID"] == "234"
+
+    def test_ascii_identifiers_are_untouched(self):
+        item = to_csl({"doi": "10.1/x", "pmid": "163"}, "k")
+        assert item["DOI"] == "10.1/x" and item["PMID"] == "163"
+
+    def test_doi_suffix_is_not_folded(self):
+        # The prefix/suffix asymmetry survives the export. A suffix is opaque, so
+        # respelling a digit in it would name a different paper. This is the test
+        # that fails if the export reaches for a whole-value fold.
+        assert to_csl({"doi": "10.１２３４/abc１"}, "k")["DOI"] == "10.1234/abc１"
+
+    def test_doi_case_is_preserved(self):
+        # The export folds with `fold_doi_prefix`, NOT with the `normalize_cross_id`
+        # join key, which also lowercases. Both would pass every other test in this
+        # class; this is the one that separates them. A DOI resolves
+        # case-insensitively, so lowercasing gains nothing and loses the
+        # registrant's spelling in a rendered bibliography.
+        assert to_csl({"doi": "10.１３７８/CHEST.128"}, "k")["DOI"] == "10.1378/CHEST.128"
+
+    def test_an_unrecognised_wrapper_is_exported_as_stored(self):
+        # Both folds decline on a value they cannot parse rather than rewriting it
+        # into something that merely looks canonical, so this module does NOT
+        # promise ASCII digits in either field — it narrows the leak, and the
+        # docstring says so. A resolver URL or a `pmid:` label left in a
+        # hand-edited file comes out exactly as the file spelled it.
+        assert to_csl({"doi": "https://doi.org/10.１２３４/abc"}, "k")["DOI"] == \
+            "https://doi.org/10.１２３４/abc"
+        assert to_csl({"pmid": "pmid:１２３"}, "k")["PMID"] == "pmid:１２３"
+
+    def test_a_half_folded_pmid_is_never_emitted(self):
+        # `fold_pmid` folds the whole string first and then checks it; on a miss it
+        # returns the ORIGINAL. Emitting `123abc` here would be the quiet rewrite
+        # both folds exist to refuse.
+        assert to_csl({"pmid": "１２３abc"}, "k")["PMID"] == "１２３abc"
+
+    def test_absent_identifiers_stay_absent(self):
+        # The fold sits inside the truthiness guard; it must not conjure a field.
+        item = to_csl({"title": "T"}, "k")
+        assert "DOI" not in item and "PMID" not in item
