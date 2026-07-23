@@ -184,7 +184,7 @@ def front_matter_block(path: Path | str) -> str | None:
       (``by_identity``/``by_cross_id``/``match_rows`` in
       ``common/source_writer``). An unrelated note then matches a real paper and
       the import is skipped or paired wrongly. Reading to the cap rather than to
-      2048 bytes widened how much body could be absorbed, but the defect predates
+      2048 characters widened how much body could be absorbed, but the defect predates
       that — the fixed window only made it smaller, and where the offending line
       sat in the body decided whether it appeared at all (#409).
     * ``export --bibtex`` used to do the same and emit the result. A reading note
