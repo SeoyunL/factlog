@@ -970,27 +970,33 @@ and non-destructive, nothing downstream will flag the mistake.
    the CLI offers. Read the names it prints; do not assume the list is complete,
    and never assume a name absent from it does not exist.
 
-   **The three selectors are validated unequally, and misreading this is how you
-   import the wrong slice:**
+   **All three selectors are validated the same way (#453): a value the library
+   does not hold is a hard error (exit 1), not a silent import of nothing.**
 
-   - `--collection` — **validated.** An unknown name is an error naming the known
-     collections. Two further failures are possible and they do **not** list
-     anything: `collection 'x' is ambiguous (N matches)` when several collections
-     share the name, and `... is ambiguous by case` when they differ only in
-     case. Neither tells you which to pick, so there is no deterministic next
-     step — take the ambiguity to the human and let them name the collection.
-   - `--tag` — **not validated.** An unknown tag is not an error: it returns 0
-     items and exits 0, exactly like a tag that exists but is empty. So "0 items"
-     distinguishes nothing, and a quiet success here is not evidence.
-   - `--items` — **not validated either.** Keys are fetched by lookup, so an
-     unknown key is simply absent from the result rather than reported. A run that
-     imports fewer records than the keys you passed has silently dropped some;
-     compare the counts yourself.
+   - `--collection` — an unknown name exits 1 and names the collections that do
+     exist (up to 20, then `... (N more)`). Two further failures list nothing:
+     `collection 'x' is ambiguous (N matches)` when several collections share the
+     name, and `... is ambiguous by case` when they differ only in case. Neither
+     tells you which to pick, so there is no deterministic next step — take the
+     ambiguity to the human and let them name the collection.
+   - `--tag` — an unknown tag exits 1 and names the available tags under the same
+     20-name cap. Under `--porcelain` a hard failure writes nothing to stdout and
+     still exits 1, so a typo can never read back as a successful "imported 0".
+   - `--items` — an unknown key exits 1, naming every key that did not resolve.
+     `--items` is all-or-nothing: one bad key stops the whole batch, so the valid
+     keys alongside it are not imported either.
 
-   Consequently a successful `--collection` dry-run never proves the string was
-   not *also* a tag, and a 0-item `--tag` run never proves it was not a tag. **In
-   every one of these cases the result is inconclusive, which is precisely why the
-   next step is a question and not a guess.**
+   Read a *successful* run carefully, though. A `--tag` that exits 0 with 0 items
+   means the tag exists and is currently empty — a real answer, not a lookup
+   failure; do not report it as "tag not found". An `--items` key naming a PDF
+   attachment or a note likewise resolves to 0 items at exit 0: the key exists but
+   is not a bibliographic item (`1 requested` alongside `0 item(s)`). Neither is
+   an error.
+
+   A selector that resolves proves only that *that* selector matches. A
+   successful `--collection` dry-run never proves the string was not *also* a tag.
+   Resolving is not disambiguating, **which is precisely why the next step is a
+   question and not a guess.**
 
 2. **Ask the human which selector they meant**, showing what you found — the
    collection names the CLI reported, and whether the string matched one. One
