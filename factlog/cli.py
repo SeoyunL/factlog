@@ -762,21 +762,70 @@ def active_kb_is_usable(current: str | None) -> bool:
     return Path(current).is_dir()
 
 
-def init_adopts_target(current: str | None, target, activate: bool = False) -> bool:
+def target_under_tempdir(target) -> bool:
+    """Does `target` resolve to a temporary directory, or below one?
+
+    True when the resolved path equals or lives under any of the process temp
+    roots — ``tempfile.gettempdir()``, ``$TMPDIR``, ``/tmp``, ``/var/tmp`` — which
+    is where pytest basetemps, `mktemp -d`, and scratch KBs land. The comparison
+    resolves both sides so macOS's ``/tmp`` -> ``/private/tmp`` (and ``$TMPDIR``'s
+    ``/var/folders/...`` -> ``/private/var/folders/...``) symlinks don't defeat the
+    containment check.
+
+    Pure so the adoption guard can be pinned without running the CLI (#461).
+    """
+    import os
+    import tempfile
+    from pathlib import Path
+
+    try:
+        resolved = Path(target).expanduser().resolve()
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+    roots: list[str] = [tempfile.gettempdir()]
+    env = os.environ.get("TMPDIR")
+    if env:
+        roots.append(env)
+    roots.extend(("/tmp", "/var/tmp"))
+
+    for root in roots:
+        try:
+            base = Path(root).expanduser().resolve()
+        except (OSError, ValueError, RuntimeError):
+            continue
+        if resolved == base or base in resolved.parents:
+            return True
+    return False
+
+
+def init_adopts_target(
+    current: str | None, target, activate: bool = False, target_is_temp: bool = False
+) -> bool:
     """Should `init` make `target` the active KB?
 
-    Yes when nothing usable is configured (the first-run convenience), when the
-    target already IS the active KB (re-init is a no-op), or when the user asked
-    for it with --activate. Otherwise NO: scaffolding a KB must not silently
+    Yes when the user asked for it with --activate, when the target already IS the
+    active KB (re-init is a no-op), or when nothing usable is configured — the
+    first-run convenience. Otherwise NO: scaffolding a KB must not silently
     retarget accept/reject/amend/sync at it (#210).
 
-    Pure so it can be pinned without running the CLI.
+    The one exception carved out of the first-run convenience is `target_is_temp`:
+    a scratch KB under a temporary directory can vanish and would silently
+    retarget every mutating command at a dead path, so it is refused unless the
+    user opts in with --activate (#461). A re-init of a temp KB that is ALREADY
+    the active one is still a no-op adoption, not a refusal.
+
+    `target_is_temp` defaults False so existing callers are unchanged; cmd_init
+    computes it with `target_under_tempdir`. Pure so it can be pinned without
+    running the CLI.
     """
     if activate:
         return True
-    if not active_kb_is_usable(current):
+    if current == str(target):
         return True
-    return current == str(target)
+    if not active_kb_is_usable(current):
+        return not target_is_temp
+    return False
 
 
 def setup_active_kb_action(previous: str | None, target) -> str:
