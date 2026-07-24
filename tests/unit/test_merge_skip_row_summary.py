@@ -109,6 +109,37 @@ class TestSkipRowSummary:
         # The reported path is the NFC form, matching what dedup/candidates.csv use.
         assert f"'{nfc}'" in lines[0]
 
+    def test_hint_example_is_the_basename_not_the_rejected_path(self, tmp_path, capsys):
+        """The hint tells the person where to PUT the file, so its example must
+        be 'sources/<basename>'.  Echoing the rejected path back would advise
+        'like sources/sub/deep/x.md' for a row that just failed on exactly that
+        path -- instructions that read as advice while pointing at the problem.
+
+        Top-level paths cannot see this: 'sources/gone.md' is its own basename.
+        The assertion quotes the hint clause whole rather than just its example,
+        because this is the non-strict line and its only other guard is the
+        closing "')" that test_singular_and_plural_counts_in_one_run anchors the
+        count suffix to -- punctuation a gutted wording keeps.  Pinning the
+        clause on BOTH sides of `if show_counts:` is what stops the two branches
+        from drifting apart in either direction (#494)."""
+        root = _root_with_source(tmp_path)
+        rows = [
+            _row("A", "rel", "B", "sources/sub/deep/x.md"),
+            _row("C", "rel", "D", "sources/sub/deep/x.md#sec1"),
+        ]
+        mc.normalize_rows(root, rows)
+        lines = _skip_lines(capsys)
+        assert len(lines) == 1
+        # What was rejected: the full path, anchor stripped by the fold.
+        assert "source 'sources/sub/deep/x.md' not found" in lines[0]
+        assert "(2 rows)" in lines[0]
+        # What to do about it: the basename under a top-level sources/, in a
+        # clause pinned verbatim from the space that separates it onwards.
+        assert (
+            "in sources/ (expected a sources/- or runs/sources/-prefixed path"
+            " like 'sources/x.md')"
+        ) in lines[0]
+
     def test_line_order_is_independent_of_input_order(self, tmp_path, capsys):
         root = _root_with_source(tmp_path)
         forward = _missing_rows()
@@ -164,7 +195,40 @@ class TestSkipRowSummary:
         # Dropping the suffix must not leave the space that preceded it.
         assert lines[0].rstrip() == lines[0]
         # Dropping the suffix must not take the path or the diagnosis with it.
-        # Narrowly these two only: the hint clause that follows them is not
-        # pinned by any test (a pre-existing #492 gap, out of scope here).
+        # Narrowly these two only -- the hint clause that follows them is held
+        # elsewhere, verbatim on both sides of the show_counts branch:
+        # test_strict_line_keeps_the_whole_correction_hint on this strict line,
+        # test_hint_example_is_the_basename_not_the_rejected_path on the
+        # non-strict one (where a nested path also pins the example to the
+        # basename).  test_singular_and_plural_counts_in_one_run additionally
+        # pins the clause's closing "')" as the anchor the suffix attaches to.
         assert "sources/gone.md" in lines[0]
         assert "not found in sources/" in lines[0]
+
+    def test_strict_line_keeps_the_whole_correction_hint(self, tmp_path, capsys):
+        """strict raises SystemExit on the line after this one, so the hint is
+        the ONLY instruction the person gets before the run dies -- it must
+        survive the one branch that makes strict and non-strict differ.
+        show_counts=False may remove the count suffix and nothing else (#494);
+        moving the hint inside that branch would silently strip the fix
+        instructions from the hard-exit path alone.
+
+        Pinned VERBATIM, not by shape: the clause is prose a human reads and
+        acts on, so the wording IS the contract.  Asserting only that a paren
+        or a closing "')" survives passes on a variant that guts the text and
+        keeps the punctuation.
+
+        The expected text starts one character early, at the space after
+        'sources/', for the same reason the count suffix carries its own leading
+        space (see test_singular_and_plural_counts_in_one_run): a lost or
+        doubled separator here is how the line drifts from the byte-identical
+        output #492 fixed, and it is invisible in a clause-only match."""
+        root = _root_with_source(tmp_path)
+        with pytest.raises(SystemExit):
+            mc.normalize_rows(root, _missing_rows(), strict=True)
+        lines = _skip_lines(capsys)
+        assert len(lines) == 1
+        assert (
+            "in sources/ (expected a sources/- or runs/sources/-prefixed path"
+            " like 'sources/gone.md')"
+        ) in lines[0]
