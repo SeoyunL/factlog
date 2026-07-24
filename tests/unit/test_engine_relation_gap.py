@@ -218,7 +218,10 @@ class TestPoisonedPolicyTripsGapOnRealEngine:
             "import factlog.common as c, run_logic_check as rlc\n"
             "poison = lambda: 'relation(X, \"d\", Y) :- relation(Y, \"e\", X).'\n"
             "c.load_logic_policy = poison\n"       # run_wirelog reads the module global
-            "rlc.load_logic_policy = poison\n"     # run_logic_check imported the name
+            # run_logic_check imported the provenance-carrying sibling (#506); the
+            # program text it yields is the same poison.
+            "rlc.load_logic_policy_program = lambda: c.LogicPolicyProgram(\n"
+            "    poison(), (c.LOGIC_POLICY_DL,), c.LOGIC_POLICY_DL)\n"
             "inf = c.run_wirelog()\n"
             "facts = c.load_accepted_facts()\n"
             "alive = len(inf.get('relation_alive', set()))\n"

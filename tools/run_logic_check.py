@@ -29,15 +29,58 @@ from common import (
     ensure_dirs,
     load_accepted_facts,
     load_facts,
-    load_logic_policy,
+    load_logic_policy_program,
     policy_predicates,
     review_facts,
-    LOGIC_POLICY_DL,
+    LogicPolicyProgram,
     run_wirelog,
     arg_value,
     query_args,
     quoted_constants,
 )
+
+
+def _kb_relative(path) -> str:
+    """``policy/logic-policy.dl`` — the path as the report has always shown it."""
+    return str(path.relative_to(path.parents[1]))
+
+
+def policy_provenance_line(program: LogicPolicyProgram) -> str:
+    """The ``policy:`` header line, naming what the engine actually ran (#506).
+
+    This used to be the LOGIC_POLICY_DL constant rendered unconditionally, so a KB
+    with no compiled policy still claimed ``policy: policy/logic-policy.dl`` — a
+    file not on disk — and the ``policy findings: 0`` below it read as a policy that
+    had been applied and matched nothing. The sources come from the loader, never
+    from an ``is_file()`` here: whether ``logic-policy.extra.dl`` contributed is the
+    loader's rule, and a KB whose only policy is a hand-authored extra.dl (#120) has
+    a policy, so answering "none" from a missing base would be the same lie again.
+    """
+    loaded = ", ".join(_kb_relative(path) for path in program.sources) if program.loaded else "none"
+    if program.base_loaded:
+        return f"policy: {loaded}"
+    return f"policy: {loaded} ({_kb_relative(program.base)} absent)"
+
+
+def policy_evaluation_default(program: LogicPolicyProgram) -> str:
+    """What the ``Policy evaluation:`` block says when no predicate was generated.
+
+    Two different facts share that shape, and the distinction is the whole point of
+    #506: a compiled policy with no rules (#491 — normal, wording unchanged) versus
+    no policy program at all. Restated here because a reader summarising the report
+    tail never sees the header ten lines up. It is a statement of fact, not a
+    warning: nothing is added to ``warnings``/``errors`` and rc is untouched (#336).
+
+    Reads ``program.loaded`` — the SAME predicate ``policy_provenance_line`` asks,
+    not a second expression that happens to agree on the KBs someone tested. When
+    the two diverged, a KB whose only policy is a contributing extra.dl had a header
+    naming that file and a tail saying no policy was loaded (#506 review): the
+    header is right, and a self-contradicting report is the same class of defect
+    #506 removes, only pointing the other way.
+    """
+    if program.loaded:
+        return "- no generated policy predicates"
+    return f"- no policy loaded ({_kb_relative(program.base)} absent)"
 
 
 def status_warnings(candidates: list[dict]) -> list[str]:
@@ -617,7 +660,8 @@ def main() -> int | None:
     facts = load_accepted_facts()
     candidates = load_facts()
     inferred = run_wirelog()
-    policy_program = load_logic_policy()
+    policy = load_logic_policy_program()
+    policy_program = policy.text
     policy_query_predicates = policy_predicates(policy_program)
     # One vocabulary, judged per position exactly as the ask gate judges it, so a
     # literal object of an attribute relation is not falsely warned as a non-engine
@@ -676,7 +720,7 @@ def main() -> int | None:
         "==================",
         "engine: wirelog / pyrewire",
         "input: facts/accepted.dl",
-        f"policy: {LOGIC_POLICY_DL.relative_to(LOGIC_POLICY_DL.parents[1])}",
+        policy_provenance_line(policy),
         f"engine facts: {len(facts)}",
         f"review facts outside engine input: {len(review_facts(candidates))}",
         f"policy findings: {len(policy_findings)}",
@@ -695,7 +739,9 @@ def main() -> int | None:
         f"{predicate}: {len(inferred[predicate])} rows"
         for predicate in sorted(policy_query_predicates)
     ]
-    report.extend([f"- {item}" for item in policy_items] or ["- no generated policy predicates"])
+    report.extend(
+        [f"- {item}" for item in policy_items] or [policy_evaluation_default(policy)]
+    )
     report.append("")
     report.append("Query evaluation:")
     query_items = [

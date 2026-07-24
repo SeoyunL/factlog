@@ -113,7 +113,17 @@ class TestFallbackErrorPointer:
         monkeypatch.setattr(rlc, "load_accepted_facts", lambda: [])
         monkeypatch.setattr(rlc, "load_facts", lambda: [])
         monkeypatch.setattr(rlc, "run_wirelog", lambda: {"path": set()})
-        monkeypatch.setattr(rlc, "load_logic_policy", lambda: "")
+        # The loader hands back the program plus what produced it (#506); an empty
+        # policy that WAS loaded keeps this stub off the no-policy wording, which
+        # this test is not about.
+        monkeypatch.setattr(
+            rlc,
+            "load_logic_policy_program",
+            lambda: rlc.LogicPolicyProgram(
+                text="", sources=(tmp_path / "policy" / "logic-policy.dl",),
+                base=tmp_path / "policy" / "logic-policy.dl",
+            ),
+        )
         monkeypatch.setattr(rlc, "policy_predicates", lambda program: set())
         monkeypatch.setattr(rlc, "value_hierarchy", lambda: {})
         monkeypatch.setattr(rlc, "relation_aliases", lambda: {})
