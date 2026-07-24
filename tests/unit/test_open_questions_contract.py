@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from factlog.md_lines import fence_flags, headings
-from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS, section_for
+from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS
 
 _REPO = Path(__file__).resolve().parents[2]
 _MERGE = _REPO / "tools" / "merge_candidates.py"
@@ -522,7 +522,7 @@ class TestCodeFencesEndToEnd:
             "```\n## 모호한 관계명\n```\n\n"
             "## 기존 내용과 충돌할 수 있는 항목\n"
         )
-        out = mc.insert_bullet(text, section_for(text, "출처"), "- b")
+        out = mc.insert_bullet(text, "출처", "- b")
         assert not _is_fenced(out, "- b"), out
         assert _heading_above(out, "- b") == "## 출처 부족", out
 
@@ -584,12 +584,23 @@ class TestSplitSectionWarning:
         return kb
 
     def test_the_split_is_named_and_does_not_fail_the_run(self, tmp_path):
+        """The two sections are named by their titles, without the `## `.
+
+        A deliberate change to operator-visible output, and the only one in this
+        branch. The message used to print each heading's raw line, which is fine for
+        ATX and wrong for an underlined heading: the raw span is two lines, so a
+        one-line warning carried a literal newline through the middle of itself
+        (`has 2 '출처' sections ('출처\n----', …)`). Naming both spellings the same
+        way is what a reader sees anyway — the `## ` was never information, it was
+        syntax that one of the two spellings happens to use.
+        """
         proc = _validate(self._split_kb(tmp_path), tmp_path)
         out = proc.stdout + proc.stderr
         assert proc.returncode == 0, out
         assert "warning: split_review_section:" in out, out
-        assert "'## 모호 (관계명·개념 판단 필요)'" in out, out
-        assert "'## 모호한 관계명'" in out, out
+        assert "'모호 (관계명·개념 판단 필요)'" in out, out
+        assert "'모호한 관계명'" in out, out
+        assert "\n" not in out.split("split_review_section:")[1].split("\n")[0]
 
     def test_a_kb_with_one_heading_per_category_is_not_warned_about(self, tmp_path):
         kb = _init(tmp_path / "kb", tmp_path)

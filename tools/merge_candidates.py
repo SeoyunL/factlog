@@ -97,8 +97,10 @@ from common import (  # noqa: E402
     sync_ignore_patterns,
 )
 from factlog import literal_types  # noqa: E402
+# No `Heading` here on purpose: this module never holds a heading's coordinates
+# across a write. `insert_bullet` resolves them from the text it is editing and
+# drops them again, which is what keeps a stale one from being expressible.
 from factlog.md_lines import (  # noqa: E402
-    Heading,
     bullets,
     ends_inside_fence,
     headings,
@@ -679,7 +681,28 @@ def decision_section(row: dict[str, str]) -> str:
     return "모호"
 
 
-def insert_bullet(text: str, section: Heading, bullet: str) -> str:
+def insert_bullet(text: str, keyword: str, bullet: str) -> str:
+    """*text* with *bullet* filed under its *keyword* section.
+
+    A **category keyword**, not a heading. `section_for` answers with a `Heading`,
+    and a `Heading` is a pair of line indices — coordinates that are only valid for
+    the exact document they were read from. Taking one as an argument made a stale
+    coordinate expressible, and the shape that produced one is the obvious
+    refactoring: resolve the section once, then file several bullets in a loop. Under
+    `origin/main` that was harmless, because `section_for` returned a *string* and
+    `insert_bullet` looked it up again in the current text every time.
+
+    It is not harmless now, and it is silent. Measured on a freshly scaffolded file,
+    hoisting the lookup out of the loop filed the 출처 and 충돌 rows into the 모호
+    section — with `missing_review_sections` empty, `split_review_sections` empty and
+    the run exiting 0, which is every gate this cluster exists to keep honest saying
+    the file is fine while rows sit under the wrong heading.
+
+    So the coordinates are not passed in; they are read here, from the text they
+    belong to, and the caller cannot hold one across a write. The lookup costs
+    nothing that was not already being paid — this function already walks the same
+    text for `bullets`, for `section_body_end` and for `headings`.
+    """
     lines = text.splitlines()
     # Idempotency by exact line, not substring: a plain `bullet in text` dropped a
     # new bullet whenever it was a prefix-substring of a longer existing bullet
@@ -698,10 +721,16 @@ def insert_bullet(text: str, section: Heading, bullet: str) -> str:
     # fenced heading and written just past the closing fence, under no section at
     # all, and the run exited 0.
     #
-    # Where the section *starts* is no longer looked up at all: `section_for` already
-    # answered it, and asking again by line equality — `lines.index(section)` — was
-    # asking a different question, "which line says this", whose answer is the first
-    # line of the body that happens to repeat the heading's text.
+    # Where the section *starts* is `section_for`'s answer and is never looked up by
+    # line equality again — `lines.index(section)` asked a different question, "which
+    # line says this", whose answer is the first line of the *body* that happens to
+    # repeat the heading's text. Resolved here rather than by the caller so that the
+    # heading and the text it indexes into cannot come apart; see the docstring.
+    #
+    # After the duplicate check, not before: a bullet that is already filed is
+    # answered without needing a section at all, and `section_for` raises when a
+    # category has none.
+    section = section_for(text, keyword)
     boundary = section_body_end(text, section)
     # The bullet needs a blank line on either side of it, and both questions are
     # about the document as it is *now* — before anything moves. So both are asked in
@@ -793,7 +822,7 @@ def write_decisions(root: Path, rows: list[dict[str, str]]) -> list[str]:
             f"{row['object']} ({row['source']}, confidence={row['confidence']}) - {row['note']}"
         )
         before = text
-        text = insert_bullet(text, section_for(text, decision_section(row)), bullet)
+        text = insert_bullet(text, decision_section(row), bullet)
         if text != before:
             added.append(bullet)
     decisions.write_text(text, encoding="utf-8")
@@ -828,7 +857,7 @@ def record_stale_page_refs(root: Path) -> list[str]:
                 continue
             bullet = f"- stale_source: {page.relative_to(root).as_posix()} references removed source {ref}"
             before = text
-            text = insert_bullet(text, section_for(text, "출처"), bullet)
+            text = insert_bullet(text, "출처", bullet)
             if text != before:
                 added.append(bullet)
     decisions.write_text(text, encoding="utf-8")
