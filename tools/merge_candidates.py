@@ -307,6 +307,11 @@ def _flush_skipped_sources(skipped: dict[str, int], *, show_counts: bool = True)
     The count is real only for the end-of-loop flush, which has seen every row.
     If strict is ever changed to collect every violation before exiting, the
     count becomes meaningful again and ``show_counts=False`` must be revisited.
+
+    ``show_counts=False`` removes the count suffix and nothing else.  The rest
+    of the line, the correction hint included, is a constant instruction rather
+    than a quantity, and strict exits right after printing it -- so that hint is
+    the only guidance the reader gets before the run dies.
     """
     for source_file, count in sorted(skipped.items()):
         message = (

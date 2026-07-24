@@ -189,8 +189,13 @@ class TestSkipRowSummary:
         # Dropping the suffix must not leave the space that preceded it.
         assert lines[0].rstrip() == lines[0]
         # Dropping the suffix must not take the path or the diagnosis with it.
-        # Narrowly these two only: the hint clause that follows them is not
-        # pinned by any test (a pre-existing #492 gap, out of scope here).
+        # Narrowly these two only -- the hint clause that follows them is held
+        # elsewhere: test_strict_line_keeps_the_whole_correction_hint pins its
+        # wording verbatim on this same strict line,
+        # test_hint_example_is_the_basename_not_the_rejected_path pins the
+        # example path it builds, and on the non-strict line
+        # test_singular_and_plural_counts_in_one_run pins its closing "')"
+        # as the anchor the count suffix attaches to.
         assert "sources/gone.md" in lines[0]
         assert "not found in sources/" in lines[0]
 
