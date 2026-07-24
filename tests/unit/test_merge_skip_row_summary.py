@@ -168,3 +168,25 @@ class TestSkipRowSummary:
         # pinned by any test (a pre-existing #492 gap, out of scope here).
         assert "sources/gone.md" in lines[0]
         assert "not found in sources/" in lines[0]
+
+    def test_strict_line_keeps_the_whole_correction_hint(self, tmp_path, capsys):
+        """strict raises SystemExit on the line after this one, so the hint is
+        the ONLY instruction the person gets before the run dies -- it must
+        survive the one branch that makes strict and non-strict differ.
+        show_counts=False may remove the count suffix and nothing else (#494);
+        moving the hint inside that branch would silently strip the fix
+        instructions from the hard-exit path alone.
+
+        Pinned VERBATIM, not by shape: the clause is prose a human reads and
+        acts on, so the wording IS the contract.  Asserting only that a paren
+        or a closing "')" survives passes on a variant that guts the text and
+        keeps the punctuation."""
+        root = _root_with_source(tmp_path)
+        with pytest.raises(SystemExit):
+            mc.normalize_rows(root, _missing_rows(), strict=True)
+        lines = _skip_lines(capsys)
+        assert len(lines) == 1
+        assert (
+            "(expected a sources/- or runs/sources/-prefixed path like 'sources/gone.md')"
+            in lines[0]
+        )
