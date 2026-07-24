@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from factlog.review_sections import REVIEW_CATEGORIES
+from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS
 
 _REPO = Path(__file__).resolve().parents[2]
 _MERGE = _REPO / "tools" / "merge_candidates.py"
@@ -236,6 +236,46 @@ def test_validate_reports_every_missing_section(tmp_path):
     out = proc.stdout + proc.stderr
     for keyword in KEYWORDS:
         assert f"should keep a {keyword!r} review section" in out, out
+
+
+class TestKeywordDrift:
+    """merge_candidates' routing keywords are checked against the contract at import.
+
+    Without it the drift is invisible exactly where it matters. A keyword
+    REVIEW_CATEGORIES no longer defines raises KeyError out of `section_for` only
+    when the file has no heading carrying it — a fresh KB. On a populated one the
+    old heading is found and returned, so bullets keep being filed under a category
+    the contract has stopped naming, and nothing anywhere says so.
+    """
+
+    def test_the_routed_keywords_are_all_defined(self):
+        mc = _merge_module()
+        assert mc.ROUTED_KEYWORDS <= REVIEW_KEYWORDS
+        # and they really are the ones the classifier hands out
+        rows = [
+            {"subject": "a", "relation": "same_as", "object": "b", "note": ""},
+            {"subject": "a", "relation": "r", "object": "b", "note": "evidence"},
+            {"subject": "a", "relation": "r", "object": "b", "note": "conflict"},
+            {"subject": "a", "relation": "r", "object": "b", "note": ""},
+        ]
+        assert {mc.decision_section(row) for row in rows} == mc.ROUTED_KEYWORDS
+
+    def test_importing_with_a_dropped_category_fails_loudly(self):
+        """Drop a category from the contract and merge_candidates refuses to load."""
+        import importlib  # noqa: PLC0415
+
+        from factlog import review_sections as rs  # noqa: PLC0415
+
+        mc = _merge_module()
+        original = rs.REVIEW_KEYWORDS
+        try:
+            rs.REVIEW_KEYWORDS = frozenset(original - {"출처"})
+            with pytest.raises(RuntimeError, match="출처"):
+                importlib.reload(mc)
+        finally:
+            rs.REVIEW_KEYWORDS = original
+            importlib.reload(mc)
+        assert _merge_module().ROUTED_KEYWORDS <= REVIEW_KEYWORDS
 
 
 class TestSplitSectionWarning:

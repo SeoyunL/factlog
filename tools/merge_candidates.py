@@ -99,9 +99,28 @@ from common import (  # noqa: E402
 from factlog import literal_types  # noqa: E402
 from factlog.review_sections import (  # noqa: E402
     OPEN_QUESTIONS_SCAFFOLD,
+    REVIEW_KEYWORDS,
     ensure_review_sections,
     section_for,
 )
+
+# The category keywords this module routes bullets with — `decision_section`'s four
+# return values and the one `record_stale_page_refs` files stale refs under. Which
+# row belongs to which category is a classification rule and lives here; what heading
+# a keyword resolves to is `section_for`'s to answer.
+#
+# Checked at import because the failure is otherwise invisible where it matters. A
+# keyword that no longer exists in REVIEW_CATEGORIES raises KeyError from
+# `section_for` only when the file has no heading carrying it — that is, on a fresh
+# KB. On a populated one `_heading_with` finds the old heading and returns it, so the
+# drift routes bullets to a category the contract no longer names and says nothing.
+# Loud on every KB, at import, before a single row is classified.
+ROUTED_KEYWORDS = frozenset({"중복", "모호", "출처", "충돌"})
+if not ROUTED_KEYWORDS <= REVIEW_KEYWORDS:
+    raise RuntimeError(  # not `assert`: this must survive `python -O`
+        "merge_candidates routes review bullets with keywords that "
+        f"factlog.review_sections no longer defines: {sorted(ROUTED_KEYWORDS - REVIEW_KEYWORDS)}"
+    )
 
 # ---------------------------------------------------------------------------
 # Constants

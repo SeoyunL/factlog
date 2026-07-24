@@ -136,6 +136,58 @@ class TestEnsureReviewSections:
         assert out.count("중복") == 1
         assert missing_review_sections(out) == []
 
+    def test_an_unclosed_fence_does_not_get_a_duplicate_heading(self):
+        """Regression: this file grew three byte-identical headings on every pass.
+
+        An unclosed fence hides everything after it from the heading scan, so the
+        categories below it read as missing and were appended again — a second copy
+        of the exact same heading line, the queue left under the hidden first one,
+        and split_review_sections unable to see that original to warn about it. The
+        very split this module exists to prevent, manufactured by it.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n```\n"
+            "## 모호한 관계명\n- 기존 큐가 여기 있다\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        out = ensure_review_sections(doc)
+        assert out == doc, "a hidden heading was copied instead of left alone"
+        assert ensure_review_sections(out) == out
+        for _, heading in REVIEW_CATEGORIES:
+            assert out.splitlines().count(heading) <= 1, (heading, out)
+
+    def test_nothing_is_written_into_an_unclosed_fence(self):
+        """A file that never closes a fence is left alone and reported, not patched.
+
+        Appending is appending to the end, and the end is inside the fence — every
+        heading written there is invisible to the scan that asked for it. Measured:
+        scaffolding this file produced three headings that still read as missing.
+        """
+        doc = "# Open Questions\n\n```\n## 모호한 관계명\n"
+        out = ensure_review_sections(doc)
+        assert out == doc
+        assert missing_review_sections(out) == KEYWORDS  # loud, all four
+        assert ensure_review_sections(out) == out
+
+    @pytest.mark.parametrize("keyword,canonical", list(REVIEW_CATEGORIES))
+    def test_a_heading_hidden_in_a_closed_fence_is_not_written_a_second_time(
+        self, keyword, canonical
+    ):
+        """The duplicate guard on its own, with the unclosed-fence guard out of play.
+
+        This document closes its fence, so appending would land in real prose and
+        the unclosed-fence check does not fire — only the "is this line already in
+        the file" test stops a byte-identical second copy of the heading. Two
+        identical heading lines are unrepairable downstream: insert_bullet finds a
+        section by line equality and would file every bullet under the first.
+        """
+        others = "\n\n".join(h for k, h in REVIEW_CATEGORIES if k != keyword)
+        doc = f"# Open Questions\n\n{others}\n\n예시:\n\n```\n{canonical}\n```\n"
+        out = ensure_review_sections(doc)
+        assert out.splitlines().count(canonical) == 1, out
+        assert out == doc
+        assert missing_review_sections(out) == [keyword]  # still loud
+
     def test_it_is_idempotent(self):
         once = ensure_review_sections("# Open Questions\n")
         assert ensure_review_sections(once) == once

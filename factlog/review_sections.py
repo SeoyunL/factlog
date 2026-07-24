@@ -68,6 +68,10 @@ REVIEW_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("충돌", "## 기존 내용과 충돌할 수 있는 항목"),
 )
 
+# The keyword set on its own, for callers that route by category and want a drift in
+# REVIEW_CATEGORIES to be loud at import rather than at the first row they classify.
+REVIEW_KEYWORDS: frozenset[str] = frozenset(keyword for keyword, _ in REVIEW_CATEGORIES)
+
 TITLE = "# Open Questions"
 
 # What `factlog init` writes, and what the producer starts from when the file does
@@ -107,6 +111,21 @@ def _headings(text: str) -> list[str]:
         if not fenced and line.startswith("## "):
             headings.append(line)
     return headings
+
+
+def _ends_inside_fence(text: str) -> bool:
+    """Did *text* open a code fence and never close it?
+
+    Everything after such a fence is invisible to :func:`_headings`, including
+    anything appended to the end of the file — so a scaffolder that writes there is
+    writing a heading it cannot itself read back. Worth asking before writing.
+    """
+    fenced = False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fenced = not fenced
+    return fenced
 
 
 def _heading_with(text: str, keyword: str) -> str | None:
@@ -164,16 +183,46 @@ def ensure_review_sections(text: str) -> str:
     as they are, so this is churn-free on an existing KB and idempotent: the second
     call finds nothing missing and returns *text* unchanged. A category that has two
     is left alone as well; see :func:`split_review_sections` for why.
+
+    Idempotent on every input, not only the well-formed ones: a heading line already
+    in the file is never written again, whatever this module makes of it. See the
+    comment on ``present`` below for the file shape that turned on that distinction.
     """
     missing = missing_review_sections(text)
     if not missing:
         return text
+    # An unclosed fence swallows the end of the file, which is where this appends —
+    # so every heading it wrote would land inside the fence, unreadable by the scan
+    # that just asked for it. Write nothing, and let the validator report all four as
+    # missing: the file needs its fence closed, and only a human can do that.
+    if _ends_inside_fence(text):
+        return text
     canonical = dict(REVIEW_CATEGORIES)
+    # Never write a heading line the file already contains, even where this module
+    # does not read it as a section. An unclosed code fence hides everything after
+    # it from :func:`_headings`, so the categories below it report as missing and
+    # each pass appended a *byte-identical* second copy of their heading — the file
+    # grew by three headings per merge, :func:`split_review_sections` could not see
+    # the hidden originals to warn about it, and the queue under them was orphaned.
+    # Exactly the split this module exists to prevent, manufactured silently.
+    #
+    # Declining to append leaves those categories reported as missing, so the run
+    # fails loudly and a human fixes the fence. That is the right end: two identical
+    # heading lines are not repairable anyway — ``insert_bullet`` finds sections by
+    # line equality and would file every bullet under whichever came first.
+    present = {line.rstrip() for line in text.splitlines()}
+    additions = [
+        canonical[keyword]
+        for keyword in missing
+        if canonical[keyword] not in present
+    ]
+    if not additions:
+        return text
     # `.strip()`, not `.rstrip("\n")`: a file holding only spaces and newlines is as
     # titleless as an empty one, and rstrip left it truthy — the sections were then
     # appended under no title at all.
     body = text.rstrip("\n") if text.strip() else TITLE
-    return "\n\n".join([body] + [canonical[keyword] for keyword in missing]) + "\n"
+    return "\n\n".join([body] + additions) + "\n"
 
 
 def section_for(text: str, keyword: str) -> str:
