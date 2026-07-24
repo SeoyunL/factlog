@@ -254,7 +254,7 @@ def load_candidate_files(root: Path, pattern: str = "runs/*.json") -> list[dict[
 # Normalise & dedup
 # ---------------------------------------------------------------------------
 
-def _flush_skipped_sources(skipped: dict[str, int]) -> None:
+def _flush_skipped_sources(skipped: dict[str, int], *, show_counts: bool = True) -> None:
     """Print one 'skip row' line per missing source path, with its row count.
 
     A single missing source produces one byte-identical warning per row it
@@ -269,14 +269,25 @@ def _flush_skipped_sources(skipped: dict[str, int]) -> None:
     so the end-of-loop flush is never reached on that path.  Anyone changing
     strict to collect every violation before exiting must re-check that, rather
     than rely on the clear() below.
+
+    The same call-site coupling is why strict passes ``show_counts=False``: it
+    exits on the FIRST offending row, so its skipped dict always holds exactly
+    one path with a count of 1.  The count is then not information but a false
+    quantity -- a path carrying 60 rejected rows still reads '(1 row)' (#494).
+    The count is real only for the end-of-loop flush, which has seen every row.
+    If strict is ever changed to collect every violation before exiting, the
+    count becomes meaningful again and ``show_counts=False`` must be revisited.
     """
     for source_file, count in sorted(skipped.items()):
-        print(
+        message = (
             f"  skip row: source '{source_file}' not found in sources/ "
-            f"(expected a sources/- or runs/sources/-prefixed path like 'sources/{Path(source_file).name}') "
-            f"({count} row{'s' if count != 1 else ''})",
-            file=sys.stderr,
+            f"(expected a sources/- or runs/sources/-prefixed path like 'sources/{Path(source_file).name}')"
         )
+        if show_counts:
+            # Leading space lives with the suffix so omitting it leaves no
+            # trailing whitespace on the line.
+            message += f" ({count} row{'s' if count != 1 else ''})"
+        print(message, file=sys.stderr)
     # Not load-bearing today (see above) -- kept so a future second flush in one
     # run reports only what accumulated since the last one.
     skipped.clear()
@@ -341,8 +352,10 @@ def normalize_rows(
             dropped += 1
             if strict:
                 # strict still dies on the FIRST offending row -- flush here so
-                # the diagnostic is not lost to the early exit.
-                _flush_skipped_sources(skipped)
+                # the diagnostic is not lost to the early exit.  No count: it
+                # would always be 1 regardless of how many rows that path
+                # carries (#494).
+                _flush_skipped_sources(skipped, show_counts=False)
                 raise SystemExit(
                     f"--strict: input row rejected (source not found): {source_file}"
                 )

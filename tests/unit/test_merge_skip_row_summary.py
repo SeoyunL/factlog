@@ -5,9 +5,14 @@ A missing source used to warn once per row, so a few stale paths pushed the
 merge summary -- and the validate failures after it -- off the screen.  The
 warning is now one line per anchor-stripped source path with a row count, in
 path order, and it must still appear on the --strict early exit.
+
+The --strict line is the one exception to the row count: strict exits on the
+first offending row, so its count is a structural constant 1 rather than a
+measurement, and the suffix is omitted there (#494).
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 
 import pytest
@@ -135,4 +140,23 @@ class TestSkipRowSummary:
         )
         lines = _skip_lines(capsys)
         assert len(lines) == 1
-        assert "sources/gone.md" in lines[0] and "(1 row)" in lines[0]
+        assert "sources/gone.md" in lines[0]
+
+    def test_strict_line_omits_the_row_count(self, tmp_path, capsys):
+        """sources/gone.md carries 3 rows here, but strict exits on the first
+        one, so any count it could print is a structural 1 -- a false quantity
+        about how much that path is leaking (#494).  The suffix is dropped
+        rather than corrected: strict has not seen the other rows.  Negate the
+        suffix SHAPE, not the literal '(1 row)', so a variant that prints
+        '(3 rows)' is caught too."""
+        root = _root_with_source(tmp_path)
+        with pytest.raises(SystemExit):
+            mc.normalize_rows(root, _missing_rows(), strict=True)
+        lines = _skip_lines(capsys)
+        assert len(lines) == 1
+        assert re.search(r"\(\d+ rows?\)", lines[0]) is None
+        # Dropping the suffix must not leave the space that preceded it.
+        assert lines[0].rstrip() == lines[0]
+        # Everything that identifies the offending path stays.
+        assert "sources/gone.md" in lines[0]
+        assert "not found in sources/" in lines[0]
