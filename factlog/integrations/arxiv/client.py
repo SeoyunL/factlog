@@ -74,18 +74,24 @@ API_PATH = "/api/query"
 # arXiv's id_list ceiling per request (spec §2.2).
 MAX_ID_LIST = 100
 
-# Total attempts (one try plus two retries) for arXiv's push-back statuses, with
-# exponential backoff (spec §8.3). Only 429 and 503 are retried: a 500 here is
-# deterministic — it is what `start` past the end of the result set returns — so
-# retrying it would just spend the delay three times over.
+# Total attempts (one try plus two retries) for arXiv's push-back statuses
+# (spec §8.3). Only 429 and 503 are retried: a 500 here is deterministic — it is
+# what `start` past the end of the result set returns — so retrying it would just
+# spend the delay three times over.
+#
+# How long an attempt waits is the server's call when it made one: a usable
+# `Retry-After` sets the wait. `BACKOFF_BASE_SECONDS` is the fallback for when it
+# did not — no header, or one that cannot be read — doubling per attempt (2s, 4s).
 MAX_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 2.0
 
 # The longest server-requested wait this client will sit through. Past it the
-# request is not retried at all: the wait is reported and the remaining attempts
-# are left unspent. Clamping a long `Retry-After` down to this value instead
-# would keep knocking inside the window the server named — the same mistake in
-# miniature — while the message still quotes the server's number.
+# request stops rather than retries: the wait is reported instead of slept. The
+# ceiling is judged per response and judging it costs no attempt of its own —
+# though attempts already made are of course already spent, since a wait past the
+# ceiling can arrive on any of them. Clamping a long `Retry-After` down to this
+# value instead would keep knocking inside the window the server named — the same
+# mistake in miniature — while the message still quotes the server's number.
 MAX_RETRY_AFTER_SECONDS = 60.0
 
 # Decimals a parsed `Retry-After` is rounded to. One rounding, applied before

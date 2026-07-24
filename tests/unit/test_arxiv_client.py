@@ -18,6 +18,8 @@ catch a regression in the delay.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from factlog.integrations.arxiv.client import (
@@ -31,6 +33,7 @@ from factlog.integrations.arxiv.client import (
     MAX_RETRY_AFTER_SECONDS,
     _RateLimiter,
     _Response,
+    _seconds,
     _user_agent,
 )
 from factlog.integrations.arxiv.config import ArxivConfig
@@ -386,20 +389,34 @@ def test_a_fractional_retry_after_is_slept_and_rendered_without_noise():
     assert len(calls) == 3
 
 
+def quoted_seconds(value: float) -> str:
+    """A regex matching `value` rendered as a whole "Ns" figure in a message.
+
+    The lookbehind is what stops `60s` from being found inside `3600s`, which is
+    the reason this is a search rather than an `in`. No guard is needed on the
+    right: the literal `s` already ends the number, so `60s` cannot match inside
+    `60.001s` either. Nothing else about the wording is pinned — an assertion
+    that also matched the article or the words around the number would fail on a
+    rephrasing that is still correct.
+    """
+    return rf"(?<![\d.]){re.escape(_seconds(value))}s"
+
+
 @pytest.mark.parametrize(
     "over",
     [
-        # Derived from the constant rather than hardcoded, so adjusting the
-        # ceiling keeps testing the policy instead of a stale number.
-        pytest.param(str(int(MAX_RETRY_AFTER_SECONDS) + 1), id="just-over"),
+        # Rendered from the constant the implementation compares against, so
+        # adjusting the ceiling — to a fraction as much as to another integer —
+        # keeps testing the policy instead of a stale number.
+        pytest.param(_seconds(MAX_RETRY_AFTER_SECONDS + 1), id="just-over"),
         pytest.param("3600", id="an-hour"),
     ],
 )
 def test_a_retry_after_past_the_ceiling_is_reported_instead_of_retried(over):
     # A server that says "wait an hour" is not asking to be tried again in two
     # seconds. Clamping the wait down to the ceiling and retrying would knock
-    # inside the window the server named, so nothing is retried and no attempt
-    # is spent — the operator gets the server's own number instead.
+    # inside the window the server named, so the request stops here — the
+    # operator gets the server's own number instead.
     slept = []
     api, calls = client([_Response(503, {"retry-after": over}, "")] * 3, sleeps=slept)
     with pytest.raises(ArxivServiceError) as raised:
@@ -407,10 +424,8 @@ def test_a_retry_after_past_the_ceiling_is_reported_instead_of_retried(over):
     assert len(calls) == 1
     assert slept == []
     message = str(raised.value)
-    assert f"wait {over}s" in message   # what arXiv asked for
-    # What factlog will wait. Matched with its article so it cannot be satisfied
-    # by the ceiling appearing inside the server's own number ("60" in "3600").
-    assert f"the {int(MAX_RETRY_AFTER_SECONDS)}s" in message
+    assert re.search(quoted_seconds(float(over)), message)          # what arXiv asked for
+    assert re.search(quoted_seconds(MAX_RETRY_AFTER_SECONDS), message)  # what factlog waits
     assert "Gave up after 1 attempt." in message
 
 
@@ -477,11 +492,12 @@ def test_a_very_long_wait_is_stated_in_seconds_not_scientific_notation():
 def test_a_retry_after_exactly_at_the_ceiling_is_still_retried():
     # The ceiling is inclusive: `wait > MAX` refuses, so the boundary value is a
     # wait this client sits through.
-    at = str(int(MAX_RETRY_AFTER_SECONDS))
+    at = _seconds(MAX_RETRY_AFTER_SECONDS)
     slept = []
     api, calls = client([_Response(503, {"retry-after": at}, "")] * 3, sleeps=slept)
-    with pytest.raises(ArxivServiceError, match=f"retry after {at}s"):
+    with pytest.raises(ArxivServiceError) as raised:
         api.fetch_works(["1706.03762"])
+    assert re.search(quoted_seconds(MAX_RETRY_AFTER_SECONDS), str(raised.value))
     assert slept == [MAX_RETRY_AFTER_SECONDS, MAX_RETRY_AFTER_SECONDS]
     assert len(calls) == 3
 
