@@ -3432,6 +3432,129 @@ def cmd_zotero_import(args: argparse.Namespace) -> int:
     return 1 if (report.errors or report.pdf_errors or report.annotation_errors or convert_rc) else 0
 
 
+# zotero-search's --limit is factlog policy, not an API constraint. The bounds
+# mirror the sibling *-search commands (default 25, max 200) so a script's
+# --limit means the same thing whichever library it queries.
+_ZOTERO_SEARCH_DEFAULT_LIMIT = 25
+_ZOTERO_SEARCH_MAX_LIMIT = 200
+
+
+def _zotero_item_fields(item) -> tuple[str, str, str]:
+    """(key, itemType, title) of one raw Zotero item, read the parser's way.
+
+    The key sits both on the wrapper and inside ``data``; ``data`` wins for the
+    same reason it wins in :func:`api_client._item_key` — the two must not
+    disagree about which key an item has. Missing fields read as empty strings.
+    """
+    data = item.get("data") if isinstance(item, dict) else None
+    data = data if isinstance(data, dict) else {}
+    key = data.get("key") or (item.get("key") if isinstance(item, dict) else "")
+    return (
+        key if isinstance(key, str) else "",
+        str(data.get("itemType") or ""),
+        str(data.get("title") or ""),
+    )
+
+
+def _zotero_show_results(items, count: int, *, porcelain: bool) -> None:
+    """Render zotero-search results. Mirrors the sibling ``_*_show_results`` printers.
+
+    The ``--porcelain`` row keeps the shared five-column shape, with the item's
+    Zotero ``itemType`` in the slot the other searches use for a retraction flag:
+    ``result\\t<index>\\t<key>\\t<itemType>\\t<title>`` then ``found\\t<count>``.
+    Every field — key, itemType and title are all upstream data — goes through
+    :func:`porcelain_field` so a stray tab/newline can never split a row (#406).
+
+    Zero results is a legitimate answer for a discovery search, so it prints a
+    plain "Found 0 results." rather than treating the empty set as an error; the
+    caller distinguishes that honest zero from a connection failure by exit code.
+    """
+    from factlog.integrations.common.porcelain import porcelain_field
+
+    if porcelain:
+        for index, item in enumerate(items, 1):
+            key, item_type, title = _zotero_item_fields(item)
+            print(f"result\t{index}\t{porcelain_field(key)}\t"
+                  f"{porcelain_field(item_type)}\t{porcelain_field(title)}")
+        print(f"found\t{count}")
+        return
+
+    if count == 0:
+        print("Found 0 results.")
+        return
+
+    print(f"Found {count} results:\n")
+    for index, item in enumerate(items, 1):
+        key, item_type, title = _zotero_item_fields(item)
+        print(f'  {index}. [{item_type or "?"}] {key} "{title}"')
+    # The keys above go straight into `zotero-import --items`; say so once.
+    print("\nImport a result with: factlog zotero-import --items <key>[,<key>...]")
+
+
+def cmd_zotero_search(args: argparse.Namespace) -> int:
+    """Search the local Zotero library and list matches — discovery only (#455).
+
+    Answers "is this in my library?" without importing anything: it lists each
+    match's Zotero ``key``/``itemType``/``title`` so a chosen key can be handed
+    to ``zotero-import --items``. Zotero is read-only (P4) and nothing is written
+    to the KB — the KB is resolved only to locate the same Local API policy file
+    ``zotero-import`` reads (so a per-KB port/mode setting applies identically).
+
+    ``--qmode`` exposes Zotero's own search modes: ``titleCreatorYear`` (default)
+    or ``everything`` (full-text). A successful search that matched nothing is an
+    honest zero (exit 0); a Local API that could not be reached is a connection
+    failure (exit 2), kept distinct so a script can tell "no results" from "no
+    Zotero" — the acceptance criterion the sibling searches also hold.
+    """
+    from pathlib import Path
+
+    from factlog.integrations.zotero.api_client import ZoteroConnectionError, ZoteroError
+    from factlog.integrations.zotero.config import ZoteroConfigError, load_config
+
+    porcelain = getattr(args, "porcelain", False)
+    limit = args.limit if args.limit is not None else _ZOTERO_SEARCH_DEFAULT_LIMIT
+
+    # --limit is factlog policy; reject an out-of-range value before touching Zotero.
+    if args.limit is not None and (args.limit < 1 or args.limit > _ZOTERO_SEARCH_MAX_LIMIT):
+        print(f"factlog zotero-search: --limit must be between 1 and "
+              f"{_ZOTERO_SEARCH_MAX_LIMIT}, got {args.limit}", file=sys.stderr)
+        return 1
+
+    if not args.query.strip():
+        print("factlog zotero-search: give a non-empty search query", file=sys.stderr)
+        return 1
+
+    target_str, source = factlog_config.resolve_root(args.target)
+    target = Path(target_str)
+    if source in ("config", "cwd") and not porcelain:
+        print(f"factlog zotero-search: target KB {target} (from {source})")
+    if not _require_kb(target, "zotero-search"):
+        return 1
+
+    # A malformed KB policy file is a user error, not a crash.
+    try:
+        config = load_config(kb_root=target)
+    except ZoteroConfigError as exc:
+        print(f"factlog zotero-search: {exc}", file=sys.stderr)
+        return 1
+
+    if not porcelain:
+        print(f'Searching Zotero (Local API): "{args.query}"...')
+    try:
+        items = _make_zotero_client(config).search_items(
+            args.query, qmode=args.qmode, limit=limit
+        )
+    except ZoteroConnectionError as exc:
+        print(f"factlog zotero-search: {exc}", file=sys.stderr)
+        return 2
+    except ZoteroError as exc:
+        print(f"factlog zotero-search: {exc}", file=sys.stderr)
+        return 1
+
+    _zotero_show_results(items, len(items), porcelain=porcelain)
+    return 0
+
+
 def _make_openalex_client(config):
     """Build the real OpenAlex client. Indirected so tests can inject a fake."""
     from factlog.integrations.openalex.api_client import OpenAlexClient
@@ -7062,6 +7185,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="machine-readable output (tab-separated field/value counts) for scripts",
     )
     zimport.set_defaults(func=cmd_zotero_import)
+
+    zsearch = sub.add_parser(
+        "zotero-search",
+        help="search the local Zotero library and list matches (discovery only, no import)",
+    )
+    zsearch.add_argument("query", help="search text")
+    zsearch.add_argument(
+        "--qmode",
+        choices=("titleCreatorYear", "everything"),
+        default="titleCreatorYear",
+        help="Zotero search mode: titleCreatorYear (default) or everything (full-text)",
+    )
+    zsearch.add_argument(
+        "--limit", type=int, default=None,
+        help=f"number of results (default: {_ZOTERO_SEARCH_DEFAULT_LIMIT}, "
+             f"max: {_ZOTERO_SEARCH_MAX_LIMIT})",
+    )
+    zsearch.add_argument(
+        "--target", default=None, help="KB root (default: the active KB; see `factlog where`)"
+    )
+    zsearch.add_argument(
+        "--porcelain", action="store_true",
+        help="machine-readable output (tab-separated field/value rows) for scripts",
+    )
+    zsearch.set_defaults(func=cmd_zotero_search)
 
     def _openalex_common(p):
         p.add_argument(
