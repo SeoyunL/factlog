@@ -969,9 +969,13 @@ def load_logic_policy_program() -> LogicPolicyProgram:
 # exactly ONE member left, _engine_decl_predicates, which reads WIRELOG_PROGRAM with
 # the anchored _DECL_LINE_RE. _assert_no_alias_collision moved to the skeleton
 # because its raw blind spot -- a `.decl` split by a comment, or not opening its
-# line -- is one the ENGINE accepts and applies a column schema to, while the
-# skeleton's blind spot (truncation at an unterminated string) only covers programs
-# pyrewire ParseErrors on. That docstring carries the measurement.
+# line -- is one the ENGINE accepts and applies a column schema to. The skeleton
+# has a blind spot of its own, truncation at what _scan_policy calls an unterminated
+# literal, and it is NOT excused by the engine rejecting those programs: _scan_policy
+# wants a literal closed on its own line, pyrewire accepts one spanning lines, and a
+# program in that gap truncates AND compiles (measured). What makes the move safe is
+# narrower -- everything the truncation can hide in the assembled program is
+# mid-line, which the anchored reading missed too. That docstring carries it.
 #
 # _DECL_LINE_RE is NOT deleted along with its second caller. WIRELOG_PROGRAM is a
 # constant we own, so today the anchor and the skeleton would answer alike on it --
@@ -2253,8 +2257,8 @@ def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str
     the two nets would have left the other as the surviving hole.
 
     This site reads a _scan_policy SKELETON with _DECL_RE, not raw text with the
-    anchored _DECL_LINE_RE. Both readings have a blind spot; only one of the two
-    blind spots is reachable in a KB the engine will compile (#516):
+    anchored _DECL_LINE_RE (#516). Both readings have a blind spot. What decides
+    between them is which blind spot can hide a declaration the ENGINE will read:
 
       * The anchored raw reading misses every form in which a comment falls inside
         the directive, or in which the `.decl` does not open its line. Measured
@@ -2263,33 +2267,54 @@ def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str
         schema, so the subject interns back to its symbol instead of a raw id. The
         engine reads them AS DECLARATIONS, so a KB can carry a duplicate-arity
         `.decl` through this net, compile rc=0, and derive different rows.
-      * The skeleton reading, with strict=False, STOPS at an unterminated string
-        literal and returns only what it lexed up to there, so a stray quote hides
-        every later `.decl` from this net. But a program with an unterminated
-        string is one pyrewire ParseErrors on (measured), so that blind spot only
-        covers programs that never reach a report.
+      * The skeleton reading, with strict=False, STOPS at whatever _scan_policy
+        calls an unterminated string literal and returns only what it lexed up to
+        there, so everything after that point is hidden from this net.
 
-    Stronger than the general argument: in the program this net actually receives
-    (WIRELOG_PROGRAM + attr_rel facts + policy + accepted.dl), the truncation
-    cannot hide a `.decl` at all. WIRELOG_PROGRAM has no string literal and no
-    comment. `_attr_rel_facts` emits every name through `dl_string` (json.dumps),
-    which is always balanced, and `_reject_undecodable_attr_rel_names` rejects the
-    control characters that would break the lex. The policy is already dead by
-    then: `_load_logic_policy_program_from` runs `_assert_no_canonical_head`, whose
-    `_scan_policy(strict=True)` raises FactlogError on an unterminated string, and
-    run_wirelog loads the policy BEFORE it assembles. And `_load_accepted_facts_from`
-    accepts nothing but blank lines, `//` comments, `canonical(` and well-formed
-    `relation(...)` rows -- a `.decl` line there is rejected outright -- while
-    accepted.dl is the LAST component, so the one unterminated form it can still
-    carry has no `.decl` after it to hide.
+    Do NOT justify the second bullet as "the engine rejects those programs anyway".
+    It does not, and the difference is measurable: _scan_policy requires a literal
+    to close on the line it opens, while pyrewire accepts a literal that spans
+    lines. `relation("a<newline>b", "r", "o").` truncates the skeleton and COMPILES.
+    The truncation set is strictly wider than the engine's reject set, so a claim
+    resting on that overlap is false, and this is the exact shape of error #516 was
+    filed about -- prose that argues in the opposite direction from measurement.
+
+    The argument that does hold is about LINE-INITIALITY, and it establishes no
+    regression rather than no blind spot. Every `.decl` this truncation can hide in
+    the program the net actually receives is one the old anchored reading also
+    missed:
+
+      * WIRELOG_PROGRAM has no string literal and no comment, so it cannot truncate.
+      * `_attr_rel_facts` emits every name through `dl_string` (json.dumps), which
+        is always balanced, and `_reject_undecodable_attr_rel_names` rejects the
+        control characters that would break the lex.
+      * The policy is already dead: `_load_logic_policy_program_from` runs
+        `_assert_no_canonical_head`, whose `_scan_policy(strict=True)` raises
+        FactlogError on an unterminated literal -- measured for the spanning-lines
+        shape too -- and run_wirelog loads the policy BEFORE it assembles.
+      * `_load_accepted_facts_from` rejects a `.decl` only when it OPENS the line:
+        a line starting with `canonical(` is skipped without parsing, so
+        `canonical("C", "d", "E"). .decl pub_year(...)` rides through. That is a
+        real fail-open for this net -- but the `.decl` is mid-line, which the
+        anchored reading did not see either. A LINE-INITIAL `.decl` in accepted.dl
+        is rejected outright, measured, indented or not.
+
+    Which is why accepted.dl being the LAST component is load-bearing rather than
+    incidental: truncation originating there can only hide later accepted.dl lines,
+    which are subject to the same loader. Swap it ahead of the policy and a stray
+    quote hides line-initial policy declarations that the old reading DID catch --
+    a real regression. tests pin the order for that reason.
 
     strict=False, not strict=True: raising here would turn a targeted alias check
     into a new whole-program parse error for the caller.
 
-    The cost is honest and accepted, not a reason: the skeleton lex is roughly
-    fifteen times the regex, about 150ms per assembled MB against about 10ms, once
-    per `factlog check`. Performance is not an argument in this module in either
-    direction.
+    The cost is honest and accepted, not a reason. Measured on a 1 MiB program, in
+    both a fact-heavy and a rule-heavy shape: the skeleton lex takes about 1.5s
+    against the regex's ~9ms (roughly 170x, linear in program size) and peaks at
+    about one program's worth of heap against the regex's nil. Real KBs are
+    kilobytes -- examples/sample-kb's accepted.dl is 465 bytes -- so this is
+    sub-millisecond in practice, once per `factlog check`. Performance is not an
+    argument in this module in either direction; it is recorded here as a price.
 
     What this reading still cannot see -- and who can -- is listed in
     tests/unit/test_decl_whitespace_parity.py."""
