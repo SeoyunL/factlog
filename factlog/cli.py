@@ -2409,7 +2409,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
     if source in ("config", "cwd"):
-        print(f"factlog ingest: target KB {target} (from {source})")
+        # ingest has no porcelain mode; route through _narrate for its flush so this
+        # KB line never trails an unbuffered-stderr error under a 2>&1 redirect (#472).
+        _narrate(f"factlog ingest: target KB {target} (from {source})", porcelain=False)
     hint = (
         "Run 'factlog init --target <kb>' (or 'factlog use <kb>') first."
         if source in ("config", "cwd")
@@ -3546,8 +3548,8 @@ def cmd_zotero_search(args: argparse.Namespace) -> int:
 
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog zotero-search: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog zotero-search: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, "zotero-search"):
         return 1
 
@@ -3769,8 +3771,8 @@ def _openalex_prepare(args, command: str):
     porcelain = getattr(args, "porcelain", False)
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog {command}: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog {command}: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, command):
         return None
     try:
@@ -3995,8 +3997,8 @@ def _arxiv_prepare(args, command: str):
     porcelain = getattr(args, "porcelain", False)
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog {command}: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog {command}: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, command):
         return None
     try:
@@ -4178,8 +4180,8 @@ def _pubmed_prepare(args, command: str):
     porcelain = getattr(args, "porcelain", False)
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog {command}: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog {command}: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, command):
         return None
     try:
@@ -5961,8 +5963,8 @@ def cmd_arxiv_backfill_provenance(args: argparse.Namespace) -> int:
 
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog {command}: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog {command}: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, command):
         return 1
 
@@ -6103,8 +6105,8 @@ def cmd_pubmed_backfill_provenance(args: argparse.Namespace) -> int:
 
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog {command}: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog {command}: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, command):
         return 1
 
@@ -6672,8 +6674,8 @@ def cmd_openalex_backfill_provenance(args: argparse.Namespace) -> int:
 
     target_str, source = factlog_config.resolve_root(args.target)
     target = Path(target_str)
-    if source in ("config", "cwd") and not porcelain:
-        print(f"factlog {command}: target KB {target} (from {source})")
+    if source in ("config", "cwd"):
+        _narrate(f"factlog {command}: target KB {target} (from {source})", porcelain=porcelain)
     if not _require_kb(target, command):
         return 1
 
