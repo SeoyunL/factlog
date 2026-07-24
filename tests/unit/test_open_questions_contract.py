@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from factlog.review_sections import REVIEW_CATEGORIES
+from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS, _scan_fences
 
 _REPO = Path(__file__).resolve().parents[2]
 _MERGE = _REPO / "tools" / "merge_candidates.py"
@@ -86,6 +86,14 @@ def _validate(kb: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+# The bullet a merge writes for the row _seed_needs_review plants. Spelled out so a
+# test can put the identical line somewhere else in the file and mean it.
+SEEDED_BULLET = (
+    "- needs_review: Widget / related_to / Gadget "
+    "(sources/note.md, confidence=0.40) - relation name is imprecise"
+)
+
+
 def _seed_needs_review(kb: Path) -> None:
     """One ambiguous-relation row, via runs/ — the source of truth for a merge."""
     (kb / "sources" / "note.md").write_text("# note\n", encoding="utf-8")
@@ -119,11 +127,28 @@ def _review_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if line.lstrip().startswith("- needs_review")]
 
 
-def _heading_above(text: str, prefix: str) -> str:
-    """The `## ` heading the first *prefix* line sits under — where it was filed."""
+def _heading_above(text: str, prefix: str) -> str | None:
+    """The **real** `## ` heading the first *prefix* line sits under.
+
+    Fence-aware on purpose. An earlier version of this helper walked back to any
+    `## ` line, which let a bullet orphaned just past a closing fence look correctly
+    filed: the heading it "sat under" was the code sample inside the fence. A test
+    that measures placement with a blinder the code no longer has proves nothing.
+    """
     lines = text.splitlines()
+    flags, _ = _scan_fences(text)
     at = next(i for i, line in enumerate(lines) if line.startswith(prefix))
-    return next(lines[i] for i in range(at, -1, -1) if lines[i].startswith("## "))
+    for i in range(at, -1, -1):
+        if not flags[i] and lines[i].startswith("## "):
+            return lines[i]
+    return None
+
+
+def _is_fenced(text: str, prefix: str) -> bool:
+    """Did the first *prefix* line end up inside a code fence?"""
+    lines = text.splitlines()
+    flags, _ = _scan_fences(text)
+    return flags[next(i for i, line in enumerate(lines) if line.startswith(prefix))]
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +261,304 @@ def test_validate_reports_every_missing_section(tmp_path):
     out = proc.stdout + proc.stderr
     for keyword in KEYWORDS:
         assert f"should keep a {keyword!r} review section" in out, out
+
+
+class TestCodeFencesEndToEnd:
+    """Fences, through the actual `merge_candidates` run (#504).
+
+    These exist because the pure unit tests did not catch the worst bug in this
+    area. `ensure_review_sections` correctly declined to write into a file ending in
+    an unclosed fence and every unit test agreed — and then `insert_bullet`, called
+    right after it in the same function, appended its own heading and the bullet at
+    the end of the file, which is inside that fence. A review item was written into
+    a code block where no rendered view shows it, and the run exited 0.
+
+    A guard that the next writer in the same pipeline walks straight past is not a
+    guard. Only running the pipeline says so.
+    """
+
+    def _fenced_kb(self, tmp_path, text: str) -> Path:
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(text, encoding="utf-8")
+        _seed_needs_review(kb)
+        return kb
+
+    UNCLOSED = (
+        "# Open Questions\n\n## 중복 개념 후보\n\n```\n## 모호 (Ambiguous)\n- 기존 큐\n"
+    )
+
+    def test_a_merge_writes_nothing_into_an_unclosed_fence(self, tmp_path):
+        kb = self._fenced_kb(tmp_path, self.UNCLOSED)
+        proc = _merge(kb, tmp_path)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        after = _open_questions(kb)
+        assert after == self.UNCLOSED, "the file was written to"
+        assert "needs_review" not in after, "a review item was buried in the fence"
+
+    def test_the_merge_says_which_line_to_fix(self, tmp_path):
+        kb = self._fenced_kb(tmp_path, self.UNCLOSED)
+        err = _merge(kb, tmp_path).stderr
+        assert "code fence on line 5" in err, err
+        assert err.count("opens a code fence") == 1, "both writers complained"
+
+    def test_the_validator_explains_the_baffling_error(self, tmp_path):
+        """"'모호' section missing" is unusable when the heading is right there."""
+        kb = self._fenced_kb(tmp_path, self.UNCLOSED)
+        proc = _validate(kb, tmp_path)
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 1, out
+        assert "warning: unclosed_fence:" in out, out
+        assert "line 5" in out, out
+
+    def test_a_fence_opened_after_the_headings_warns_without_failing(self, tmp_path):
+        """Where the fence opens decides the exit code; the warning does not.
+
+        A fragment pasted onto the end of a complete file hides nothing any check
+        requires, so the run passes with only the warning to show for it. The docs
+        and the issue comment both said "rc=1" flatly, which is false in exactly this
+        shape — the common one. Pinned here so the claim cannot drift back.
+        """
+        kb = _init(tmp_path / "kb", tmp_path)
+        _seed_needs_review(kb)
+        assert _merge(kb, tmp_path).returncode == 0
+        with (kb / "decisions" / "open-questions.md").open("a", encoding="utf-8") as f:
+            f.write("\n```\n붙여넣다 만 조각\n")
+        proc = _validate(kb, tmp_path)
+        out = proc.stdout + proc.stderr
+        assert "warning: unclosed_fence:" in out, out
+        assert proc.returncode == 0, out
+        # and the message does not blame errors that were never reported
+        assert "reported missing" not in out, out
+
+    def test_a_fence_opened_before_the_headings_does_fail(self, tmp_path):
+        """The other half of the same rule, so the pair states the whole contract."""
+        kb = self._fenced_kb(tmp_path, self.UNCLOSED)
+        proc = _validate(kb, tmp_path)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+
+    def test_a_tilde_block_quoting_backticks_is_written_to_normally(self, tmp_path):
+        """The shape the reference recommends must not hit the hard stop.
+
+        Wrapping a bullet-format example in `~~~` is how anyone avoids nesting
+        backticks — and this PR added both the recommendation and the hard stop, so a
+        file written the recommended way was refused forever, pointed at the line
+        that closes it and told to close it.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n형식 예시:\n\n"
+            "~~~\n- needs_review: X / r / Y\n```\n~~~\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        kb = self._fenced_kb(tmp_path, doc)
+        proc = _merge(kb, tmp_path)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "opens a code fence" not in proc.stderr, proc.stderr
+        text = _open_questions(kb)
+        assert not _is_fenced(text, "- needs_review: Widget"), text
+        assert _heading_above(text, "- needs_review: Widget") == "## 모호한 관계명", text
+        assert _validate(kb, tmp_path).returncode == 0
+
+    def test_merging_twice_leaves_the_file_byte_identical(self, tmp_path):
+        # The #504 regression grew the file by three headings on every pass.
+        kb = self._fenced_kb(tmp_path, self.UNCLOSED)
+        _merge(kb, tmp_path)
+        once = _open_questions(kb)
+        _merge(kb, tmp_path)
+        assert _open_questions(kb) == once == self.UNCLOSED
+
+    def test_a_closed_fence_example_does_not_capture_the_bullet(self, tmp_path):
+        """The other half: `lines.index` used to match the heading *in* the fence.
+
+        It is a code sample, not a section. The bullet went in just past the closing
+        fence — under no heading at all — and the run still exited 0.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n예시:\n\n```\n"
+            "## 모호한 관계명\n```\n\n## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        kb = self._fenced_kb(tmp_path, doc)
+        assert _merge(kb, tmp_path).returncode == 0
+        text = _open_questions(kb)
+        assert not _is_fenced(text, "- needs_review"), text
+        # under a *real* section — the fenced sample is not one
+        assert _heading_above(text, "- needs_review") == "## 모호한 관계명", text
+        assert _validate(kb, tmp_path).returncode == 0
+
+    def test_a_stale_source_note_is_not_buried_in_a_fence(self, tmp_path):
+        """The second writer, which has its own append and its own way in.
+
+        record_stale_page_refs runs before write_decisions and files its own bullet.
+        With only write_decisions guarded, a KB with a removed source still had a
+        stale_source note written into the code fence.
+        """
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(self.UNCLOSED, encoding="utf-8")
+        (kb / "pages" / "p.md").write_text("# p\n\n- see sources/gone.md\n", encoding="utf-8")
+        mc = _merge_module()
+        assert mc.record_stale_page_refs(kb) == []
+        assert _open_questions(kb) == self.UNCLOSED
+        assert "stale_source" not in _open_questions(kb)
+
+    def test_a_fenced_format_example_does_not_swallow_the_real_bullet(self, tmp_path):
+        """The worst shape found here: the item vanishes and the KB reports valid.
+
+        A KB that documents its own bullet format inside a code fence lost the first
+        real bullet identical to that example — the producer deduplicated against the
+        fenced line and wrote nothing, and the validator counted that same fenced line
+        as proof review bullets existed. Measured: zero real bullets in the file a
+        human reads, one needs_review row in candidates.csv, rc=0, no warning.
+
+        Both ends read review_sections.review_bullets now, so neither can count it.
+        """
+        # Byte-identical to what _seed_needs_review makes the merge write — the
+        # collision is the whole point, so this must not drift from it.
+        bullet = SEEDED_BULLET
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n형식 예시:\n\n"
+            f"```\n{bullet}\n```\n\n## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        kb = self._fenced_kb(tmp_path, doc)
+        assert _merge(kb, tmp_path).returncode == 0
+        text = _open_questions(kb)
+        flags, _ = _scan_fences(text)
+        real = [
+            line
+            for line, fenced in zip(text.splitlines(), flags)
+            if not fenced and line.startswith("- needs_review")
+        ]
+        assert real == [bullet], text  # written, once, outside the fence
+        assert _validate(kb, tmp_path).returncode == 0
+
+    def test_a_fenced_example_alone_does_not_satisfy_the_validator(self, tmp_path):
+        """The validator's half, with the producer taken out of the picture.
+
+        The file is left as a human wrote it — one needs_review row in candidates.csv
+        and nothing filed but a fenced example — and that has to be an error.
+        """
+        kb = _init(tmp_path / "kb", tmp_path)
+        _seed_needs_review(kb)
+        assert _merge(kb, tmp_path).returncode == 0
+        (kb / "decisions" / "open-questions.md").write_text(
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n"
+            "```\n- needs_review: W / related_to / G\n```\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n",
+            encoding="utf-8",
+        )
+        proc = _validate(kb, tmp_path)
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 1, out
+        assert "no review bullets" in out, out
+
+    @pytest.mark.parametrize(
+        "filed,expected_errors",
+        [
+            (None, 1),      # nothing recorded — the error stands
+            ("real", 0),    # recorded as a bullet — the error is answered
+            ("fenced", 1),  # recorded only as an example — answers nothing
+        ],
+        ids=["not-recorded", "recorded", "fenced-example-only"],
+    )
+    def test_only_a_real_bullet_answers_the_stale_source_error(
+        self, tmp_path, filed, expected_errors
+    ):
+        """A stale-source record inside a fence is an example, not a record.
+
+        The check was a substring test over the whole document — neither line-based
+        nor fence-aware — so the fenced case was indistinguishable from the recorded
+        one and silenced the error for a KB that had recorded nothing. The writer
+        files these through a fence-aware insert_bullet; whatever reads back what it
+        filed has to agree with it.
+        """
+        record = "- stale_source: pages/p.md references removed source sources/gone.md"
+        body = {
+            None: "",
+            "real": f"{record}\n",
+            "fenced": f"예시:\n\n```\n{record}\n```\n",
+        }[filed]
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "pages" / "p.md").write_text("# p\n\n- see sources/gone.md\n", encoding="utf-8")
+        (kb / "decisions" / "open-questions.md").write_text(
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n## 출처 부족\n"
+            f"{body}\n## 기존 내용과 충돌할 수 있는 항목\n",
+            encoding="utf-8",
+        )
+        out = _validate(kb, tmp_path).stdout
+        assert out.count("source file does not exist") == expected_errors, out
+
+    def test_both_writers_refuse_even_when_only_one_speaks(self, tmp_path):
+        """Two calls, two refusals, one complaint — the observable behaviour.
+
+        This does not pin the *structure* that produces it: deciding once and
+        returning the remembered answer gives the same results here, since anything
+        reaching the cached path has already read True out of the file. What the
+        separation buys is mutation sensitivity — one break now propagates to both
+        writers instead of one — and that shows up in kill counts, not here.
+        """
+        mc = _merge_module()
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(self.UNCLOSED, encoding="utf-8")
+        text = _open_questions(kb)
+        assert mc.refuse_unclosed_fence(kb, text) is True
+        assert mc.refuse_unclosed_fence(kb, text) is True  # still refused, silently
+        # and a closed file is never refused, warned-about or not
+        assert mc.refuse_unclosed_fence(kb, HAND_SPELLED) is False
+
+    def test_a_bullet_clears_a_fenced_example_inside_its_own_section(self, tmp_path):
+        """A section may quote a `## ` example; the bullet still goes after it.
+
+        The end-of-section scan has to skip fenced lines the same way the lookup
+        does. Stopping at the fenced heading put the bullet *between the fence
+        opener and the example*, inside the code block.
+        """
+        mc = _merge_module()
+        text = (
+            "# Open Questions\n\n## 출처 부족\n- a\n\n"
+            "```\n## 모호한 관계명\n```\n\n"
+            "## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        out = mc.insert_bullet(text, "## 출처 부족", "- b")
+        assert not _is_fenced(out, "- b"), out
+        assert _heading_above(out, "- b") == "## 출처 부족", out
+
+
+class TestKeywordDrift:
+    """merge_candidates' routing keywords are checked against the contract at import.
+
+    Without it the drift is invisible exactly where it matters. A keyword
+    REVIEW_CATEGORIES no longer defines raises KeyError out of `section_for` only
+    when the file has no heading carrying it — a fresh KB. On a populated one the
+    old heading is found and returned, so bullets keep being filed under a category
+    the contract has stopped naming, and nothing anywhere says so.
+    """
+
+    def test_the_routed_keywords_are_all_defined(self):
+        mc = _merge_module()
+        assert mc.ROUTED_KEYWORDS <= REVIEW_KEYWORDS
+        # and they really are the ones the classifier hands out
+        rows = [
+            {"subject": "a", "relation": "same_as", "object": "b", "note": ""},
+            {"subject": "a", "relation": "r", "object": "b", "note": "evidence"},
+            {"subject": "a", "relation": "r", "object": "b", "note": "conflict"},
+            {"subject": "a", "relation": "r", "object": "b", "note": ""},
+        ]
+        assert {mc.decision_section(row) for row in rows} == mc.ROUTED_KEYWORDS
+
+    def test_importing_with_a_dropped_category_fails_loudly(self):
+        """Drop a category from the contract and merge_candidates refuses to load."""
+        import importlib  # noqa: PLC0415
+
+        from factlog import review_sections as rs  # noqa: PLC0415
+
+        mc = _merge_module()
+        original = rs.REVIEW_KEYWORDS
+        try:
+            rs.REVIEW_KEYWORDS = frozenset(original - {"출처"})
+            with pytest.raises(RuntimeError, match="출처"):
+                importlib.reload(mc)
+        finally:
+            rs.REVIEW_KEYWORDS = original
+            importlib.reload(mc)
+        assert _merge_module().ROUTED_KEYWORDS <= REVIEW_KEYWORDS
 
 
 class TestSplitSectionWarning:

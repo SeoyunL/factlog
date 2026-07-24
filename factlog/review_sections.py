@@ -41,16 +41,49 @@ its direction changes. Merging them is a rewrite of a document a human wrote, wh
 is theirs to make, so this module says so out loud instead
 (:func:`split_review_sections`, surfaced as a validator warning) and leaves it.
 
-A section is an **ATX ``## `` heading**. Not any ``#`` line: a ``## 출처 부족``
-inside a fenced code block was being taken for the section itself, and a bullet
-routed to it landed after the closing fence, in no section at all. ``## `` is also
-what ``merge_candidates.insert_bullet`` scans for when it looks for where a section
-ends, so the two agree on what a boundary is. A Setext heading (``출처`` over
-``----``) is not recognised; the reference documents that.
+A section is an **ATX ``## `` heading outside any code fence**. Not any ``#`` line,
+and not a line in a fence: a ``## 출처 부족`` written as an example was taken for
+the section itself, and the bullet routed to it landed past the closing fence, in
+no section at all. A Setext heading (``출처`` over ``----``) is not recognised; the
+reference documents that, and nothing here improves it (#500).
 
-**Anything added here has to be a claim about which sections the file keeps.**
-What a bullet says, when a row deserves review, and whether a human has decided
-are not that claim.
+**Every reader and writer of the file takes those definitions from here.** Four
+questions used to be answered by scans of their own, none of them aware of fences.
+Each was found by measuring, one round after another, and each had let the file and
+the report about the file disagree:
+
+* *where does a section start* — ``insert_bullet``'s ``lines.index``, which matched
+  a heading inside a fence and filed the bullet under no section at all
+  (:func:`section_line_index`);
+* *where does it end* — its own ``startswith("## ")`` walk, which stopped at a
+  fenced example and inserted into the code block (:func:`section_end_index`);
+* *have I filed this bullet, and is anything filed here* — the producer's whole-file
+  line comparison and the validator's ``- `` count, which between them made a
+  needs_review row vanish from the file a human reads while the KB reported
+  completely valid (:func:`review_bullets`);
+* *is this stale-source record already written* — a substring test over the whole
+  document, answered just as well by an example in a fence (:func:`review_bullets`).
+
+A second notion of where a section is, disagreeing with this one, is what #495 was
+about to begin with.
+
+The one file shape nothing writes to is one that **ends inside an unclosed fence**
+(:func:`ends_inside_fence`). Appending happens at the end of the file, and there the
+end is inside the fence: headings written there cannot be read back, bullets written
+there never render, and the next pass sees the same categories missing and appends
+again. The writers stop and say so instead, naming the line
+(:func:`unclosed_fence_line`), because closing the fence is a human's edit.
+
+**Anything added here has to be a claim about the structure of open-questions.md —
+what a reader will find in it and where.** Which sections it keeps, where each one
+runs, which of its lines are filed bullets, and which of its text is code rather
+than prose. That is wider than "which sections the file keeps", which is what this
+line used to say and what the four scans pulled in here have already outgrown.
+
+What a bullet *says*, when a row deserves review, and whether a human has decided
+are still not that claim. Nor is any of this a rendering library: it answers only
+the structural questions the producer and the validator have to agree on, and the
+fence rules exist for that reason rather than for their own sake.
 """
 from __future__ import annotations
 
@@ -68,6 +101,10 @@ REVIEW_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("충돌", "## 기존 내용과 충돌할 수 있는 항목"),
 )
 
+# The keyword set on its own, for callers that route by category and want a drift in
+# REVIEW_CATEGORIES to be loud at import rather than at the first row they classify.
+REVIEW_KEYWORDS: frozenset[str] = frozenset(keyword for keyword, _ in REVIEW_CATEGORIES)
+
 TITLE = "# Open Questions"
 
 # What `factlog init` writes, and what the producer starts from when the file does
@@ -79,34 +116,160 @@ OPEN_QUESTIONS_SCAFFOLD = (
 )
 
 
+# CommonMark lets a fence marker carry up to three leading spaces; at four it is an
+# indented code block, i.e. ordinary content that opens nothing. Counting those as
+# fences made a well-formed document read as permanently unclosed.
+_MAX_FENCE_INDENT = 3
+
+
+def _fence_marker(line: str) -> tuple[str, int, str] | None:
+    """*line* as a fence marker — ``(char, run length, rest)`` — or None.
+
+    A run of three or more backticks or tildes, indented no more than
+    :data:`_MAX_FENCE_INDENT`. ``rest`` is what follows the run, which decides
+    whether the marker is allowed to close: an info string makes it an opener only.
+    """
+    body = line.lstrip(" ")
+    if len(line) - len(body) > _MAX_FENCE_INDENT:
+        return None
+    for char in ("`", "~"):
+        if body.startswith(char * 3):
+            run = len(body) - len(body.lstrip(char))
+            return char, run, body[run:]
+    return None
+
+
+def _scan_fences(text: str) -> tuple[list[bool], int | None]:
+    """Per-line "is this inside a code fence", and where an unclosed fence opened.
+
+    One scan, one answer, used by everything below. It used to be written out twice
+    — once to find headings and once to ask whether the file ended mid-fence — and
+    two copies of the rule for what a section is are what #495 was about in the
+    first place.
+
+    A fence closes only on **CommonMark's terms**: the same character, a run at
+    least as long as the opener's, and nothing after it but whitespace. Treating
+    every marker as a plain toggle broke the one document this module's own
+    reference recommends — a ``~~~`` block quoting a ```` ``` ```` line, which is
+    how anyone writes a bullet-format example without nesting backticks. The
+    backtick line "closed" the tilde fence and the real ``~~~`` re-opened it, so a
+    correct file read as permanently unclosed and both writers refused it forever,
+    pointing at the line that closes it and asking for it to be closed.
+
+    Matching is not uniformly more or less strict than the toggle was: a
+    non-matching marker no longer ends a fence (more of the file is code), and the
+    marker that does match now ends it (less). What it is instead is **the same
+    answer a renderer gives**, which is the only answer that matters — the whole
+    point of the flag is whether a human will see the line or a code block.
+    """
+    flags: list[bool] = []
+    opened_at: int | None = None
+    open_marker: tuple[str, int] | None = None
+    for index, line in enumerate(text.splitlines()):
+        marker = _fence_marker(line)
+        if marker is None:
+            flags.append(opened_at is not None)
+            continue
+        char, run, rest = marker
+        if open_marker is None:
+            opened_at, open_marker = index, (char, run)
+        elif char == open_marker[0] and run >= open_marker[1] and not rest.strip():
+            opened_at, open_marker = None, None
+        flags.append(True)
+    return flags, opened_at
+
+
 def _headings(text: str) -> list[str]:
     """The ``## `` section headings of *text*, raw (trailing whitespace included).
 
-    Raw because the caller feeds the result to ``merge_candidates.insert_bullet``,
-    which locates a section by exact line equality.
+    Raw because callers feed the result back to :func:`section_line_index`, which
+    locates a section by exact line equality.
 
-    Two narrowings, both measured against the same failure. ``## `` exactly and
-    unindented, which is the test ``insert_bullet`` uses to find where a section
-    *ends*; and nothing inside a fenced code block, because a ``## 출처 부족``
-    written as an example in a fence was read as the section itself — the file
-    reported no missing sections while having no real 출처 section, and a bullet
+    ``## `` exactly, unindented, and outside any code fence. A ``## 출처 부족``
+    written as an example inside a fence was read as the section itself: the file
+    reported no missing sections while having no real 출처 section, and the bullet
     routed there was inserted after the closing fence, in no section at all.
-
-    ``insert_bullet``'s own end-of-section scan does not know about fences, so a
-    bullet in a section that embeds a fenced ``## `` example stops at the fence
-    rather than at the section's end. That is a placement wart inside one section,
-    not a bullet lost between two, and #104 owns that scan.
     """
-    headings: list[str] = []
-    fenced = False
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            fenced = not fenced
-            continue
-        if not fenced and line.startswith("## "):
-            headings.append(line)
-    return headings
+    lines = text.splitlines()
+    flags, _ = _scan_fences(text)
+    return [
+        line
+        for line, fenced in zip(lines, flags)
+        if not fenced and line.startswith("## ")
+    ]
+
+
+def review_bullets(text: str) -> list[str]:
+    """The bullet lines of *text* that are really bullets — raw, fences excluded.
+
+    Who has already been filed, and whether anything has. Two places asked that and
+    each answered it its own way, both counting lines inside code fences:
+    ``insert_bullet`` deduplicated against them, so a bullet whose text was quoted as
+    a *format example* in a fence was taken for already present and never written;
+    and ``validate.py`` counted them, so that same example answered "this KB does have
+    review bullets" for a file that had none. Together — measured — a needs_review row
+    vanished from the file a human reads while the KB reported entirely valid.
+
+    ``- `` after optional indentation, which is what a reader sees as a list item.
+    """
+    flags, _ = _scan_fences(text)
+    return [
+        line
+        for line, fenced in zip(text.splitlines(), flags)
+        if not fenced and line.lstrip().startswith("- ")
+    ]
+
+
+def ends_inside_fence(text: str) -> bool:
+    """Did *text* open a code fence and never close it?
+
+    Everything after such a fence is content, including anything appended to the end
+    of the file — so a writer that appends there is writing a heading it cannot read
+    back, and a bullet no reader will ever see rendered. Ask before writing.
+    """
+    return _scan_fences(text)[1] is not None
+
+
+def unclosed_fence_line(text: str) -> int | None:
+    """The 1-based line number where an unclosed fence opened, or None.
+
+    For telling an operator *where*. "This file has a review section missing" sends
+    someone looking for a heading that is right there in front of them; "the fence
+    on line 5 is never closed" is the same failure said in a way they can act on.
+    """
+    opened_at = _scan_fences(text)[1]
+    return None if opened_at is None else opened_at + 1
+
+
+def section_line_index(text: str, heading: str) -> int | None:
+    """Where the section titled *heading* starts, or None if *text* has no such one.
+
+    The lookup ``merge_candidates.insert_bullet`` uses. It used to be a plain
+    ``lines.index(heading)``, which found the heading *inside a code fence* and filed
+    the bullet against it — measured: the bullet landed just past the closing fence,
+    under no section at all, and the run still exited 0. A fenced line is not a
+    section here, so it must not be one there either.
+    """
+    flags, _ = _scan_fences(text)
+    for index, (line, fenced) in enumerate(zip(text.splitlines(), flags)):
+        if not fenced and line == heading:
+            return index
+    return None
+
+
+def section_end_index(text: str, start: int) -> int:
+    """The line index just past the section that starts at *start*.
+
+    Where a new bullet goes. Ends at the next ``## `` heading — the real ones only,
+    so a section that quotes a ``## `` example in a fence is not cut short at it —
+    or at the end of the file.
+    """
+    lines = text.splitlines()
+    flags, _ = _scan_fences(text)
+    end = start + 1
+    while end < len(lines) and not (not flags[end] and lines[end].startswith("## ")):
+        end += 1
+    return end
 
 
 def _heading_with(text: str, keyword: str) -> str | None:
@@ -164,9 +327,23 @@ def ensure_review_sections(text: str) -> str:
     as they are, so this is churn-free on an existing KB and idempotent: the second
     call finds nothing missing and returns *text* unchanged. A category that has two
     is left alone as well; see :func:`split_review_sections` for why.
+
+    A canonical heading whose text also appears inside a code fence *is* still
+    written: the fenced copy is an example, not a section, and no reader or writer
+    treats it as one — :func:`section_line_index` skips it too, so the bullets go to
+    the real heading this adds. Refusing to write it instead left the document
+    permanently short a section with no way to earn it back.
     """
     missing = missing_review_sections(text)
     if not missing:
+        return text
+    # The one file this declines to touch. An unclosed fence swallows the end of the
+    # file, which is exactly where this appends — every heading written there would
+    # land inside the fence, unreadable by the scan that just asked for it, and the
+    # appended headings would read as missing again on the next pass, so the file
+    # grew by three headings per merge and never converged. Write nothing; the
+    # writers in merge_candidates stop on the same condition and say why.
+    if ends_inside_fence(text):
         return text
     canonical = dict(REVIEW_CATEGORIES)
     # `.strip()`, not `.rstrip("\n")`: a file holding only spaces and newlines is as

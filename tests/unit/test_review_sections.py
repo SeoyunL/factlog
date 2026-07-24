@@ -21,10 +21,16 @@ import pytest
 from factlog.review_sections import (
     OPEN_QUESTIONS_SCAFFOLD,
     REVIEW_CATEGORIES,
+    _headings,
+    ends_inside_fence,
     ensure_review_sections,
     missing_review_sections,
+    review_bullets,
+    section_end_index,
     section_for,
+    section_line_index,
     split_review_sections,
+    unclosed_fence_line,
 )
 
 KEYWORDS = [keyword for keyword, _ in REVIEW_CATEGORIES]
@@ -136,6 +142,68 @@ class TestEnsureReviewSections:
         assert out.count("중복") == 1
         assert missing_review_sections(out) == []
 
+    def test_an_unclosed_fence_does_not_get_a_duplicate_heading(self):
+        """Regression (#504): this file grew three byte-identical headings per pass.
+
+        An unclosed fence hides everything after it from the heading scan, so the
+        categories below it read as missing and were appended again — a second copy
+        of the exact same heading line, the queue left under the hidden first one,
+        and split_review_sections unable to see that original to warn about it. The
+        very split this module exists to prevent, manufactured by it.
+
+        Inside this function the unclosed-fence check is the only thing that stops
+        it, so removing that check fails this. It is a **library contract, not the
+        pipeline's defence**: merge_candidates' writers call `refuse_unclosed_fence`
+        first and never reach here with such a file, so deleting the check leaves
+        every end-to-end test green. That is exactly why this case is a unit test.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n```\n"
+            "## 모호한 관계명\n- 기존 큐가 여기 있다\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        out = ensure_review_sections(doc)
+        assert out == doc, "a hidden heading was copied instead of left alone"
+        assert ensure_review_sections(out) == out
+        for _, heading in REVIEW_CATEGORIES:
+            assert out.splitlines().count(heading) <= 1, (heading, out)
+
+    def test_nothing_is_written_into_an_unclosed_fence(self):
+        """A file that never closes a fence is left alone and reported, not patched.
+
+        Appending is appending to the end, and the end is inside the fence — every
+        heading written there is invisible to the scan that asked for it. Measured:
+        scaffolding this file produced three headings that still read as missing.
+        """
+        doc = "# Open Questions\n\n```\n## 모호한 관계명\n"
+        out = ensure_review_sections(doc)
+        assert out == doc
+        assert missing_review_sections(out) == KEYWORDS  # loud, all four
+        assert ensure_review_sections(out) == out
+
+    @pytest.mark.parametrize("keyword,canonical", list(REVIEW_CATEGORIES))
+    def test_a_category_whose_only_copy_is_fenced_gets_a_real_section(
+        self, keyword, canonical
+    ):
+        """A fenced heading is an example, so the category is genuinely absent.
+
+        Writing the real section is the repair, and it is safe now that every lookup
+        skips fenced lines: section_line_index finds the one this adds, not the
+        example. An earlier cut refused to write it — the copy in the fence looked
+        like "already there" — and left the document permanently a section short with
+        no way to earn it back.
+        """
+        others = "\n\n".join(h for k, h in REVIEW_CATEGORIES if k != keyword)
+        doc = f"# Open Questions\n\n{others}\n\n예시:\n\n```\n{canonical}\n```\n"
+        out = ensure_review_sections(doc)
+        assert missing_review_sections(out) == []
+        assert ensure_review_sections(out) == out
+        # one real section, plus the example that is not one
+        assert _headings(out).count(canonical) == 1
+        lines = out.splitlines()
+        fenced_at = lines.index(canonical)  # the example, first in raw line order
+        assert section_line_index(out, canonical) > fenced_at
+
     def test_it_is_idempotent(self):
         once = ensure_review_sections("# Open Questions\n")
         assert ensure_review_sections(once) == once
@@ -150,6 +218,157 @@ class TestEnsureReviewSections:
             for line in OPEN_QUESTIONS_SCAFFOLD.splitlines()
             if line.lstrip().startswith("- ")
         ]
+
+
+class TestFenceScanning:
+    """What counts as a fence, and what an unclosed one means.
+
+    One scan answers all of it now. It was written out twice — once for headings,
+    once for "does the file end mid-fence" — and two copies of the rule for what a
+    section is are the disease #495 was about.
+    """
+
+    @pytest.mark.parametrize("marker", ["```", "~~~"])
+    def test_either_fence_marker_can_leave_a_file_open(self, marker):
+        # `~~~` had no test at all: deleting it from the scan changed nothing.
+        doc = f"# Open Questions\n\n{marker}\n## 모호한 관계명\n"
+        assert ends_inside_fence(doc) is True
+        assert unclosed_fence_line(doc) == 3
+        assert missing_review_sections(doc) == KEYWORDS
+
+    @pytest.mark.parametrize("marker", ["```", "~~~"])
+    def test_a_closed_fence_leaves_the_file_open_to_writing(self, marker):
+        doc = f"# Open Questions\n\n{marker}\n## 모호한 관계명\n{marker}\n"
+        assert ends_inside_fence(doc) is False
+        assert unclosed_fence_line(doc) is None
+
+    def test_three_spaces_of_indent_is_still_a_fence(self):
+        # CommonMark: up to three spaces of indent, and it is a fence.
+        doc = "# Open Questions\n\n   ```\n## 모호한 관계명\n"
+        assert ends_inside_fence(doc) is True
+
+    def test_four_spaces_of_indent_is_an_indented_code_block_not_a_fence(self):
+        """A well-formed document was being read as permanently unclosed.
+
+        At four spaces the line is an indented code block — content that opens
+        nothing — so the headings below it are real and the file validates.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n예시:\n\n    ```\n\n"
+            "## 모호한 관계명\n\n## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        assert ends_inside_fence(doc) is False
+        assert missing_review_sections(doc) == []
+
+    def test_an_odd_number_of_fences_really_does_end_open(self):
+        # Not a false positive: the third fence opens and nothing closes it.
+        doc = "# Open Questions\n\n```\na\n```\n\n## 모호한 관계명\n\n```\nb\n"
+        assert ends_inside_fence(doc) is True
+        assert unclosed_fence_line(doc) == 9
+
+    def test_a_tilde_block_may_quote_a_backtick_line(self):
+        """The document this module's own reference tells people to write.
+
+        Anyone spelling out the bullet format wraps the example in ``~~~`` precisely
+        so the backticks inside need no escaping. Toggling on any marker made the
+        quoted ``` "close" the tilde fence and the real ``~~~`` re-open it, so a
+        correct file read as permanently unclosed: both writers refused it forever,
+        pointing at the line that closes it and asking for it to be closed.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n형식 예시:\n\n"
+            "~~~\n- needs_review: X / r / Y\n```\n~~~\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        assert ends_inside_fence(doc) is False
+        assert unclosed_fence_line(doc) is None
+        assert missing_review_sections(doc) == []
+        assert review_bullets(doc) == []  # the example is still not a filed bullet
+
+    def test_a_backtick_block_may_quote_a_tilde_line(self):
+        doc = "# Open Questions\n\n```\n~~~\n```\n\n## 모호한 관계명\n"
+        assert ends_inside_fence(doc) is False
+        assert _headings(doc) == ["## 모호한 관계명"]
+
+    def test_a_longer_run_closes_but_a_shorter_one_does_not(self):
+        # CommonMark: the closing run is at least as long as the opening one.
+        assert ends_inside_fence("# Open Questions\n\n```\nx\n`````\n") is False
+        assert ends_inside_fence("# Open Questions\n\n`````\nx\n```\n") is True
+
+    def test_a_marker_carrying_an_info_string_cannot_close(self):
+        # ```python opens a block; it never ends one.
+        assert ends_inside_fence("# Open Questions\n\n```\nx\n```python\n") is True
+
+
+class TestReviewBullets:
+    """What counts as a filed bullet — the reader both the producer and validator use.
+
+    They each had their own before, and both counted lines inside code fences. A KB
+    that documents its own bullet format in a fence therefore had the example stand in
+    for the queue: the producer skipped the first real bullet as a duplicate of it,
+    and the validator accepted it as proof that review bullets existed.
+    """
+
+    def test_a_bullet_in_a_fence_is_not_a_filed_bullet(self):
+        text = "# Open Questions\n\n형식 예시:\n\n```\n- needs_review: X / r / Y\n```\n"
+        assert review_bullets(text) == []
+
+    def test_real_bullets_are_returned_raw(self):
+        text = "# Open Questions\n\n## 출처 부족\n- needs_review: X / r / Y\n  - nested\n"
+        assert review_bullets(text) == ["- needs_review: X / r / Y", "  - nested"]
+
+    def test_the_example_and_the_real_bullet_are_told_apart(self):
+        bullet = "- needs_review: W / related_to / G"
+        text = f"# Open Questions\n\n```\n{bullet}\n```\n\n## 모호한 관계명\n{bullet}\n"
+        assert review_bullets(text) == [bullet]
+
+    def test_a_dash_that_is_not_a_list_item_does_not_count(self):
+        assert review_bullets("# Open Questions\n\n---\n-notabullet\n") == []
+
+
+class TestSectionLookup:
+    """Where a section starts and ends — the answer insert_bullet now shares.
+
+    It used to keep its own: `lines.index(heading)` and a `startswith("## ")` scan,
+    neither of which knew about fences. Measured on that code, a bullet was filed
+    against a heading inside a code fence and written just past the closing fence,
+    under no section at all, and the run exited 0.
+    """
+
+    FENCED = (
+        "# Open Questions\n\n"          # 0,1
+        "## 중복 개념 후보\n\n"           # 2,3
+        "```\n"                          # 4
+        "## 출처 부족\n"                  # 5  <- example, not a section
+        "```\n\n"                        # 6,7
+        "## 출처 부족\n"                  # 8  <- the real one
+        "- 기존 항목\n"                   # 9
+    )
+
+    def test_a_fenced_heading_is_never_the_section(self):
+        assert section_line_index(self.FENCED, "## 출처 부족") == 8
+
+    def test_a_missing_section_is_none_rather_than_a_guess(self):
+        assert section_line_index(self.FENCED, "## 모호한 관계명") is None
+
+    def test_a_section_runs_to_the_next_real_heading(self):
+        #    0                 1   2               3     4   5            6
+        doc = "# Open Questions\n\n## 중복 개념 후보\n- a\n\n## 출처 부족\n- b\n"
+        assert section_end_index(doc, 2) == 5
+
+    def test_a_section_with_no_heading_after_it_runs_to_the_end(self):
+        doc = "# Open Questions\n\n## 중복 개념 후보\n- a\n"
+        assert section_end_index(doc, 2) == 4
+
+    def test_a_fenced_heading_does_not_cut_a_section_short(self):
+        """The end scan skips fenced `## ` lines too, or a bullet lands in the fence."""
+        #    0                 1   2               3     4     5            6     7     8   9
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n- a\n"
+            "```\n## 출처 부족\n```\n"
+            "- b\n\n## 출처 부족\n"
+        )
+        assert section_end_index(doc, 2) == 9
 
 
 class TestSplitReviewSections:

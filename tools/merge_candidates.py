@@ -99,9 +99,33 @@ from common import (  # noqa: E402
 from factlog import literal_types  # noqa: E402
 from factlog.review_sections import (  # noqa: E402
     OPEN_QUESTIONS_SCAFFOLD,
+    REVIEW_KEYWORDS,
+    ends_inside_fence,
     ensure_review_sections,
+    review_bullets,
+    section_end_index,
     section_for,
+    section_line_index,
+    unclosed_fence_line,
 )
+
+# The category keywords this module routes bullets with — `decision_section`'s four
+# return values and the one `record_stale_page_refs` files stale refs under. Which
+# row belongs to which category is a classification rule and lives here; what heading
+# a keyword resolves to is `section_for`'s to answer.
+#
+# Checked at import because the failure is otherwise invisible where it matters. A
+# keyword that no longer exists in REVIEW_CATEGORIES raises KeyError from
+# `section_for` only when the file has no heading carrying it — that is, on a fresh
+# KB. On a populated one `_heading_with` finds the old heading and returns it, so the
+# drift routes bullets to a category the contract no longer names and says nothing.
+# Loud on every KB, at import, before a single row is classified.
+ROUTED_KEYWORDS = frozenset({"중복", "모호", "출처", "충돌"})
+if not ROUTED_KEYWORDS <= REVIEW_KEYWORDS:
+    raise RuntimeError(  # not `assert`: this must survive `python -O`
+        "merge_candidates routes review bullets with keywords that "
+        f"factlog.review_sections no longer defines: {sorted(ROUTED_KEYWORDS - REVIEW_KEYWORDS)}"
+    )
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -652,18 +676,26 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
     # Idempotency by exact line, not substring: a plain `bullet in text` dropped a
     # new bullet whenever it was a prefix-substring of a longer existing bullet
     # (e.g. "...note" skipped because "...note extra" was already present).
-    if bullet.rstrip() in {line.rstrip() for line in lines}:
+    #
+    # Against the bullets review_sections counts, not every line in the file. Matching
+    # fenced lines too meant a KB that documents its own bullet format in a code fence
+    # silently swallowed the first real bullet identical to that example — and
+    # validate.py, counting the same fenced line as a review bullet, then reported the
+    # file complete. One reader, so the two cannot disagree about it.
+    if bullet.rstrip() in {line.rstrip() for line in review_bullets(text)}:
         return text
-    try:
-        index = lines.index(section)
-    except ValueError:
+    # Where the section is, and where it ends, are review_sections' to answer — the
+    # same answer the scaffolder and the validator get. This was `lines.index(section)`
+    # and a `startswith("## ")` scan of its own, which found headings *inside code
+    # fences*: measured, a bullet was filed against a fenced heading and written just
+    # past the closing fence, under no section at all, and the run exited 0.
+    index = section_line_index(text, section)
+    if index is None:
         if text and not text.endswith("\n"):
             text += "\n"
         return f"{text}\n{section}\n{bullet}\n"
 
-    insert_at = index + 1
-    while insert_at < len(lines) and not lines[insert_at].startswith("## "):
-        insert_at += 1
+    insert_at = section_end_index(text, index)
     if insert_at > index + 1 and lines[insert_at - 1].strip():
         lines.insert(insert_at, "")
         insert_at += 1
@@ -679,10 +711,54 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+# Which files this process has already complained about. Printing only — the refusal
+# itself is decided from the text every time; see refuse_unclosed_fence. A second run
+# in the same process is therefore quiet, which the CLI (one run per process) never
+# sees, but a caller looping over KBs still hears about each distinct file.
+_FENCE_WARNED: set[Path] = set()
+
+
+def refuse_unclosed_fence(root: Path, text: str) -> bool:
+    """Is *text* unwritable because it ends inside an open code fence? Say so if it is.
+
+    Everything appended to such a file lands inside the fence. `ensure_review_sections`
+    already declines to add headings there, but declining is not enough on its own:
+    `insert_bullet` appends its own `## heading` + bullet when the section is not
+    found, and *that* append went into the fence too — measured, a needs_review item
+    was written into a code block, invisible in any rendered view, while the run
+    exited 0 and the validator complained about a heading sitting in plain sight.
+
+    So both writers stop here, before writing anything, and name the line. The row
+    itself is not lost: it stays `needs_review` in facts/candidates.csv, which is the
+    queue's source of truth, and the mirror into open-questions.md resumes as soon as
+    the fence is closed.
+
+    The refusal is re-decided from *text* every call. Only the printing is
+    remembered, so that one file draws one complaint from the two writers a run calls
+    — an earlier version returned early on the remembered path, which made the second
+    writer's refusal a cache hit rather than a decision.
+    """
+    if not ends_inside_fence(text):
+        return False
+    decisions = (root / "decisions" / "open-questions.md").resolve()
+    if decisions not in _FENCE_WARNED:
+        _FENCE_WARNED.add(decisions)
+        print(
+            f"  WARNING: decisions/open-questions.md opens a code fence on line "
+            f"{unclosed_fence_line(text)} and never closes it, so everything after it "
+            f"is code. Nothing was written to that file this run — close the fence and "
+            f"re-run merge.",
+            file=sys.stderr,
+        )
+    return True
+
+
 def write_decisions(root: Path, rows: list[dict[str, str]]) -> list[str]:
     decisions = root / "decisions" / "open-questions.md"
     decisions.parent.mkdir(parents=True, exist_ok=True)
     text = decisions.read_text(encoding="utf-8") if decisions.exists() else OPEN_QUESTIONS_SCAFFOLD
+    if refuse_unclosed_fence(root, text):
+        return []
     # The four sections are an invariant of the file, not a side effect of having
     # had something to review: a KB that has never produced a needs_review row still
     # has to validate (#495). Only categories with no heading at all are added.
@@ -720,6 +796,8 @@ def record_stale_page_refs(root: Path) -> list[str]:
     known_sources = source_file_refs(root)
     decisions = root / "decisions" / "open-questions.md"
     text = decisions.read_text(encoding="utf-8") if decisions.exists() else OPEN_QUESTIONS_SCAFFOLD
+    if refuse_unclosed_fence(root, text):
+        return []
     text = ensure_review_sections(text)
     added: list[str] = []
     for page in sorted((root / "pages").glob("*.md")):
