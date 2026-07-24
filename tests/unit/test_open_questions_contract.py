@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from factlog.md_lines import fence_flags
+from factlog.md_lines import fence_flags, headings
 from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS, section_for
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -121,7 +121,13 @@ def _open_questions(kb: Path) -> str:
 
 
 def _headings(text: str) -> list[str]:
-    return [line for line in text.splitlines() if line.startswith("#")]
+    """The headings of *text*, as the code reads them.
+
+    md_lines' answer and not a `#`-prefix scan of its own: a helper with a blinder
+    the code no longer has proves nothing about the code. Fence-aware, and Setext
+    headings count.
+    """
+    return [found.text for found in headings(text)]
 
 
 def _review_lines(text: str) -> list[str]:
@@ -129,20 +135,19 @@ def _review_lines(text: str) -> list[str]:
 
 
 def _heading_above(text: str, prefix: str) -> str | None:
-    """The **real** `## ` heading the first *prefix* line sits under.
+    """The **real** level-2 heading the first *prefix* line sits under.
 
     Fence-aware on purpose. An earlier version of this helper walked back to any
     `## ` line, which let a bullet orphaned just past a closing fence look correctly
     filed: the heading it "sat under" was the code sample inside the fence. A test
-    that measures placement with a blinder the code no longer has proves nothing.
+    that measures placement with a blinder the code no longer has proves nothing —
+    so it asks md_lines, which is also why a Setext heading counts here.
     """
-    lines = text.splitlines()
-    flags, _ = fence_flags(text)
-    at = next(i for i, line in enumerate(lines) if line.startswith(prefix))
-    for i in range(at, -1, -1):
-        if not flags[i] and lines[i].startswith("## "):
-            return lines[i]
-    return None
+    at = next(
+        i for i, line in enumerate(text.splitlines()) if line.startswith(prefix)
+    )
+    above = [h for h in headings(text) if h.level == 2 and h.end <= at]
+    return above[-1].text if above else None
 
 
 def _is_fenced(text: str, prefix: str) -> bool:
@@ -661,5 +666,5 @@ class TestBulletPlacement:
         lines = _open_questions(kb).splitlines()
         bullet = next(i for i, line in enumerate(lines) if line.startswith("- needs_review"))
         after = lines[bullet + 1]
-        assert not after.startswith("## "), "\n".join(lines)
+        assert not any(h.start == bullet + 1 for h in headings("\n".join(lines)))
         assert after.strip() == ""

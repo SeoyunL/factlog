@@ -101,6 +101,7 @@ from factlog.md_lines import (  # noqa: E402
     Heading,
     bullets,
     ends_inside_fence,
+    headings,
     section_body_end,
     unclosed_fence_line,
 )
@@ -692,8 +693,8 @@ def insert_bullet(text: str, section: Heading, bullet: str) -> str:
     if bullet.rstrip() in {line.rstrip() for line in bullets(text)}:
         return text
     # Where the section ends is md_lines' to answer — the same answer the scaffolder
-    # and the validator get. This was a `startswith("## ")` scan of its own, which
-    # found headings *inside code fences*: measured, a bullet was filed against a
+    # and the validator get. This was a `## ` prefix scan of its own, which found
+    # headings *inside code fences*: measured, a bullet was filed against a
     # fenced heading and written just past the closing fence, under no section at
     # all, and the run exited 0.
     #
@@ -708,11 +709,21 @@ def insert_bullet(text: str, section: Heading, bullet: str) -> str:
     lines.insert(insert_at, bullet)
     # Keep a blank line between the bullet and the heading that follows it. The
     # bullet is placed at the section's end, which for a section whose content ends
-    # in a blank line is the heading's own index — so the bullet landed flush against
-    # the next `## `, reading as its lead-in rather than as the previous section's
-    # last item. Routing bullets to a file's *existing* sections (#495) made that the
-    # common case rather than a corner one.
-    if insert_at + 1 < len(lines) and lines[insert_at + 1].startswith("## "):
+    # in a blank line is the next heading's own index — so the bullet landed flush
+    # against that heading, reading as its lead-in rather than as the previous
+    # section's last item. Routing bullets to a file's *existing* sections (#495)
+    # made that the common case rather than a corner one.
+    #
+    # Asked of md_lines, and asked of the text *before* the insert. This was the
+    # fifth scan of its own — a `## ` prefix test on the following line — and a
+    # Setext heading has no `## ` on it: measured, the blank line was dropped and
+    # the heading below it stopped being a heading at all; the bullet's list swallowed
+    # its title line as a lazy continuation and the `----` under it became a
+    # horizontal rule. The scan said the section was there and a renderer showed no
+    # section, which is the disagreement this module pair exists to prevent. Before
+    # the insert, because after it the damage is already done and the scan agrees
+    # with the damage.
+    if any(found.start == insert_at for found in headings(text)):
         lines.insert(insert_at + 1, "")
     return "\n".join(lines).rstrip() + "\n"
 
