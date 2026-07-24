@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from common import (
-    CANONICAL_MARKER,
-    CANONICAL_PREFIX_RE,
     EMPTY_POLICY_DL,
     POLICY_DIR,
     PROMPTS_DIR,
@@ -23,7 +21,6 @@ from common import (
     WIRELOG_PROGRAM,
     FactlogError,
     _engine_decl_predicates,
-    _LEADING_MARKER_RE,
     _strip_canonical_prefix,
     dl_string,
     ensure_dirs,
@@ -61,12 +58,13 @@ RELATION_RE = re.compile(r"^[^\s\"`(),.]+$")
 # relation_alive is exactly what this replaces. This is one of four consumers of
 # common._engine_decl_predicates; test_reserved_predicate_parity pins them together.
 RESERVED_PREDICATES = _engine_decl_predicates()
-# CANONICAL_MARKER / CANONICAL_PREFIX_RE / _LEADING_MARKER_RE / _strip_canonical_prefix
-# moved to factlog/common.py and are imported above. They are the FIRST step of
-# fixture_policy_json's per-bullet loop, and common.logic_policy_text_has_rejected_items
-# has to run the same step before counting relations or the two disagree about which
-# bullets were "rejected for missing backticks" (#496). Re-exported here so this module
-# stays the place the compiler's grammar reads from end to end.
+# The canonical-marker grammar (_strip_canonical_prefix, imported above, plus the
+# CANONICAL_MARKER / CANONICAL_PREFIX_RE / _LEADING_MARKER_RE it reads) lives in
+# factlog/common.py. It is the FIRST step of fixture_policy_json's per-bullet loop, and
+# common.logic_policy_text_has_rejected_items has to run the same step before counting
+# relations or the two disagree about which bullets were "rejected for missing backticks"
+# (#496). Only the function is imported here — the three constants have no caller outside
+# common.py, so importing them just to re-export would be an unused import (ruff F401).
 
 
 def read_required(path: Path) -> str:
