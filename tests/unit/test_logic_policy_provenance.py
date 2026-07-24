@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+import run_logic_check as rlc
 from factlog import common
 
 PROSE_MD = "# Logic policy\n\nWrite rules like `- [c1] ... ` here later.\n"
@@ -116,6 +117,80 @@ class TestProgramTextUnchanged:
         dl = _policy(tmp_path, **files)
         assert common._load_logic_policy_from(dl) == expected
         assert common._load_logic_policy_program_from(dl).text == expected
+
+
+class TestReportLinesAgreeOnWhatLoaded:
+    """The header and the tail must never contradict each other (#506 review).
+
+    ``policy_provenance_line`` and ``policy_evaluation_default`` both answer "was a
+    policy applied here", and while they answered it with two different expressions
+    a KB whose only policy is a contributing extra.dl got a header naming that file
+    over a tail saying no policy was loaded — the #506 lie pointing the other way.
+    Both now read ``LogicPolicyProgram.loaded``; these pin the pair.
+
+    Engine-free by design, and they live in this module for that reason: the seam is
+    two pure renderers over a loader value, so it must stay pinned on a machine with
+    no pyrewire. The programs come from the REAL loader over real files so the
+    fixtures cannot drift from what it actually returns; only the rendering is
+    called directly, which is what lets the ruleless case be reached without
+    depending on how a given engine build declares predicates.
+    """
+
+    @pytest.mark.parametrize(
+        "files, expected_header, expected_tail",
+        [
+            # Nothing on disk: both lines say so, and the tail names the file a
+            # reader would go looking for.
+            (
+                {"md": PROSE_MD},
+                "policy: none (policy/logic-policy.dl absent)",
+                "- no policy loaded (policy/logic-policy.dl absent)",
+            ),
+            # A compiled policy with no rules (#491): loaded, so the tail keeps
+            # today's wording.
+            (
+                {"md": PROSE_MD, "dl": STUB_DL},
+                "policy: policy/logic-policy.dl",
+                "- no generated policy predicates",
+            ),
+            # The divergence that survived: no compiled .dl, but a contributing
+            # extra.dl (#120). A policy WAS loaded — the tail must not deny it.
+            (
+                {"md": PROSE_MD, "extra": EXTRA_DL},
+                "policy: policy/logic-policy.extra.dl (policy/logic-policy.dl absent)",
+                "- no generated policy predicates",
+            ),
+            # A comment-only extra.dl contributes nothing, so this is the
+            # nothing-loaded case again, not the one above.
+            (
+                {"md": PROSE_MD, "extra": COMMENT_EXTRA_DL},
+                "policy: none (policy/logic-policy.dl absent)",
+                "- no policy loaded (policy/logic-policy.dl absent)",
+            ),
+            (
+                {"md": PROSE_MD, "dl": BASE_DL, "extra": EXTRA_DL},
+                "policy: policy/logic-policy.dl, policy/logic-policy.extra.dl",
+                "- no generated policy predicates",
+            ),
+        ],
+    )
+    def test_header_and_tail_report_the_same_load(
+        self, tmp_path, files, expected_header, expected_tail
+    ):
+        program = common._load_logic_policy_program_from(_policy(tmp_path, **files))
+        assert rlc.policy_provenance_line(program) == expected_header
+        assert rlc.policy_evaluation_default(program) == expected_tail
+
+    def test_extra_only_policy_is_never_reported_as_no_policy_loaded(self, tmp_path):
+        # Stated once more on its own, because this is the shape that had no
+        # coverage: sources non-empty while the base is absent. A tail keyed on
+        # "was the BASE loaded" answers "no policy loaded" here and is wrong.
+        program = common._load_logic_policy_program_from(
+            _policy(tmp_path, md=PROSE_MD, extra=EXTRA_DL)
+        )
+        assert program.loaded is True
+        assert program.base_loaded is False
+        assert "no policy loaded" not in rlc.policy_evaluation_default(program)
 
 
 class TestLoudPathsUnchanged:

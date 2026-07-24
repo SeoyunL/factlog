@@ -783,12 +783,19 @@ def logic_policy_md_has_rejected_items(md_path: Path) -> bool:
 
 @dataclass(frozen=True)
 class LogicPolicyProgram:
-    """The assembled policy text plus the files that actually contributed to it.
+    """The assembled policy text plus the policy files this KB loaded.
 
-    ``sources`` holds only files whose bytes reached ``text``, in the loader's own
-    merge order (base, then extra.dl) — never a set or a directory listing, so a
-    report rendering it is deterministic. ``base`` is named even when it did not
-    contribute, because "the compiled policy is absent" is the fact a reader needs.
+    ``sources`` lists them in the loader's own merge order (base, then extra.dl) —
+    never a set or a directory listing, so a report rendering it is deterministic.
+    ``base`` is named even when it is not among them, because "the compiled policy
+    is absent" is the fact a reader needs.
+
+    The two files earn their place by DIFFERENT rules, and the asymmetry is
+    deliberate. The base is listed when it EXISTS: a compiled ``logic-policy.dl``
+    holding nothing but ``// no policy rules`` contributes no bytes to ``text`` yet
+    is a real, compiled policy that a KB deliberately has (#491). The extra.dl is
+    listed only when it CONTRIBUTES, because it is hand-authored and optional — an
+    absent one and a comment-only one are the same non-event (#116 invariant 1).
 
     This exists so ``tools/run_logic_check.py`` can state what it checked against
     without re-deriving it: whether extra.dl contributed is the non-obvious rule in
@@ -802,7 +809,19 @@ class LogicPolicyProgram:
     base: Path
 
     @property
+    def loaded(self) -> bool:
+        """Did ANY policy file reach the engine? The one predicate every report
+        line asking "was a policy applied here" must use — including the ones that
+        only report it in passing. Two report lines that answer it with two
+        different expressions can contradict each other on a KB whose only policy
+        is an extra.dl (#506 review): the header names the file it loaded while the
+        tail says no policy was loaded at all."""
+        return bool(self.sources)
+
+    @property
     def base_loaded(self) -> bool:
+        """Is the COMPILED policy among them? A narrower question than ``loaded``,
+        and only for deciding whether to report ``logic-policy.dl`` as absent."""
         return self.base in self.sources
 
 

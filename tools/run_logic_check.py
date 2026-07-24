@@ -56,7 +56,7 @@ def policy_provenance_line(program: LogicPolicyProgram) -> str:
     loader's rule, and a KB whose only policy is a hand-authored extra.dl (#120) has
     a policy, so answering "none" from a missing base would be the same lie again.
     """
-    loaded = ", ".join(_kb_relative(path) for path in program.sources) or "none"
+    loaded = ", ".join(_kb_relative(path) for path in program.sources) if program.loaded else "none"
     if program.base_loaded:
         return f"policy: {loaded}"
     return f"policy: {loaded} ({_kb_relative(program.base)} absent)"
@@ -70,8 +70,15 @@ def policy_evaluation_default(program: LogicPolicyProgram) -> str:
     no policy program at all. Restated here because a reader summarising the report
     tail never sees the header ten lines up. It is a statement of fact, not a
     warning: nothing is added to ``warnings``/``errors`` and rc is untouched (#336).
+
+    Reads ``program.loaded`` — the SAME predicate ``policy_provenance_line`` asks,
+    not a second expression that happens to agree on the KBs someone tested. When
+    the two diverged, a KB whose only policy is a contributing extra.dl had a header
+    naming that file and a tail saying no policy was loaded (#506 review): the
+    header is right, and a self-contradicting report is the same class of defect
+    #506 removes, only pointing the other way.
     """
-    if program.sources:
+    if program.loaded:
         return "- no generated policy predicates"
     return f"- no policy loaded ({_kb_relative(program.base)} absent)"
 
