@@ -363,9 +363,24 @@ def test_service_push_back_recovers_when_a_retry_succeeds():
 def test_retry_after_sets_the_wait_between_attempts():
     slept = []
     api, calls = client([_Response(503, {"retry-after": "30"}, "")] * 3, sleeps=slept)
-    with pytest.raises(ArxivServiceError, match="30s"):
+    # `retry after 30s`, not `30.0s`: the wait is a float internally and the
+    # message must not leak that.
+    with pytest.raises(ArxivServiceError, match="retry after 30s"):
         api.fetch_works(["1706.03762"])
     assert slept == [30.0, 30.0]
+    assert len(calls) == 3
+
+
+def test_a_fractional_retry_after_is_slept_and_rendered_without_noise():
+    # RFC 9110 says delta-seconds is an integer, but a server is free to be
+    # sloppy. The wait is used as sent, and the message renders it as `1.5s`
+    # rather than an artefact of float formatting — while a whole `30` stays
+    # `30s` and does not become `30.0s`.
+    slept = []
+    api, calls = client([_Response(503, {"retry-after": "1.5"}, "")] * 3, sleeps=slept)
+    with pytest.raises(ArxivServiceError, match="retry after 1.5s"):
+        api.fetch_works(["1706.03762"])
+    assert slept == [1.5, 1.5]
     assert len(calls) == 3
 
 
