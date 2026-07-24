@@ -319,6 +319,33 @@ class ZoteroClient:
             raise ZoteroError(f"item key(s) not found in Zotero: {', '.join(missing)}")
         return self._bibliographic(out)
 
+    def search_items(
+        self, q: str, qmode: str = "titleCreatorYear", limit: int | None = None
+    ) -> list[dict]:
+        """Discovery search over the personal library, bibliographic items only.
+
+        Runs Zotero's quick search (``items(q=…, qmode=…)``) and drops the same
+        non-bibliographic children (attachments/notes) every other query filters,
+        so a result can be handed straight to ``zotero-import --items`` by key.
+
+        ``qmode`` is Zotero's own: ``titleCreatorYear`` (the default — title,
+        creators, year and a few identifier fields) or ``everything`` (full-text).
+        ``limit`` caps the result count at the API; ``None`` leaves Zotero's own
+        default in place. Unlike the collection/tag queries this does **not**
+        page with ``everything``: a search is a bounded top-N listing, and
+        following pagination would silently return the whole library past
+        ``limit``.
+
+        A blank query is rejected before any request — the Local API answers an
+        empty ``q`` with the entire library, which is a dump, not a search.
+        """
+        if not isinstance(q, str) or not q.strip():
+            raise ZoteroError("search query must be a non-empty string.")
+        kwargs: dict = {"q": q, "qmode": qmode}
+        if limit is not None:
+            kwargs["limit"] = limit
+        return self._fetch(lambda: self._bibliographic(self.backend.items(**kwargs)))
+
     # -- attachments (phase 2) ---------------------------------------------
     def get_pdf_attachments(self, parent_key: str) -> list[dict]:
         """Downloadable PDF child attachments of an item, in Zotero's order.
