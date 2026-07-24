@@ -400,7 +400,7 @@ def review_section_warnings(root: Path) -> list[tuple[str, str]]:
         warnings.append((
             "split_review_section",
             f"decisions/open-questions.md has {len(headings)} {keyword!r} sections "
-            f"({', '.join(repr(h.text.strip()) for h in headings)}); new bullets go to the "
+            f"({', '.join(repr(h.title) for h in headings)}); new bullets go to the "
             f"first, so the others keep whatever they already hold — merge them by hand",
         ))
     return warnings

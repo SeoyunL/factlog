@@ -459,3 +459,53 @@ class TestTheGuardsThatOnlyThisShapeReaches:
         assert headings("출처\n    ----\n----\n") == [
             Heading(start=0, end=3, level=2, text="출처\n    ----\n----")
         ]
+
+
+class TestHeadingTitle:
+    """What a heading says, once, for everyone who has to show it to a human.
+
+    Two consumers were deriving it from `text` and doing it differently — a
+    validator warning that printed the raw span (so a one-line operator message
+    carried a literal newline through the middle of it) and the renderer-parity
+    oracle, which is the worst possible place for a second copy: a test that
+    normalises its own side of a comparison can be made to agree with anything.
+    """
+
+    def test_both_spellings_of_the_same_heading_have_the_same_title(self):
+        # The point of the property: a reader sees one heading, so anything showing
+        # a heading to a reader shows one thing.
+        assert headings("## 출처 부족\n")[0].title == "출처 부족"
+        assert headings("출처 부족\n----\n")[0].title == "출처 부족"
+
+    def test_a_setext_title_carries_no_underline(self):
+        # The literal `\n` that reached an operator's warning came from here.
+        found = headings("출처\n----\n")[0]
+        assert found.text == "출처\n----"
+        assert "\n" not in found.title
+
+    def test_a_multi_line_setext_title_keeps_its_own_newline(self):
+        # Not the underline, but the paragraph really is two lines and saying so is
+        # more honest than picking one.
+        assert headings("abc\n출처\n----\n")[0].title == "abc\n출처"
+
+    def test_an_atx_closing_sequence_is_dropped(self):
+        assert headings("## foo ##\n")[0].title == "foo"
+        assert headings("## ###\n")[0].title == ""
+
+    def test_a_hash_that_is_not_a_closing_sequence_is_kept(self):
+        # A renderer keeps it: the run has to be preceded by a space to close.
+        assert headings("## foo#\n")[0].title == "foo#"
+
+    def test_trailing_whitespace_is_not_part_of_the_title(self):
+        assert headings("## 출처 부족  \n")[0].title == "출처 부족"
+
+    def test_a_paragraph_beginning_with_a_hash_is_still_setext(self):
+        """Why the split is on line count and not on the first character.
+
+        `#foo` has no space after the marker, so it is not an ATX heading — it is a
+        paragraph, and an underline turns it into a Setext heading whose text starts
+        with `#`. Reading the first character would strip that `#` off the title.
+        """
+        found = headings("#foo\n----\n")[0]
+        assert (found.start, found.end, found.level) == (0, 2, 2)
+        assert found.title == "#foo"

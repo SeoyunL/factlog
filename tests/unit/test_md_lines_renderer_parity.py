@@ -80,21 +80,15 @@ def _top_level_headings(md, text: str) -> list[tuple[int, str]]:
 
 
 def _mine(text: str) -> list[tuple[int, str]]:
-    """md_lines' headings in the same shape — level and title text.
+    """md_lines' headings in the same shape — level and title.
 
-    A Setext heading's `text` carries its underline, which the renderer's inline
-    content does not, so the last line comes off before comparing. Nothing else is
-    normalised: this must not become a function that massages one side into the
-    other's answer.
+    `Heading.title` and not a rule written out here. This side of the comparison used
+    to strip the marker and the underline itself, which is a second answer to "what
+    does this heading say" living in the oracle: a test that normalises its own side
+    can be made to agree with anything, and the one place that must not happen is the
+    thing standing in for the renderer.
     """
-    found: list[tuple[int, str]] = []
-    for heading in headings(text):
-        if heading.text.startswith("#"):
-            title = heading.text.lstrip("#").strip()
-        else:
-            title = "\n".join(heading.text.split("\n")[:-1]).strip()
-        found.append((heading.level, title))
-    return found
+    return [(heading.level, heading.title) for heading in headings(text)]
 
 
 def _documents(length: int):

@@ -183,6 +183,37 @@ class Heading:
     level: int
     text: str
 
+    @property
+    def title(self) -> str:
+        """What the heading *says* — its text without the syntax that marks it.
+
+        ``## 출처 부족`` and ``출처 부족`` over ``----`` have the same title, which is
+        the point: the two spellings are the same heading to a reader, so anything
+        showing a heading to a human should show the same thing for both.
+
+        Here because both consumers of :attr:`text` were computing it, differently.
+        A validator warning printed the raw span, so an operator reading a one-line
+        message got a literal newline in the middle of it — ``has 2 '출처' sections
+        ('출처\n----', …)``. And the renderer-parity oracle had its own copy, which
+        is the worst place for one: a test that normalises its own side of a
+        comparison can be made to agree with anything.
+
+        A heading is ATX when it occupies a single line and Setext otherwise, which
+        is exact rather than a guess about the first character — a paragraph may
+        begin with ``#`` without being ATX (``#foo`` has no space after the marker),
+        and it would be underlined into a Setext heading whose text starts with a
+        ``#``. An ATX closing sequence (``## foo ##``) is dropped, the way a renderer
+        drops it.
+        """
+        lines = self.text.split("\n")
+        if len(lines) > 1:
+            return "\n".join(lines[:-1]).strip()
+        content = lines[0].lstrip("#").strip()
+        closed = content.rstrip("#")
+        if closed != content and (not closed or closed.endswith(" ")):
+            return closed.strip()
+        return content
+
 
 # A heading level of 7 does not exist; ``####### x`` is a paragraph.
 _MAX_HEADING_LEVEL = 6
