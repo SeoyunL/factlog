@@ -39,27 +39,44 @@ Two things this deliberately does not claim:
   wants both has to strip the block before asking here.
 * **This is not a rendering library.** It answers the structural questions a
   producer and a validator have to agree on, and the fence and Setext rules exist
-  for that reason rather than for their own sake.
+  for that reason rather than for their own sake. Where they are checked they are
+  checked against a renderer: every two- and three-line document over a 22-atom
+  alphabet — 11,132 of them — gives markdown-it-py's answer exactly. What is not
+  modelled is a block **nested inside a list item**; over random four-to-six-line
+  documents from the same alphabet the two disagree on roughly one in a thousand,
+  and every one of those has an indented block under a list marker. Widening the
+  rules to catch them costs far more real headings than it saves (measured), and a
+  missed heading is the expensive direction: the file is then told it lacks a
+  section it has, and a second one gets appended beside it.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# CommonMark lets a fence marker carry up to three leading spaces; at four it is an
-# indented code block, i.e. ordinary content that opens nothing. Counting those as
-# fences made a well-formed document read as permanently unclosed.
-_MAX_FENCE_INDENT = 3
+# Four leading spaces is an indented code block in CommonMark, so at four spaces a
+# line stops being any kind of marker and becomes ordinary content. **One constant,
+# not one per rule**: fence markers, Setext underlines and the first line of a
+# paragraph all sit under the same threshold, and giving each its own copy would
+# mean a mutant that raises only one of them still passes — the other rule's tests
+# would cover for it. Counting indented markers as fences made a well-formed
+# document read as permanently unclosed.
+_MAX_BLOCK_INDENT = 3
+
+
+def _indent(line: str) -> int:
+    """Leading spaces of *line*."""
+    return len(line) - len(line.lstrip(" "))
 
 
 def _fence_marker(line: str) -> tuple[str, int, str] | None:
     """*line* as a fence marker — ``(char, run length, rest)`` — or None.
 
     A run of three or more backticks or tildes, indented no more than
-    :data:`_MAX_FENCE_INDENT`. ``rest`` is what follows the run, which decides
+    :data:`_MAX_BLOCK_INDENT`. ``rest`` is what follows the run, which decides
     whether the marker is allowed to close: an info string makes it an opener only.
     """
     body = line.lstrip(" ")
-    if len(line) - len(body) > _MAX_FENCE_INDENT:
+    if _indent(line) > _MAX_BLOCK_INDENT:
         return None
     for char in ("`", "~"):
         if body.startswith(char * 3):
@@ -157,6 +174,128 @@ def _atx_level(line: str) -> int | None:
     return run
 
 
+def _setext_underline(line: str) -> str | None:
+    """``"="`` or ``"-"`` if *line* has the shape of a Setext underline, else None.
+
+    Shape only — whether it *is* one depends on what sits above it, which is
+    :func:`_paragraph_start`'s question. A run of one or more of a single character,
+    indented no more than :data:`_MAX_BLOCK_INDENT`, with nothing but whitespace
+    after it. One dash is enough; ``-=-`` is not a run.
+    """
+    if _indent(line) > _MAX_BLOCK_INDENT:
+        return None
+    body = line.strip()
+    if not body or body[0] not in "=-" or body != body[0] * len(body):
+        return None
+    return body[0]
+
+
+def _is_thematic_break(line: str) -> bool:
+    """Is *line* a horizontal rule — ``---``, ``***``, ``___``, spaces allowed?
+
+    It matters here only as a *boundary*: a thematic break is a block of its own, so
+    a paragraph may begin on the line after it and cannot extend across it.
+    """
+    if _indent(line) > _MAX_BLOCK_INDENT:
+        return False
+    body = "".join(line.split())
+    return len(body) >= 3 and body[0] in "-_*" and body == body[0] * len(body)
+
+
+def _container_content(line: str) -> str | None:
+    """What *line* holds after its list-item or block-quote marker, or None.
+
+    None means it opens neither. The distinction between an empty container and one
+    with content matters: a paragraph on the next line lazily continues a list item
+    that has content, and does **not** continue an empty marker — CommonMark gives a
+    ``-`` on its own no lazy continuation at all.
+
+    Indentation is not looked at, which errs towards *not* calling something a
+    heading: the direction that costs a heading rather than invents one.
+    """
+    body = line.lstrip(" ")
+    if body.startswith(">"):
+        return body[1:].strip()
+    for marker in ("-", "+", "*"):
+        if body.startswith(f"{marker} "):
+            return body[len(marker):].strip()
+        if body.rstrip() == marker:
+            return ""
+    digits = len(body) - len(body.lstrip("0123456789"))
+    if 1 <= digits <= 9 and len(body) > digits and body[digits] in ".)":
+        rest = body[digits + 1:]
+        if rest.startswith(" ") or not rest.strip():
+            return rest.strip()
+    return None
+
+
+def _paragraph_start(
+    lines: list[str], flags: list[bool], underline: int, floor: int
+) -> int | None:
+    """Where the top-level paragraph ending just above *underline* begins, or None.
+
+    The half of Setext that a two-line pattern match gets wrong. ``----`` under a
+    line makes that line a heading **only when the line is a top-level paragraph**,
+    and whether it is depends on what is above it, sometimes several lines up. The
+    walk goes up from the underline and reads what it finds:
+
+    * a blank line, code, an ATX heading or a thematic break — a clean boundary.
+      Those end a block, so a paragraph may start on the line below one. Collecting
+      nothing before reaching one means there was no paragraph at all: ``- a`` over
+      ``----`` is a list and then a horizontal rule, and so is ``# Title`` over
+      ``----``.
+    * a list item or a block quote with no blank line between — then what looked like
+      a paragraph is a **lazy continuation inside that container**, and the ``----``
+      below it is a thematic break outside it. Measured against a renderer,
+      ``- a`` / ``출처`` / ``----`` is a one-item list reading "a 출처" followed by a
+      rule. Calling that a heading is the worst thing this function could do: the
+      file would be told it has a section no reader ever sees.
+
+    *floor* is the end of the last heading already found, so a walk cannot reach back
+    into one — in ``abc`` / ``===`` / ``출처`` / ``====`` the second underline sees
+    only ``출처``.
+
+    What survives the walk is a run of ordinary lines, and the paragraph begins at
+    the **first of them indented three spaces or less**. Lines above that inside the
+    same run are an indented code block: four spaces after a boundary opens one, but
+    four spaces *after a paragraph has started* is only a continuation line, so
+    ``abc`` / ``    출처`` / ``----`` is one heading of two lines while ``    x`` /
+    ``출처`` / ``----`` is a code block and then a heading of one.
+
+    One shape is rejected outright: a leading ``<`` makes the line an HTML block,
+    which runs to the next blank line and takes the underline in with it.
+    """
+    run: list[int] = []
+    index = underline - 1
+    while index >= floor:
+        line = lines[index]
+        if flags[index] or not line.strip():
+            break
+        if _atx_level(line) is not None or _is_thematic_break(line):
+            break
+        content = _container_content(line)
+        if content is not None:
+            # A marker with content swallows the lines below it as its own; an empty
+            # one takes no lazy continuation, so it is a boundary — but only for a
+            # line starting at column 0, because anything indented under an empty
+            # marker becomes that item's content instead.
+            if content:
+                return None
+            start = _first_paragraph_line(lines, run)
+            return start if start is not None and _indent(lines[start]) == 0 else None
+        run.append(index)
+        index -= 1
+    return _first_paragraph_line(lines, run)
+
+
+def _first_paragraph_line(lines: list[str], run: list[int]) -> int | None:
+    """The index in *run* (bottom-up) where its paragraph starts, or None."""
+    for start in reversed(run):
+        if _indent(lines[start]) <= _MAX_BLOCK_INDENT:
+            return None if lines[start].lstrip(" ").startswith("<") else start
+    return None
+
+
 def headings(text: str) -> list[Heading]:
     """Every heading of *text*, in document order, at **every** level.
 
@@ -170,16 +309,43 @@ def headings(text: str) -> list[Heading]:
     was read as the section itself: the file reported no missing sections while
     having no real 출처 section, and the bullet routed there was inserted after the
     closing fence, in no section at all.
+
+    Both spellings, ATX and Setext. A Setext heading is two lines or more — the
+    paragraph and its underline — and it is the reason :class:`Heading` carries a
+    range instead of a line number: ``start`` is the paragraph's first line, which is
+    what a reader sees as the title, and ``start + 1`` is not the end of anything.
+    ``=`` underlines to level 1 and ``-`` to level 2. What makes an underline an
+    underline is :func:`_paragraph_start`.
     """
     lines = text.splitlines()
     flags, _ = fence_flags(text)
     found: list[Heading] = []
+    # The end of the last heading found: a Setext scan walks *up* from its underline,
+    # and it must not walk into a heading already claimed.
+    floor = 0
     for index, line in enumerate(lines):
         if flags[index]:
             continue
         level = _atx_level(line)
         if level is not None:
             found.append(Heading(start=index, end=index + 1, level=level, text=line))
+            floor = index + 1
+            continue
+        underline = _setext_underline(line)
+        if underline is None:
+            continue
+        start = _paragraph_start(lines, flags, index, floor)
+        if start is None:
+            continue
+        found.append(
+            Heading(
+                start=start,
+                end=index + 1,
+                level=1 if underline == "=" else 2,
+                text="\n".join(lines[start:index + 1]),
+            )
+        )
+        floor = index + 1
     return found
 
 

@@ -227,3 +227,132 @@ class TestSectionBodyEnd:
     def test_a_level_one_heading_does_end_a_level_two_section(self):
         doc = "## 출처 부족\n- a\n# 다른 문서\n"
         assert section_body_end(doc, self._at(doc, 0)) == 2
+
+
+class TestSetextHeadings:
+    """``출처`` over ``----`` is a heading, and a renderer decides which ones are.
+
+    Two lines, so most of what can go wrong is about the line above the underline.
+    Every expectation here was checked against markdown-it-py in commonmark mode;
+    where a case looks surprising, the renderer is the reason.
+    """
+
+    def test_a_dash_underline_is_a_level_two_heading(self):
+        assert headings("출처\n----\n") == [
+            Heading(start=0, end=2, level=2, text="출처\n----")
+        ]
+
+    def test_an_equals_underline_is_a_level_one_heading(self):
+        # Which is why it is not a review section: that contract asks for level 2.
+        assert headings("출처\n====\n") == [
+            Heading(start=0, end=2, level=1, text="출처\n====")
+        ]
+
+    def test_one_dash_is_enough(self):
+        assert [h.level for h in headings("출처\n-\n")] == [2]
+
+    def test_three_spaces_of_indent_is_still_an_underline(self):
+        assert [h.level for h in headings("출처\n   ----\n")] == [2]
+
+    def test_four_spaces_of_indent_is_an_indented_code_block(self):
+        assert headings("출처\n    ----\n") == []
+
+    def test_trailing_whitespace_after_the_underline_is_allowed(self):
+        assert [h.level for h in headings("출처\n----   \n")] == [2]
+
+    def test_a_mixed_run_is_not_an_underline(self):
+        assert headings("출처\n-=-\n") == []
+
+    def test_a_list_item_over_dashes_is_a_list_and_a_rule(self):
+        """The worst false positive there is, and the renderer says so.
+
+        ``- a`` opens a list and ``출처`` lazily continues that item, so the
+        ``----`` below is a thematic break *outside* the list. Reading it as a
+        heading would tell the file it has a section a reader never sees — the exact
+        disagreement between scanner and renderer this module exists to prevent.
+        """
+        assert headings("- a\n----\n") == []
+        assert headings("- a\n출처\n----\n") == []
+        assert headings("1. a\n출처\n----\n") == []
+        assert headings("* a\n출처\n----\n") == []
+        assert headings("+ a\n출처\n----\n") == []
+
+    def test_a_paragraph_after_a_blank_line_below_a_list_is_a_heading(self):
+        # The blank line closes the item, so this one really is top-level.
+        assert [h.start for h in headings("- a\n\n출처\n----\n")] == [2]
+
+    def test_an_atx_heading_over_dashes_is_a_heading_and_a_rule(self):
+        assert [h.text for h in headings("# Open Questions\n----\n")] == [
+            "# Open Questions"
+        ]
+
+    def test_a_blank_line_over_dashes_is_a_rule(self):
+        assert headings("출처\n\n----\n") == []
+
+    def test_a_paragraph_right_under_an_atx_heading_still_underlines(self):
+        # An ATX heading ends a block, so a paragraph may start on the next line.
+        assert [(h.start, h.level) for h in headings("## x\n출처\n----\n")] == [
+            (0, 2),
+            (1, 2),
+        ]
+
+    def test_a_fenced_title_or_underline_is_not_a_heading(self):
+        assert headings("```\n출처\n----\n```\n") == []          # both inside
+        assert headings("출처\n```\n----\n```\n") == []          # underline inside
+
+    def test_a_block_quote_heading_is_not_a_top_level_one(self):
+        assert headings("> 출처\n> ----\n") == []
+
+    def test_a_multi_line_paragraph_starts_the_heading_at_its_first_line(self):
+        assert headings("foo\n출처\n----\n") == [
+            Heading(start=0, end=3, level=2, text="foo\n출처\n----")
+        ]
+
+    def test_a_qualified_heading_carries_its_keyword(self):
+        (found,) = headings("출처 (근거 강도 부족)\n-----\n")
+        assert found.level == 2 and "출처" in found.text
+
+    def test_an_underline_on_the_last_line_still_counts(self):
+        assert [h.level for h in headings("출처\n----")] == [2]
+
+    def test_a_body_line_repeating_the_title_is_not_a_second_heading(self):
+        """What #500 was: the old lookup found this line, not the heading.
+
+        `lines.index("출처")` answers "which line says 출처", and that is line 0 in
+        an ATX file only by luck. Here the heading is two lines and its first line
+        is not unique.
+        """
+        doc = "출처\n----\n- x\n\n출처\n"
+        assert [(h.start, h.end) for h in headings(doc)] == [(0, 2)]
+
+    def test_a_section_ends_at_the_next_title_line_not_its_underline(self):
+        doc = "출처\n----\n- x\n\n충돌\n----\n"
+        first, second = headings(doc)
+        assert (first.start, first.end) == (0, 2)
+        assert (second.start, second.end) == (4, 6)
+        assert section_body_end(doc, first) == 4
+
+    def test_atx_and_setext_mix_in_one_file(self):
+        doc = "# Open Questions\n\n중복\n----\n- a\n\n## 출처 부족\n- b\n"
+        assert [(h.start, h.level) for h in headings(doc)] == [(0, 1), (2, 2), (6, 2)]
+
+    def test_an_underline_does_not_reach_back_into_a_finished_heading(self):
+        # Both are headings of one line each, not one heading of three.
+        assert [(h.start, h.end) for h in headings("abc\n===\n출처\n====\n")] == [
+            (0, 2),
+            (2, 4),
+        ]
+
+    def test_a_thematic_break_above_is_a_boundary_not_a_title(self):
+        assert [(h.start, h.level) for h in headings("***\n출처\n----\n")] == [(1, 2)]
+
+    def test_an_indented_code_block_above_is_not_the_title(self):
+        assert [(h.start, h.level) for h in headings("    x\n출처\n----\n")] == [(1, 2)]
+
+    def test_an_indented_continuation_line_is_part_of_the_title(self):
+        # Four spaces after a paragraph has started is only a continuation line.
+        assert [(h.start, h.end) for h in headings("abc\n    출처\n----\n")] == [(0, 3)]
+
+    def test_an_html_block_is_not_a_heading(self):
+        # It runs to the next blank line and takes the underline in with it.
+        assert headings("<div>\nx\n</div>\n출처\n----\n") == []
