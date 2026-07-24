@@ -262,7 +262,13 @@ def _flush_skipped_sources(skipped: dict[str, int]) -> None:
     validate failures after it) under a hundred-line scroll (#492).  Folding on
     the anchor-stripped source_file gives one line per file rather than one per
     anchor.  Order is by path so the diagnostic block is identical regardless of
-    input row order; *skipped* is cleared so a later flush cannot repeat a line.
+    input row order.
+
+    What keeps a line from being printed twice is the CALL SITES, not this
+    function: the strict flush is immediately followed by ``raise SystemExit``,
+    so the end-of-loop flush is never reached on that path.  Anyone changing
+    strict to collect every violation before exiting must re-check that, rather
+    than rely on the clear() below.
     """
     for source_file, count in sorted(skipped.items()):
         print(
@@ -271,6 +277,8 @@ def _flush_skipped_sources(skipped: dict[str, int]) -> None:
             f"({count} row{'s' if count != 1 else ''})",
             file=sys.stderr,
         )
+    # Not load-bearing today (see above) -- kept so a future second flush in one
+    # run reports only what accumulated since the last one.
     skipped.clear()
 
 

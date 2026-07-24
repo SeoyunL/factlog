@@ -8,6 +8,8 @@ path order, and it must still appear on the --strict early exit.
 """
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 import merge_candidates as mc
@@ -59,11 +61,42 @@ class TestSkipRowSummary:
         assert "sources/gone.md" in lines[0] and "(3 rows)" in lines[0]
         assert "sources/other.md" in lines[1] and "(1 row)" in lines[1]
 
-    def test_singular_and_plural_are_not_conflated(self, tmp_path, capsys):
+    def test_singular_and_plural_counts_in_one_run(self, tmp_path, capsys):
+        """One line must read '(1 row)' and the other '(2 rows)' in the SAME run,
+        so neither number can be hard-coded and 'row(s)' cannot stand in."""
         root = _root_with_source(tmp_path)
-        mc.normalize_rows(root, _missing_rows())
+        rows = [
+            _row("A", "rel", "B", "sources/one.md"),
+            _row("C", "rel", "D", "sources/two.md"),
+            _row("E", "rel", "F", "sources/two.md#sec1"),
+        ]
+        mc.normalize_rows(root, rows)
         lines = _skip_lines(capsys)
-        assert not any("row(s)" in line for line in lines)
+        assert len(lines) == 2
+        assert "sources/one.md" in lines[0] and lines[0].endswith("(1 row)")
+        assert "sources/two.md" in lines[1] and lines[1].endswith("(2 rows)")
+
+    def test_count_folds_across_nfc_and_nfd_spellings(self, tmp_path, capsys):
+        """The aggregation key is the NFC-normalised path (#57/#482): macOS
+        stores filenames as NFD while extracted rows are typically NFC, so the
+        two spellings of ONE missing path must fold into one line.  Keying on
+        the raw row value would emit two lines that are indistinguishable on
+        screen -- the exact scroll-flood #492 removes.  Both encodings are
+        written explicitly here, so this is deterministic on any platform."""
+        root = _root_with_source(tmp_path)
+        nfc = "sources/각문서.md"
+        nfd = unicodedata.normalize("NFD", nfc)
+        assert nfc != nfd, "expected the NFC and NFD spellings to differ as strings"
+        rows = [
+            _row("A", "rel", "B", nfd),
+            _row("C", "rel", "D", nfc),
+        ]
+        mc.normalize_rows(root, rows)
+        lines = _skip_lines(capsys)
+        assert len(lines) == 1
+        assert "(2 rows)" in lines[0]
+        # The reported path is the NFC form, matching what dedup/candidates.csv use.
+        assert f"'{nfc}'" in lines[0]
 
     def test_line_order_is_independent_of_input_order(self, tmp_path, capsys):
         root = _root_with_source(tmp_path)
@@ -78,8 +111,16 @@ class TestSkipRowSummary:
         root = _root_with_source(tmp_path)
         rows = _missing_rows() + [_row("K", "rel", "L", "sources/a.md")]
         out = mc.normalize_rows(root, rows)
-        err = capsys.readouterr().err
-        assert "  warning: 4 row(s) dropped during normalise/dedup" in err
+        err_lines = capsys.readouterr().err.splitlines()
+        summary = "  warning: 4 row(s) dropped during normalise/dedup"
+        assert summary in err_lines
+        # Detail before summary: the whole point of #492 is that the summary --
+        # and the validate failures printed after it -- stay on screen, which
+        # only holds if the skip block is flushed BEFORE the summary line.
+        last_skip = max(
+            i for i, line in enumerate(err_lines) if line.strip().startswith("skip row:")
+        )
+        assert last_skip < err_lines.index(summary)
         # Only the row whose source exists survives.
         assert len(out) == 1
         assert out[0]["source"] == "sources/a.md"
