@@ -135,3 +135,40 @@ class TestOrdinaryOutputIsUnchanged:
     def test_a_missing_title_stays_an_empty_last_field(self, name, build, show, capsys):
         show([build(None, "W1")], 1, porcelain=True)
         assert _result_rows(capsys, 1) == ["result\t1\tW1\t-\t"]
+
+
+# `zotero-search` shares the five-column result row but not the third column's meaning:
+# where the fetch-based searches put a retraction/withdrawal flag, discovery puts the
+# item's Zotero `itemType`, which is upstream data in its own right. So it gets a
+# parallel block rather than a row in COMMANDS — the shape assertions (`_result_rows`)
+# are identical, only the flag-vs-itemType column and the dict-shaped input differ.
+def _zotero(title, key="ZKEY1", item_type="journalArticle"):
+    return {"data": {"key": key, "itemType": item_type, "title": title}}
+
+
+@pytest.mark.parametrize("char", HOSTILE, ids=lambda c: f"U+{ord(c):04X}")
+class TestZoteroAHostileField:
+    def test_a_hostile_title_stays_one_line_of_five_columns(self, char, capsys):
+        cli._zotero_show_results([_zotero(f"before{char}after")], 1, porcelain=True)
+        _result_rows(capsys, 1)
+
+    def test_a_hostile_key_cannot_add_a_column(self, char, capsys):
+        cli._zotero_show_results([_zotero("A paper", key=f"K1{char}forged")], 1, porcelain=True)
+        _result_rows(capsys, 1)
+
+    def test_a_hostile_itemtype_cannot_add_a_column(self, char, capsys):
+        # itemType is the column unique to zotero-search and it is upstream data too,
+        # so it is gated on the same terms as the id and title, not trusted.
+        cli._zotero_show_results([_zotero("A paper", item_type=f"j{char}type")], 1, porcelain=True)
+        _result_rows(capsys, 1)
+
+
+class TestZoteroOrdinaryOutputIsUnchanged:
+    def test_a_clean_row_carries_key_itemtype_and_title(self, capsys):
+        cli._zotero_show_results([_zotero("A paper: on 1998 Dec-1999 Jan")], 1, porcelain=True)
+        assert _result_rows(capsys, 1) == [
+            "result\t1\tZKEY1\tjournalArticle\tA paper: on 1998 Dec-1999 Jan"]
+
+    def test_a_missing_title_stays_an_empty_last_field(self, capsys):
+        cli._zotero_show_results([_zotero(None)], 1, porcelain=True)
+        assert _result_rows(capsys, 1) == ["result\t1\tZKEY1\tjournalArticle\t"]

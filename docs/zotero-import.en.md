@@ -74,6 +74,52 @@ factlog zotero-import --collection "Systematic Review" --pdf            # biblio
 factlog zotero-import --collection "Systematic Review" --annotations    # + highlights & notes
 ```
 
+## Searching the library (`factlog zotero-search`)
+
+`zotero-import` needs the exact collection or tag name up front. `zotero-search`
+lifts that constraint: it answers "is this in my library?" and lists each match's
+item key so you can hand it straight to `zotero-import --items`. It is pure
+discovery — it imports nothing and touches neither Zotero nor the KB.
+
+```bash
+factlog zotero-search "protein folding"                  # titleCreatorYear (default)
+factlog zotero-search "protein folding" --qmode everything --limit 10   # full-text
+```
+
+Each result shows the item's **key / itemType / title**:
+
+```
+Found 10 results, showing top 3:
+
+  1. [preprint] KH78JUPE "Neurosymbolic Value-Inspired AI (Why, What, and How)"
+  2. [journalArticle] ABCD1234 "..."
+  3. [preprint] UF6KEIZV "..."
+
+Import a result with: factlog zotero-import --items <key>[,<key>...]
+```
+
+`Found N` is the **total number of library matches** (Zotero's `Total-Results`),
+while `showing top M` is how many `--limit` actually printed — so a truncated
+search still reports how many matched, the same total-vs-shown contract the other
+`*-search` commands hold. (`Total-Results` counts raw API matches *before* the
+bibliographic filter, so a library whose matches include attachments or notes can
+report a total larger than the rows shown — an "API match total, showing top N"
+approximation.)
+
+`--qmode` exposes Zotero's own search modes: `titleCreatorYear` (default) or
+`everything` (full-text). `--limit` bounds the result count (default 25, max 200).
+`--target` selects which KB's Local API policy file to read (nothing is written).
+
+**Zero results and a connection failure are kept distinct.** A search that matched
+nothing prints `Found 0 results.` and exits 0 — an honest empty set. A Local API
+that could not be reached is a connection failure on stderr, exit 2 (check the app
+is running); any other request error is exit 1. A script tells "no results" from
+"no Zotero" by that exit code. `--porcelain` uses the same five-column row as the
+other `*-search` commands — `result\t<index>\t<key>\t<itemType>\t<title>` then
+`found\t<count>`, where `count` is the full match total (not the rows shown) so a
+consumer knows it did not receive them all — with every field guarded against a
+row-splitting tab or newline.
+
 ## Citation export
 
 `factlog export --bibtex|--csl` emits one entry per source. Each integration

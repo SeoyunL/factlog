@@ -108,6 +108,26 @@ def _suggest(names) -> str:
     return f"{', '.join(shown)}, ... ({len(ordered) - _SUGGEST_LIMIT} more)"
 
 
+def _total_results(backend) -> int | None:
+    """Zotero's ``Total-Results`` header from the backend's last response, or None.
+
+    pyzotero stashes the ``requests.Response`` of its most recent call on
+    ``backend.request``; both the Local and Web API report the full match count in
+    that response's ``Total-Results`` header, so a ``limit``-capped search can still
+    learn how many items matched. A missing ``request``/header or an unparseable
+    value yields ``None`` (the caller falls back to the returned row count) — never
+    an exception, since this is a best-effort enrichment of a result already in hand.
+    """
+    request = getattr(backend, "request", None)
+    headers = getattr(request, "headers", None)
+    if not headers:
+        return None
+    try:
+        return int(headers.get("Total-Results"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_downloadable_pdf(data: dict) -> bool:
     if data.get("itemType") != "attachment":
         return False
@@ -319,6 +339,54 @@ class ZoteroClient:
         if missing:
             raise ZoteroError(f"item key(s) not found in Zotero: {', '.join(missing)}")
         return self._bibliographic(out)
+
+    def search_items(
+        self, q: str, qmode: str = "titleCreatorYear", limit: int | None = None
+    ) -> tuple[list[dict], int | None]:
+        """Discovery search over the personal library, bibliographic items only.
+
+        Runs Zotero's quick search (``items(q=…, qmode=…)``) and drops the same
+        non-bibliographic children (attachments/notes) every other query filters,
+        so a result can be handed straight to ``zotero-import --items`` by key.
+
+        Returns ``(items, total)`` where ``total`` is the full match count Zotero
+        reports in its ``Total-Results`` header — so a ``limit``-capped search can
+        still tell the caller how many matched, the way the sibling ``*-search``
+        commands report a total alongside a shown top-N. ``total`` is ``None`` when
+        the header is absent/unparseable, and the caller then falls back to the
+        returned row count.
+
+        **Caveat:** ``Total-Results`` counts the raw API matches *before* the
+        bibliographic filter runs, so a library whose matches include attachments
+        or notes can report a ``total`` larger than the items returned here. This is
+        the same "API match total, showing top N" approximation the fetch-based
+        searches make; it is not an exact count of bibliographic hits.
+
+        ``qmode`` is Zotero's own: ``titleCreatorYear`` (the default — title,
+        creators, year and a few identifier fields) or ``everything`` (full-text).
+        ``limit`` caps the result count at the API; ``None`` leaves Zotero's own
+        default in place. Unlike the collection/tag queries this does **not**
+        page with ``everything``: a search is a bounded top-N listing, and
+        following pagination would silently return the whole library past
+        ``limit``.
+
+        A blank query is rejected before any request — the Local API answers an
+        empty ``q`` with the entire library, which is a dump, not a search.
+        """
+        if not isinstance(q, str) or not q.strip():
+            raise ZoteroError("search query must be a non-empty string.")
+        kwargs: dict = {"q": q, "qmode": qmode}
+        if limit is not None:
+            kwargs["limit"] = limit
+
+        def _run() -> tuple[list[dict], int | None]:
+            # Read Total-Results in the same scope as the call that set it, before
+            # any later request could overwrite the backend's stored response.
+            items = self.backend.items(**kwargs)
+            total = _total_results(self.backend)
+            return self._bibliographic(items), total
+
+        return self._fetch(_run)
 
     # -- attachments (phase 2) ---------------------------------------------
     def get_pdf_attachments(self, parent_key: str) -> list[dict]:
