@@ -47,11 +47,15 @@ the section itself, and the bullet routed to it landed past the closing fence, i
 no section at all. A Setext heading (``출처`` over ``----``) is not recognised; the
 reference documents that, and nothing here improves it (#500).
 
-**Every reader and writer of the file takes that definition from here** —
-:func:`section_line_index` and :func:`section_end_index` exist so that
-``merge_candidates.insert_bullet`` looks a section up the same way this module
-does. It used to use a plain ``lines.index``, and a second notion of where a
-section is, disagreeing with this one, is what #495 was about to begin with.
+**Every reader and writer of the file takes those definitions from here** —
+:func:`section_line_index` and :func:`section_end_index` so that
+``merge_candidates.insert_bullet`` finds a section the way this module does, and
+:func:`review_bullets` so that the producer's "have I filed this already" and the
+validator's "is anything filed here" are one question. Each of those was once a
+scan of its own that had not heard of fences, and a second notion of where a
+section is, disagreeing with this one, is what #495 was about to begin with. The
+last pair cost the most: between them a needs_review row disappeared from the file
+a human reads while the KB reported completely valid.
 
 The one file shape nothing writes to is one that **ends inside an unclosed fence**
 (:func:`ends_inside_fence`). Appending happens at the end of the file, and there the
@@ -109,11 +113,11 @@ def _scan_fences(text: str) -> tuple[list[bool], int | None]:
     two copies of the rule for what a section is are what #495 was about in the
     first place.
 
-    Markers count as fenced themselves, so a ``## `` written as a fence line is not
-    a heading. Opening and closing are a plain toggle: matching the marker's
-    character and length the way CommonMark does would only ever *reduce* what
-    counts as fenced, and this scan errs toward "treat it as content", which is the
-    safe direction for a scaffolder deciding whether to write.
+    Opening and closing are a plain toggle. Matching the marker's character and
+    length the way CommonMark does would only ever *reduce* what counts as fenced,
+    and this scan errs toward "treat it as content" — the safe direction for a
+    writer deciding whether to write, since the cost of being wrong is a heading or
+    a bullet buried in a code block.
     """
     flags: list[bool] = []
     opened_at: int | None = None
@@ -147,6 +151,27 @@ def _headings(text: str) -> list[str]:
         line
         for line, fenced in zip(lines, flags)
         if not fenced and line.startswith("## ")
+    ]
+
+
+def review_bullets(text: str) -> list[str]:
+    """The bullet lines of *text* that are really bullets — raw, fences excluded.
+
+    Who has already been filed, and whether anything has. Two places asked that and
+    each answered it its own way, both counting lines inside code fences:
+    ``insert_bullet`` deduplicated against them, so a bullet whose text was quoted as
+    a *format example* in a fence was taken for already present and never written;
+    and ``validate.py`` counted them, so that same example answered "this KB does have
+    review bullets" for a file that had none. Together — measured — a needs_review row
+    vanished from the file a human reads while the KB reported entirely valid.
+
+    ``- `` after optional indentation, which is what a reader sees as a list item.
+    """
+    flags, _ = _scan_fences(text)
+    return [
+        line
+        for line, fenced in zip(text.splitlines(), flags)
+        if not fenced and line.lstrip().startswith("- ")
     ]
 
 

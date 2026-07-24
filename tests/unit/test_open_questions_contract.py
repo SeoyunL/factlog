@@ -86,6 +86,14 @@ def _validate(kb: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+# The bullet a merge writes for the row _seed_needs_review plants. Spelled out so a
+# test can put the identical line somewhere else in the file and mean it.
+SEEDED_BULLET = (
+    "- needs_review: Widget / related_to / Gadget "
+    "(sources/note.md, confidence=0.40) - relation name is imprecise"
+)
+
+
 def _seed_needs_review(kb: Path) -> None:
     """One ambiguous-relation row, via runs/ — the source of truth for a merge."""
     (kb / "sources" / "note.md").write_text("# note\n", encoding="utf-8")
@@ -342,6 +350,71 @@ class TestCodeFencesEndToEnd:
         assert mc.record_stale_page_refs(kb) == []
         assert _open_questions(kb) == self.UNCLOSED
         assert "stale_source" not in _open_questions(kb)
+
+    def test_a_fenced_format_example_does_not_swallow_the_real_bullet(self, tmp_path):
+        """The worst shape found here: the item vanishes and the KB reports valid.
+
+        A KB that documents its own bullet format inside a code fence lost the first
+        real bullet identical to that example — the producer deduplicated against the
+        fenced line and wrote nothing, and the validator counted that same fenced line
+        as proof review bullets existed. Measured: zero real bullets in the file a
+        human reads, one needs_review row in candidates.csv, rc=0, no warning.
+
+        Both ends read review_sections.review_bullets now, so neither can count it.
+        """
+        # Byte-identical to what _seed_needs_review makes the merge write — the
+        # collision is the whole point, so this must not drift from it.
+        bullet = SEEDED_BULLET
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n형식 예시:\n\n"
+            f"```\n{bullet}\n```\n\n## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        kb = self._fenced_kb(tmp_path, doc)
+        assert _merge(kb, tmp_path).returncode == 0
+        text = _open_questions(kb)
+        flags, _ = _scan_fences(text)
+        real = [
+            line
+            for line, fenced in zip(text.splitlines(), flags)
+            if not fenced and line.startswith("- needs_review")
+        ]
+        assert real == [bullet], text  # written, once, outside the fence
+        assert _validate(kb, tmp_path).returncode == 0
+
+    def test_a_fenced_example_alone_does_not_satisfy_the_validator(self, tmp_path):
+        """The validator's half, with the producer taken out of the picture.
+
+        The file is left as a human wrote it — one needs_review row in candidates.csv
+        and nothing filed but a fenced example — and that has to be an error.
+        """
+        kb = _init(tmp_path / "kb", tmp_path)
+        _seed_needs_review(kb)
+        assert _merge(kb, tmp_path).returncode == 0
+        (kb / "decisions" / "open-questions.md").write_text(
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n"
+            "```\n- needs_review: W / related_to / G\n```\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n",
+            encoding="utf-8",
+        )
+        proc = _validate(kb, tmp_path)
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 1, out
+        assert "no review bullets" in out, out
+
+    def test_both_writers_refuse_even_when_only_one_speaks(self, tmp_path):
+        """The refusal is decided per call; only the complaint is deduplicated.
+
+        Deciding it once and remembering the answer made the second writer's refusal
+        a cache hit rather than a reading of the file.
+        """
+        mc = _merge_module()
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(self.UNCLOSED, encoding="utf-8")
+        text = _open_questions(kb)
+        assert mc.refuse_unclosed_fence(kb, text) is True
+        assert mc.refuse_unclosed_fence(kb, text) is True  # still refused, silently
+        # and a closed file is never refused, warned-about or not
+        assert mc.refuse_unclosed_fence(kb, HAND_SPELLED) is False
 
     def test_a_bullet_clears_a_fenced_example_inside_its_own_section(self, tmp_path):
         """A section may quote a `## ` example; the bullet still goes after it.

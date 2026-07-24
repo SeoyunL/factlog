@@ -102,6 +102,7 @@ from factlog.review_sections import (  # noqa: E402
     REVIEW_KEYWORDS,
     ends_inside_fence,
     ensure_review_sections,
+    review_bullets,
     section_end_index,
     section_for,
     section_line_index,
@@ -675,7 +676,13 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
     # Idempotency by exact line, not substring: a plain `bullet in text` dropped a
     # new bullet whenever it was a prefix-substring of a longer existing bullet
     # (e.g. "...note" skipped because "...note extra" was already present).
-    if bullet.rstrip() in {line.rstrip() for line in lines}:
+    #
+    # Against the bullets review_sections counts, not every line in the file. Matching
+    # fenced lines too meant a KB that documents its own bullet format in a code fence
+    # silently swallowed the first real bullet identical to that example — and
+    # validate.py, counting the same fenced line as a review bullet, then reported the
+    # file complete. One reader, so the two cannot disagree about it.
+    if bullet.rstrip() in {line.rstrip() for line in review_bullets(text)}:
         return text
     # Where the section is, and where it ends, are review_sections' to answer — the
     # same answer the scaffolder and the validator get. This was `lines.index(section)`
@@ -704,6 +711,10 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+# Which files this process has already complained about. Printing only — the refusal
+# itself is decided from the text every time; see refuse_unclosed_fence. A second run
+# in the same process is therefore quiet, which the CLI (one run per process) never
+# sees, but a caller looping over KBs still hears about each distinct file.
 _FENCE_WARNED: set[Path] = set()
 
 
@@ -721,22 +732,24 @@ def refuse_unclosed_fence(root: Path, text: str) -> bool:
     itself is not lost: it stays `needs_review` in facts/candidates.csv, which is the
     queue's source of truth, and the mirror into open-questions.md resumes as soon as
     the fence is closed.
+
+    The refusal is re-decided from *text* every call. Only the printing is
+    remembered, so that one file draws one complaint from the two writers a run calls
+    — an earlier version returned early on the remembered path, which made the second
+    writer's refusal a cache hit rather than a decision.
     """
     if not ends_inside_fence(text):
         return False
-    # Both writers stop on this, and a run calls both — one file, one complaint.
-    # Keyed by path so a caller looping over several KBs still hears about each.
     decisions = (root / "decisions" / "open-questions.md").resolve()
-    if decisions in _FENCE_WARNED:
-        return True
-    _FENCE_WARNED.add(decisions)
-    print(
-        f"  WARNING: decisions/open-questions.md opens a code fence on line "
-        f"{unclosed_fence_line(text)} and never closes it, so everything after it is "
-        f"code. Nothing was written to that file this run — close the fence and "
-        f"re-run merge.",
-        file=sys.stderr,
-    )
+    if decisions not in _FENCE_WARNED:
+        _FENCE_WARNED.add(decisions)
+        print(
+            f"  WARNING: decisions/open-questions.md opens a code fence on line "
+            f"{unclosed_fence_line(text)} and never closes it, so everything after it "
+            f"is code. Nothing was written to that file this run — close the fence and "
+            f"re-run merge.",
+            file=sys.stderr,
+        )
     return True
 
 

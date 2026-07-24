@@ -28,6 +28,7 @@ from factlog.integrations.common.source_writer import (  # noqa: E402
 )
 from factlog.review_sections import (  # noqa: E402
     missing_review_sections,
+    review_bullets,
     split_review_sections,
     unclosed_fence_line,
 )
@@ -314,7 +315,12 @@ def validate(root: Path) -> list[str]:
         # itself and still pass.
         for section in missing_review_sections(decision_text):
             errors.append(f"decisions/open-questions.md should keep a {section!r} review section")
-        decision_bullets = [line for line in decision_text.splitlines() if line.lstrip().startswith("- ")]
+        # From review_sections, so "is anything filed here" means the same thing to
+        # this check and to the writer that files it. Counting every `- ` line let a
+        # bullet written inside a code fence — a format example — stand in for the
+        # review queue: measured, the producer skipped the one real row as a duplicate
+        # of that example and this check called the result complete.
+        decision_bullets = review_bullets(decision_text)
         if any(row.get("status") == "needs_review" for row in rows) and not decision_bullets:
             errors.append("needs_review facts exist but decisions/open-questions.md has no review bullets")
 

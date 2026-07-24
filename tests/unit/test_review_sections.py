@@ -25,6 +25,7 @@ from factlog.review_sections import (
     ends_inside_fence,
     ensure_review_sections,
     missing_review_sections,
+    review_bullets,
     section_end_index,
     section_for,
     section_line_index,
@@ -150,8 +151,11 @@ class TestEnsureReviewSections:
         and split_review_sections unable to see that original to warn about it. The
         very split this module exists to prevent, manufactured by it.
 
-        The single guard that stops it is the unclosed-fence check; there is no
-        second one standing behind it here, so removing that check fails this.
+        Inside this function the unclosed-fence check is the only thing that stops
+        it, so removing that check fails this. It is a **library contract, not the
+        pipeline's defence**: merge_candidates' writers call `refuse_unclosed_fence`
+        first and never reach here with such a file, so deleting the check leaves
+        every end-to-end test green. That is exactly why this case is a unit test.
         """
         doc = (
             "# Open Questions\n\n## 중복 개념 후보\n\n```\n"
@@ -261,6 +265,32 @@ class TestFenceScanning:
         doc = "# Open Questions\n\n```\na\n```\n\n## 모호한 관계명\n\n```\nb\n"
         assert ends_inside_fence(doc) is True
         assert unclosed_fence_line(doc) == 9
+
+
+class TestReviewBullets:
+    """What counts as a filed bullet — the reader both the producer and validator use.
+
+    They each had their own before, and both counted lines inside code fences. A KB
+    that documents its own bullet format in a fence therefore had the example stand in
+    for the queue: the producer skipped the first real bullet as a duplicate of it,
+    and the validator accepted it as proof that review bullets existed.
+    """
+
+    def test_a_bullet_in_a_fence_is_not_a_filed_bullet(self):
+        text = "# Open Questions\n\n형식 예시:\n\n```\n- needs_review: X / r / Y\n```\n"
+        assert review_bullets(text) == []
+
+    def test_real_bullets_are_returned_raw(self):
+        text = "# Open Questions\n\n## 출처 부족\n- needs_review: X / r / Y\n  - nested\n"
+        assert review_bullets(text) == ["- needs_review: X / r / Y", "  - nested"]
+
+    def test_the_example_and_the_real_bullet_are_told_apart(self):
+        bullet = "- needs_review: W / related_to / G"
+        text = f"# Open Questions\n\n```\n{bullet}\n```\n\n## 모호한 관계명\n{bullet}\n"
+        assert review_bullets(text) == [bullet]
+
+    def test_a_dash_that_is_not_a_list_item_does_not_count(self):
+        assert review_bullets("# Open Questions\n\n---\n-notabullet\n") == []
 
 
 class TestSectionLookup:
