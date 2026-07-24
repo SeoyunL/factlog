@@ -2224,13 +2224,24 @@ def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str
     arity mismatch quietly changes what the engine derives. Widening only one of
     the two nets would have left the other as the surviving hole.
 
-    _DECL_LINE_RE (anchored), NOT _DECL_RE: this is the one site that reads RAW
-    program text rather than a comment-stripped skeleton, and the anchor is what
-    keeps a commented-out `// .decl pub_year(...)` from raising a collision that
-    would block the KB over a line the engine never reads. The anchor's `[ \t]*`
-    is the #508 half: `^\.decl` also required COLUMN 0, so an indented `.decl`
-    slipped past here while policy_predicates saw it -- the same drift as #333,
-    pointing the other way."""
+    _DECL_LINE_RE (anchored), NOT _DECL_RE: this site reads RAW program text, and
+    the anchor is what keeps a commented-out `// .decl pub_year(...)` from raising
+    a collision that would block the KB over a line the engine never reads.
+
+    Reading a _scan_policy skeleton instead -- which strips comments properly and
+    would close the blind spot the anchor leaves -- is rejected for a specific
+    reason, not for tidiness and not for speed: with strict=False the scan STOPS
+    at an unterminated string literal and returns only what it lexed up to there,
+    so one stray quote anywhere earlier in the assembled program would hide every
+    later `.decl` from this net. A fail-closed guard that opens completely on a
+    typo is worse than one with a narrow, enumerated blind spot. (strict=True
+    raises instead, which turns a targeted alias check into a new whole-program
+    parse error.) What the anchor cannot see is listed in
+    tests/unit/test_decl_whitespace_parity.py, which also pins the truncation.
+
+    The anchor's `[ \t]*` is the #508 half: `^\.decl` also required COLUMN 0, so
+    an indented `.decl` slipped past here while policy_predicates saw it -- the
+    same drift as #333, pointing the other way."""
     declared = set(_DECL_LINE_RE.findall(program_text))
     for spec in specs.values():
         if spec.type in _TYPED_COL and spec.alias in declared:
