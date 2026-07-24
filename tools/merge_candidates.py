@@ -668,6 +668,14 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
         lines.insert(insert_at, "")
         insert_at += 1
     lines.insert(insert_at, bullet)
+    # Keep a blank line between the bullet and the heading that follows it. The
+    # bullet is placed at the section's end, which for a section whose content ends
+    # in a blank line is the heading's own index — so the bullet landed flush against
+    # the next `## `, reading as its lead-in rather than as the previous section's
+    # last item. Routing bullets to a file's *existing* sections (#495) made that the
+    # common case rather than a corner one.
+    if insert_at + 1 < len(lines) and lines[insert_at + 1].startswith("## "):
+        lines.insert(insert_at + 1, "")
     return "\n".join(lines).rstrip() + "\n"
 
 

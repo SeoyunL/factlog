@@ -29,9 +29,24 @@ the top of the file reported that there was nothing to review.
 So the two operations have to agree, and that is the point of this module:
 :func:`ensure_review_sections` only adds a heading for a category that has **no**
 heading yet, and :func:`section_for` sends a bullet to whichever heading that
-category already has. Scaffolding and bullet placement read the same list, and a
-file whose headings are spelled differently keeps them — no churn, no second
-section for a category that already had one.
+category already has. Scaffolding and bullet placement read the same list, so a
+file whose headings are spelled differently keeps them and no *new* second section
+is opened for a category that already had one.
+
+That is the whole of it, and it is worth being exact about the limit: **a file
+already split across two headings per category is not repaired here.** Both
+functions stop at the first heading they find, so new bullets move to the earlier
+section and the later one keeps whatever it accumulated — the split survives, only
+its direction changes. Merging them is a rewrite of a document a human wrote, which
+is theirs to make, so this module says so out loud instead
+(:func:`split_review_sections`, surfaced as a validator warning) and leaves it.
+
+A section is an **ATX ``## `` heading**. Not any ``#`` line: a ``## 출처 부족``
+inside a fenced code block was being taken for the section itself, and a bullet
+routed to it landed after the closing fence, in no section at all. ``## `` is also
+what ``merge_candidates.insert_bullet`` scans for when it looks for where a section
+ends, so the two agree on what a boundary is. A Setext heading (``출처`` over
+``----``) is not recognised; the reference documents that.
 
 **Anything added here has to be a claim about which sections the file keeps.**
 What a bullet says, when a row deserves review, and whether a human has decided
@@ -65,12 +80,33 @@ OPEN_QUESTIONS_SCAFFOLD = (
 
 
 def _headings(text: str) -> list[str]:
-    """The ATX heading lines of *text*, raw (trailing whitespace included).
+    """The ``## `` section headings of *text*, raw (trailing whitespace included).
 
     Raw because the caller feeds the result to ``merge_candidates.insert_bullet``,
     which locates a section by exact line equality.
+
+    Two narrowings, both measured against the same failure. ``## `` exactly and
+    unindented, which is the test ``insert_bullet`` uses to find where a section
+    *ends*; and nothing inside a fenced code block, because a ``## 출처 부족``
+    written as an example in a fence was read as the section itself — the file
+    reported no missing sections while having no real 출처 section, and a bullet
+    routed there was inserted after the closing fence, in no section at all.
+
+    ``insert_bullet``'s own end-of-section scan does not know about fences, so a
+    bullet in a section that embeds a fenced ``## `` example stops at the fence
+    rather than at the section's end. That is a placement wart inside one section,
+    not a bullet lost between two, and #104 owns that scan.
     """
-    return [line for line in text.splitlines() if line.lstrip().startswith("#")]
+    headings: list[str] = []
+    fenced = False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if not fenced and line.startswith("## "):
+            headings.append(line)
+    return headings
 
 
 def _heading_with(text: str, keyword: str) -> str | None:
@@ -99,18 +135,44 @@ def missing_review_sections(text: str) -> list[str]:
     ]
 
 
+def split_review_sections(text: str) -> list[tuple[str, list[str]]]:
+    """Categories of *text* carrying more than one heading, with those headings.
+
+    A split is not an error and nothing here repairs it: joining two sections means
+    moving bullets a human wrote and filed, and that decision is theirs. But it is
+    the state this whole module exists because of, and until now nobody downstream
+    could see it — the earlier section says "- 현재 없음." while the queue sits in
+    the later one, and both a reader skimming the top and every check in
+    tools/validate.py agree there is nothing to review.
+
+    So: say it, once, where an operator will read it. Repairing it is one edit and
+    they are the only ones who can make it.
+    """
+    split: list[tuple[str, list[str]]] = []
+    headings = _headings(text)
+    for keyword, _ in REVIEW_CATEGORIES:
+        matches = [line for line in headings if keyword in line]
+        if len(matches) > 1:
+            split.append((keyword, matches))
+    return split
+
+
 def ensure_review_sections(text: str) -> str:
     """*text* with a canonical heading appended for every category it lacks.
 
     Categories that already have a heading — under any spelling — are left exactly
     as they are, so this is churn-free on an existing KB and idempotent: the second
-    call finds nothing missing and returns *text* unchanged.
+    call finds nothing missing and returns *text* unchanged. A category that has two
+    is left alone as well; see :func:`split_review_sections` for why.
     """
     missing = missing_review_sections(text)
     if not missing:
         return text
     canonical = dict(REVIEW_CATEGORIES)
-    body = text.rstrip("\n") or TITLE
+    # `.strip()`, not `.rstrip("\n")`: a file holding only spaces and newlines is as
+    # titleless as an empty one, and rstrip left it truthy — the sections were then
+    # appended under no title at all.
+    body = text.rstrip("\n") if text.strip() else TITLE
     return "\n\n".join([body] + [canonical[keyword] for keyword in missing]) + "\n"
 
 

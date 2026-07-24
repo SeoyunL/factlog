@@ -16,12 +16,15 @@ had, and the bullets went to the new one while the section a human reads stayed 
 """
 from __future__ import annotations
 
+import pytest
+
 from factlog.review_sections import (
     OPEN_QUESTIONS_SCAFFOLD,
     REVIEW_CATEGORIES,
     ensure_review_sections,
     missing_review_sections,
     section_for,
+    split_review_sections,
 )
 
 KEYWORDS = [keyword for keyword, _ in REVIEW_CATEGORIES]
@@ -61,6 +64,37 @@ class TestMissingReviewSections:
         text = "# Open Questions\n\n- needs_review: 출처 부족한 후보 / 중복 / 모호 / 충돌\n"
         assert missing_review_sections(text) == KEYWORDS
 
+    def test_a_heading_inside_a_code_fence_is_not_a_section(self):
+        """Measured: the file below reported nothing missing and had no 출처 section.
+
+        Worse than a false clean bill — section_for then answered with the fenced
+        line, and merge_candidates inserted the bullet after the closing fence,
+        between two sections and inside neither.
+        """
+        text = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n"
+            "예시:\n\n```\n## 출처 부족\n```\n\n"
+            "## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        assert missing_review_sections(text) == ["출처"]
+        assert section_for(text, "출처") == "## 출처 부족"  # canonical, not the fenced line
+
+    def test_a_tilde_fence_hides_a_heading_too(self):
+        text = "# Open Questions\n\n~~~\n## 출처 부족\n~~~\n"
+        assert "출처" in missing_review_sections(text)
+
+    def test_an_indented_heading_is_not_a_section(self):
+        # Indented by four spaces is a code block, not a heading.
+        text = "# Open Questions\n\n    ## 출처 부족\n"
+        assert "출처" in missing_review_sections(text)
+
+    def test_a_real_heading_after_a_closed_fence_still_counts(self):
+        # The fence tracking must not swallow the rest of the document.
+        text = "# Open Questions\n\n```\n## 중복 개념 후보\n```\n\n## 출처 부족\n"
+        missing = missing_review_sections(text)
+        assert "출처" not in missing
+        assert "중복" in missing
+
     def test_every_category_is_reported_on_its_own(self):
         # Dropping a category from REVIEW_CATEGORIES has to be visible here, and a
         # file that lost exactly one heading must name exactly that one.
@@ -81,6 +115,12 @@ class TestEnsureReviewSections:
 
     def test_an_empty_file_gains_a_title_too(self):
         assert ensure_review_sections("") == OPEN_QUESTIONS_SCAFFOLD
+
+    @pytest.mark.parametrize("blank", ["", "\n\n", "   \n\n", "\t\n", "  "])
+    def test_a_file_of_only_whitespace_gains_a_title(self, blank):
+        # `rstrip("\n") or TITLE` left "   " truthy, so the sections were appended
+        # under no title at all.
+        assert ensure_review_sections(blank) == OPEN_QUESTIONS_SCAFFOLD
 
     def test_existing_spellings_are_left_exactly_alone(self):
         # Churn-free on a real KB: no rewrite, and above all no second heading for
@@ -110,6 +150,32 @@ class TestEnsureReviewSections:
             for line in OPEN_QUESTIONS_SCAFFOLD.splitlines()
             if line.lstrip().startswith("- ")
         ]
+
+
+class TestSplitReviewSections:
+    """The state this module exists because of, reported rather than repaired."""
+
+    def test_a_clean_file_reports_nothing(self):
+        for text in (OPEN_QUESTIONS_SCAFFOLD, SAMPLE_KB_HEADINGS, REAL_KB_HEADINGS):
+            assert split_review_sections(text) == []
+
+    def test_the_real_kb_shape_is_reported(self):
+        # What ~/factlog-kb looks like: four hand-written headings up top and the
+        # producer's own headings further down, holding the actual queue.
+        text = (
+            REAL_KB_HEADINGS
+            + "\n## 모호한 관계명\n- needs_review: a\n\n## 출처 부족\n- needs_review: b\n"
+        )
+        assert split_review_sections(text) == [
+            ("모호", ["## 모호 (관계명·개념 판단 필요)", "## 모호한 관계명"]),
+            ("출처", ["## 출처 (근거 강도 부족)", "## 출처 부족"]),
+        ]
+
+    def test_ensure_review_sections_does_not_repair_a_split(self):
+        # Joining two sections moves bullets a human filed; that is their edit.
+        text = REAL_KB_HEADINGS + "\n## 모호한 관계명\n- needs_review: a\n"
+        assert ensure_review_sections(text) == text
+        assert split_review_sections(text)
 
 
 class TestSectionFor:

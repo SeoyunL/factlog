@@ -119,6 +119,13 @@ def _review_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if line.lstrip().startswith("- needs_review")]
 
 
+def _heading_above(text: str, prefix: str) -> str:
+    """The `## ` heading the first *prefix* line sits under — where it was filed."""
+    lines = text.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith(prefix))
+    return next(lines[i] for i in range(at, -1, -1) if lines[i].startswith("## "))
+
+
 # ---------------------------------------------------------------------------
 # The `init` path, alone — merge_candidates is never run in this class.
 # ---------------------------------------------------------------------------
@@ -212,13 +219,15 @@ class TestMergeAlone:
             assert any(keyword in line for line in _headings(text)), (keyword, text)
 
 
-def test_neither_path_scaffolds_when_both_are_broken(tmp_path):
-    """Break both writers and the KB stays unvalidatable — the pair is load-bearing.
+def test_validate_reports_every_missing_section(tmp_path):
+    """The validator names each absent category, not just the first.
 
-    Without this, a mutant that disables one path is equivalent: the other path in
-    the same pipeline puts the sections back. Here `init`'s two templates are gone
-    and merge starts from the legacy bare title, so nothing can supply them, and the
-    validator has to say so for all four categories.
+    A KB whose open-questions.md is the legacy bare title has none of the four, and
+    all four have to appear in the output — otherwise a file could lose three
+    sections and the operator would be told about one. (Which path *supplies* the
+    sections is not this test's business: TestInitAlone and TestMergeAlone each
+    drive one writer with the other denied, so a mutant that breaks either is caught
+    there rather than here.)
     """
     kb = _init(tmp_path / "kb", tmp_path)
     (kb / "decisions" / "open-questions.md").write_text(LEGACY_TITLE_ONLY, encoding="utf-8")
@@ -227,6 +236,44 @@ def test_neither_path_scaffolds_when_both_are_broken(tmp_path):
     out = proc.stdout + proc.stderr
     for keyword in KEYWORDS:
         assert f"should keep a {keyword!r} review section" in out, out
+
+
+class TestSplitSectionWarning:
+    """An already-split file is not repaired, so it has to be reported.
+
+    Both halves matter. Repairing would move bullets a human wrote and filed, which
+    is their call; staying silent leaves the state that caused this issue invisible,
+    because a split file passes every structural check there is.
+    """
+
+    def _split_kb(self, tmp_path) -> Path:
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(
+            HAND_SPELLED + "\n## 모호한 관계명\n- needs_review: filed here earlier\n",
+            encoding="utf-8",
+        )
+        return kb
+
+    def test_the_split_is_named_and_does_not_fail_the_run(self, tmp_path):
+        proc = _validate(self._split_kb(tmp_path), tmp_path)
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 0, out
+        assert "warning: split_review_section:" in out, out
+        assert "'## 모호 (관계명·개념 판단 필요)'" in out, out
+        assert "'## 모호한 관계명'" in out, out
+
+    def test_a_kb_with_one_heading_per_category_is_not_warned_about(self, tmp_path):
+        kb = _init(tmp_path / "kb", tmp_path)
+        proc = _validate(kb, tmp_path)
+        assert proc.returncode == 0
+        assert "split_review_section" not in proc.stdout + proc.stderr
+
+    def test_merging_a_split_kb_leaves_the_split_alone(self, tmp_path):
+        """No churn and no repair: the headings a human wrote are still all there."""
+        kb = self._split_kb(tmp_path)
+        before = _open_questions(kb)
+        assert _merge(kb, tmp_path).returncode == 0
+        assert _headings(_open_questions(kb)) == _headings(before)
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +303,39 @@ class TestBulletPlacement:
         assert proc.returncode == 0, proc.stdout + proc.stderr
         text = _open_questions(kb)
         assert _headings(text) == _headings(HAND_SPELLED), text
-        lines = text.splitlines()
+        assert _heading_above(text, "- needs_review") == "## 모호 (관계명·개념 판단 필요)", text
+
+    def test_a_stale_source_bullet_lands_in_the_source_section(self, tmp_path):
+        """The other writer's destination, pinned the same way.
+
+        record_stale_page_refs asks for the 출처 section by keyword, and nothing was
+        checking that it asked for the right one: swapping its keyword to 모호 filed
+        every stale-source note under ambiguity and the whole suite stayed green.
+        """
+        mc = _merge_module()
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(HAND_SPELLED, encoding="utf-8")
+        (kb / "pages" / "p.md").write_text("# p\n\n- see sources/gone.md\n", encoding="utf-8")
+        added = mc.record_stale_page_refs(kb)
+        assert added, "the stale ref was not recorded"
+        text = _open_questions(kb)
+        assert _headings(text) == _headings(HAND_SPELLED), text
+        assert _heading_above(text, "- stale_source") == "## 출처 (근거 강도 부족)", text
+
+    def test_a_new_bullet_keeps_a_blank_line_before_the_next_heading(self, tmp_path):
+        """Placement must not leave the bullet flush against the following heading.
+
+        The bullet goes at the end of its section, which — when that section's content
+        ends in a blank line — is the next heading's own index. Routing bullets to a
+        file's existing sections made that the ordinary case, and the result read as
+        the next section's lead-in rather than as this section's last item.
+        """
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "decisions" / "open-questions.md").write_text(HAND_SPELLED, encoding="utf-8")
+        _seed_needs_review(kb)
+        assert _merge(kb, tmp_path).returncode == 0
+        lines = _open_questions(kb).splitlines()
         bullet = next(i for i, line in enumerate(lines) if line.startswith("- needs_review"))
-        heading = next(
-            lines[i] for i in range(bullet, -1, -1) if lines[i].startswith("## ")
-        )
-        assert heading == "## 모호 (관계명·개념 판단 필요)", text
+        after = lines[bullet + 1]
+        assert not after.startswith("## "), "\n".join(lines)
+        assert after.strip() == ""
