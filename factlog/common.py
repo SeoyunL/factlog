@@ -2467,13 +2467,20 @@ def fact_key(subject: str, relation: str, object_: str, source: str) -> tuple[st
 
     Normalisation, matching merge's own:
 
-    - subject / relation / object are `.strip()`ed only. They are NOT NFC-folded:
-      merge stores content values verbatim, so folding here would make the CLI treat
-      an NFC row and an NFD row as one fact while merge keeps them as two — exactly
-      the #477 failure mode, one level down.
-    - `object` goes through `literal_types.canonical_amount` (left as-is when it is not
-      an amount compound), because merge canonicalises the amount BEFORE keying, so
-      `amount(7,억)` and `amount(7,"억")` are one fact on both sides.
+    - subject / relation / object are `.strip()`ed and NFC-folded. Content values are
+      Unicode-normalised to NFC so an NFC row and an NFD row that a human reads as the
+      same fact ARE one fact on both sides. This is safe — not the #477 failure mode —
+      precisely because there is ONE definition: merge's normalize_rows keys its dedup
+      on fact_key and STORES the folded value (see below), and the review CLI keys its
+      runs/*.json writes on the same fact_key, so both sides fold in lockstep. The #477
+      mode was the CLI folding while merge preserved, collapsing two run rows the CLI
+      then could not both reach; here neither side preserves an unfolded variant, so no
+      such row survives to be orphaned. (This also aligns fact identity with the engine
+      grouping axes, which already fold to NFC.)
+    - `object` is NFC-folded FIRST, then goes through `literal_types.canonical_amount`
+      (left as-is when it is not an amount compound). Folding before canonicalising also
+      collapses an NFD/NFC unit inside an amount compound (`amount(7,억)`); the numeric
+      and bracket parts are ASCII, so canonical_amount's regex matches unchanged.
     - `source` IS NFC-folded and then cut at '#'. The source is a filesystem artifact,
       not a content value: macOS hands out NFD filenames while extractors emit NFC, and
       an '#anchor' names a place inside a document, not a different document.
@@ -2482,11 +2489,11 @@ def fact_key(subject: str, relation: str, object_: str, source: str) -> tuple[st
     in those fields, so two run rows differing only there are ONE fact and a decision
     has to reach both.
     """
-    obj = str(object_).strip()
+    obj = unicodedata.normalize("NFC", str(object_).strip())
     canon = literal_types.canonical_amount(obj)
     return (
-        str(subject).strip(),
-        str(relation).strip(),
+        unicodedata.normalize("NFC", str(subject).strip()),
+        unicodedata.normalize("NFC", str(relation).strip()),
         canon if canon is not None else obj,
         unicodedata.normalize("NFC", str(source).strip()).partition("#")[0],
     )

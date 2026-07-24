@@ -33,13 +33,14 @@ factlog accept Acme uses FastAPI --dry-run
 남습니다. `amount` 객체는 merge 와 같은 정규 형태 `amount(N,"단위")` 로 비교되므로
 `amount(7,억)` 과 `amount(7,"억")` 은 한 사실입니다.
 
-주어·관계·목적어는 **저장된 그대로** 비교하고, 유니코드 정규화는 source 에만
-(NFC 로) 적용합니다. source 는 파일시스템 산물이라(macOS 는 파일명을 NFD 로 주고
-추출기는 보통 NFC 를 씁니다) 표기를 맞춰야 같은 문서로 인식되지만, 값은 사람이 쓴
-내용 그대로 보존합니다. 그래서 눈에 같아 보여도 유니코드 표기가 다른 한글 주어는
-**별개의 사실**입니다 — 한쪽을 `accept` 해도 다른 쪽은 움직이지 않고, `factlog
-review` 큐에 둘 다 남습니다. 붙여넣기나 macOS 파일명에서 섞여 들어오는 경우가 있으니,
-같은 사실이 두 번 보이면 `factlog amend` 로 한쪽 값을 다른 쪽에 맞추십시오.
+주어·관계·목적어·source 는 모두 **NFC 로 정규화**해 비교하고 저장합니다. 그래서
+눈에 같아 보이지만 유니코드 표기(NFC/NFD)만 다른 한글 값은 **하나의 사실**입니다 —
+한쪽을 `accept` 하면 다른 표기의 근거 행에도 결정이 닿고, `candidates.csv` 에는 NFC
+로 접힌 한 행만 남습니다. 붙여넣기나 macOS 파일명에서 표기가 섞여 들어와도 merge 가
+같은 사실로 접으므로, 사람이 손으로 표기를 맞출 필요가 없습니다. (이 정체성은 엔진의
+그룹화 축과도 일치합니다 — 엔진 역시 NFC 로 접습니다.) 이전 표기 정책으로 쌓인
+`candidates.csv` 를 NFC 로 다시 접으려면 일회성 명령 `factlog migrate-unicode` 를
+쓰십시오(기본은 충돌 리포트만, `--resolve-status=priority` 로 자동 병합).
 
 경계: `candidates.csv` 는 `confirmed` 인데 `runs/*.json` 은 아직 `candidate` 인
 드리프트(#233 이전 KB)를 되돌리는 일은 `accept`/`reject` 의 부수효과가 아닙니다.

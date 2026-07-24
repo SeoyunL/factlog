@@ -268,6 +268,9 @@ def normalize_rows(
 
     - status is normalised to 'needs_review' if not in VALID_STATUSES
     - confidence is clamped to [0.00, 1.00]
+    - subject/relation/object (and source) are NFC-normalised on the way in, so the
+      value stored in candidates.csv is on the same NFC form fact_key keys on — key,
+      CSV and engine stay one consistent form even when a survivor arrived as NFD.
     - duplicate (subject, relation, object, source-file) tuples collapse to one
       row.  The key is ``common.fact_key`` — the single definition of fact
       identity, shared with the review CLI so a human decision reaches exactly the
@@ -316,6 +319,15 @@ def normalize_rows(
             continue
         clean = {field: row.get(field, "").strip() for field in FACT_HEADER}
         clean["source"] = source  # NFC-normalised canonical source
+        # NFC-normalise the stored content values too, mirroring the source above.
+        # fact_key folds subject/relation/object to NFC, so dedup already treats an
+        # NFC and an NFD spelling as one fact; but the SURVIVOR is picked by source
+        # order and could carry an NFD spelling into candidates.csv (and on to
+        # accepted.dl). Folding the stored value keeps key, CSV and engine on ONE
+        # consistent NFC form instead of "folded, but which spelling wins is
+        # nondeterministic".
+        for _field in ("subject", "relation", "object"):
+            clean[_field] = unicodedata.normalize("NFC", clean[_field])
         clean["status"] = clean["status"] if clean["status"] in VALID_STATUSES else "needs_review"
         clean["confidence"] = normalize_confidence(clean["confidence"])
         # Canonicalise an amount object to the always-quoted `amount(N,"unit")`

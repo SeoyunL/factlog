@@ -1717,6 +1717,180 @@ def cmd_amend(args: argparse.Namespace) -> int:
     return 1 if recompile_failed else 0
 
 
+# Priority for resolving a post-fold status collision, highest first. A human
+# ruling (confirmed) outranks an engine promotion (accepted), which outranks a
+# still-open review (needs_review > candidate), which outranks a retired row
+# (superseded). Used ONLY by --resolve-status=priority; the default reports and
+# changes nothing.
+_MIGRATE_STATUS_PRIORITY = {
+    "confirmed": 0,
+    "accepted": 1,
+    "needs_review": 2,
+    "candidate": 3,
+    "superseded": 4,
+}
+
+
+def cmd_migrate_unicode(args: argparse.Namespace) -> int:
+    """One-shot: re-deduplicate candidates.csv under the NFC-folded fact_key (#482).
+
+    fact_key now folds subject/relation/object to NFC, so an NFC and an NFD spelling
+    of the same fact -- kept apart by a KB built before the fold -- now collapse to
+    ONE fact. This finds those collisions in an existing candidates.csv and REPORTS
+    them; it changes nothing unless asked.
+
+    Default (report only): every group of rows that now share one NFC fact_key is
+    listed when the rows disagree on status or confidence, so a human can reconcile
+    with `factlog amend`. A KB already on a single form (the current real KB) reports
+    "no targets" and touches nothing -- this is defensive migration code.
+
+    --resolve-status=priority: fold each colliding group to one row deterministically.
+    The survivor's status is the highest by confirmed > accepted > needs_review >
+    candidate > superseded; ties break on lexicographically-first source (merge's own
+    survivor rule). The stored subject/relation/object/source are written on NFC form.
+    The survivor keeps its OWN confidence -- discarded confidences are reported, never
+    max'd in -- so a human ruling is never silently inflated. The rewrite is
+    deterministic (value-based, not a model judgement).
+    """
+    import csv
+
+    from factlog.common import FACT_HEADER, fact_key
+
+    target_str, _ = factlog_config.resolve_root(args.target)
+    target = _Path(target_str)
+    if not _require_kb(target, "migrate-unicode"):
+        return 1
+
+    csv_path = target / "facts" / "candidates.csv"
+    if not csv_path.is_file():
+        print(f"factlog migrate-unicode (KB: {target}): no facts/candidates.csv — nothing to do")
+        return 0
+
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    # Group rows by the (now NFC-folded) fact identity, preserving input order.
+    groups: dict[tuple[str, str, str, str], list[dict[str, str]]] = {}
+    order: list[tuple[str, str, str, str]] = []
+    for row in rows:
+        key = fact_key(
+            row.get("subject", ""),
+            row.get("relation", ""),
+            row.get("object", ""),
+            row.get("source", ""),
+        )
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(row)
+
+    collisions = [key for key in order if len(groups[key]) > 1]
+    if not collisions:
+        print(
+            f"factlog migrate-unicode (KB: {target}): no targets — "
+            f"{len(rows)} row(s) already on one Unicode form, nothing to re-dedup"
+        )
+        return 0
+
+    def _status(r: dict[str, str]) -> str:
+        return (r.get("status") or "").strip()
+
+    def _confidence(r: dict[str, str]) -> str:
+        return (r.get("confidence") or "").strip()
+
+    # A collision is a CONFLICT worth a human's attention when its rows disagree on
+    # status or confidence; identical-status/confidence duplicates are silent.
+    conflicts = [
+        key
+        for key in collisions
+        if len({_status(r) for r in groups[key]}) > 1
+        or len({_confidence(r) for r in groups[key]}) > 1
+    ]
+
+    print(
+        f"factlog migrate-unicode (KB: {target}): {len(collisions)} fact(s) collapse under "
+        f"NFC folding, {len(conflicts)} with a status/confidence conflict"
+    )
+    for key in conflicts:
+        subj, rel, obj, src = key
+        print(f"  conflict: {subj} / {rel} / {obj}  [{src}]")
+        for r in groups[key]:
+            print(
+                f"    - status={_status(r) or '(none)'} confidence={_confidence(r) or '(none)'} "
+                f"source={(r.get('source') or '').strip() or '(none)'}"
+            )
+
+    if args.resolve_status != "priority":
+        if conflicts:
+            print(
+                "factlog migrate-unicode: report only. Reconcile with `factlog amend`, or re-run "
+                "with --resolve-status=priority to fold automatically."
+            )
+        else:
+            print(
+                "factlog migrate-unicode: collapsing groups agree on status/confidence; re-run "
+                "with --resolve-status=priority to write the deduplicated file."
+            )
+        return 0
+
+    # --resolve-status=priority: fold each collision to one deterministic survivor.
+    import unicodedata
+
+    def _nfc(s: str) -> str:
+        return unicodedata.normalize("NFC", s)
+
+    def _survivor(members: list[dict[str, str]]) -> dict[str, str]:
+        # Highest status by priority, ties broken by lexicographically-first source.
+        return min(
+            members,
+            key=lambda r: (
+                _MIGRATE_STATUS_PRIORITY.get(_status(r), len(_MIGRATE_STATUS_PRIORITY)),
+                (r.get("source") or "").strip(),
+            ),
+        )
+
+    kept_rows: list[dict[str, str]] = []
+    for key in order:
+        members = groups[key]
+        if len(members) == 1:
+            kept_rows.append(members[0])
+            continue
+        winner_row = _survivor(members)
+        winner = dict(winner_row)
+        # Store the value on NFC form so key, CSV and engine stay one consistent form.
+        for field in ("subject", "relation", "object", "source"):
+            if field in winner:
+                winner[field] = _nfc((winner.get(field) or "").strip())
+        discarded = [_confidence(r) for r in members if r is not winner_row]
+        if key in conflicts:
+            print(
+                f"  resolved: {key[0]} / {key[1]} / {key[2]} → status={_status(winner) or '(none)'} "
+                f"confidence={_confidence(winner) or '(none)'}; discarded confidence(s): "
+                f"{', '.join(c or '(none)' for c in discarded) or '(none)'}"
+            )
+        kept_rows.append(winner)
+
+    import io
+
+    out_fields = fieldnames or list(FACT_HEADER)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=out_fields, extrasaction="ignore")
+    writer.writeheader()
+    for r in kept_rows:
+        writer.writerow({k: (r.get(k) or "") for k in out_fields})
+    _atomic_write_text(csv_path, buf.getvalue())
+    print(
+        f"factlog migrate-unicode: rewrote {csv_path.name} — "
+        f"{len(rows)} row(s) → {len(kept_rows)} row(s) ({len(rows) - len(kept_rows)} folded)"
+    )
+    print(
+        "factlog migrate-unicode: note — run `/factlog check` (or compile_facts.py) to refresh accepted.dl."
+    )
+    return 0
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     """Find facts by a case-insensitive substring across subject/relation/object.
 
@@ -7295,6 +7469,22 @@ def build_parser() -> argparse.ArgumentParser:
     amend.add_argument("--dry-run", action="store_true", help="print the planned changes without modifying anything")
     amend.add_argument("--target", default=None, help="KB root (default: the active KB; see `factlog where`)")
     amend.set_defaults(func=cmd_amend)
+
+    migrate_unicode = sub.add_parser(
+        "migrate-unicode",
+        help="one-shot: re-dedup candidates.csv under NFC-folded fact identity (#482)",
+    )
+    migrate_unicode.add_argument(
+        "--resolve-status",
+        choices=["priority"],
+        default=None,
+        help="fold colliding groups automatically by status priority "
+        "(confirmed>accepted>needs_review>candidate>superseded); default reports only",
+    )
+    migrate_unicode.add_argument(
+        "--target", default=None, help="KB root (default: the active KB; see `factlog where`)"
+    )
+    migrate_unicode.set_defaults(func=cmd_migrate_unicode)
 
     ignore = sub.add_parser(
         "ignore",

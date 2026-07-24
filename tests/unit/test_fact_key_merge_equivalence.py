@@ -16,6 +16,13 @@ these fail. Re-deriving the key inline while keeping every normalisation identic
 also the evidence that routing merge through fact_key was a no-op for merge itself. The
 argument for the single definition is that the next edit to one side cannot silently
 diverge; these tests are what makes such a divergence loud.
+
+As of #482 subject/relation/object are NFC-folded too (not just the source), so an NFC
+and an NFD spelling of the same fact collapse to one. This is not the #477 failure mode
+one level down: there is ONE definition, and merge both dedups on it AND stores the value
+on the folded form, so no unfolded variant survives in candidates.csv to be orphaned by a
+later CLI fold. Fact identity now also matches the engine grouping axes, which already
+fold to NFC.
 """
 from __future__ import annotations
 
@@ -85,20 +92,23 @@ CASES = {
         ],
         2,
     ),
-    # Unicode: content values are stored verbatim, so the two forms are TWO facts.
+    # Unicode: subject/relation/object are NFC-folded (#482), so an NFC and an NFD
+    # spelling a human reads as one fact ARE one fact on both sides. Safe because
+    # there is ONE definition -- merge dedups AND stores on the folded form, so no
+    # unfolded variant survives to be orphaned (the #477 mode).
     "subject_nfc_vs_nfd": (
         [
             _row(NFC, "R", "X", "sources/a.md"),
             _row(NFD, "R", "X", "sources/a.md"),
         ],
-        2,
+        1,
     ),
     "object_nfc_vs_nfd": (
         [
             _row("A", "R", NFC, "sources/a.md"),
             _row("A", "R", NFD, "sources/a.md"),
         ],
-        2,
+        1,
     ),
     # The source, by contrast, IS folded (filesystem artifact) and cut at '#'.
     "anchor_variants": (
