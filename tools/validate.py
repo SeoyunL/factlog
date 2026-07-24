@@ -26,6 +26,10 @@ from factlog.front_matter_scan import (  # noqa: E402
 from factlog.integrations.common.source_writer import (  # noqa: E402
     IDENTITY_KEYS_BY_SOURCE,
 )
+from factlog.review_sections import (  # noqa: E402
+    missing_review_sections,
+    split_review_sections,
+)
 
 # An unregistered status is an *error* here, not a warning — so this set drifting
 # from the vocabulary is worse than the #208 warning bug. Derive, never restate.
@@ -303,9 +307,12 @@ def validate(root: Path) -> list[str]:
         decision_text = ""
     else:
         decision_text = read(decisions)
-        for section in ["중복", "모호", "출처", "충돌"]:
-            if section not in decision_text:
-                errors.append(f"decisions/open-questions.md should keep a {section!r} review section")
+        # Heading-based, off the same list the producer and `init` read (#495). The
+        # old test was `keyword not in decision_text` over the whole document, which
+        # any bullet mentioning the word answered — a file could lose the section
+        # itself and still pass.
+        for section in missing_review_sections(decision_text):
+            errors.append(f"decisions/open-questions.md should keep a {section!r} review section")
         decision_bullets = [line for line in decision_text.splitlines() if line.lstrip().startswith("- ")]
         if any(row.get("status") == "needs_review" for row in rows) and not decision_bullets:
             errors.append("needs_review facts exist but decisions/open-questions.md has no review bullets")
@@ -338,6 +345,32 @@ def validate(root: Path) -> list[str]:
                 stale_pages.append(f"{page.relative_to(root)} {source_error}")
     errors.extend(stale_pages)
     return errors
+
+
+def review_section_warnings(root: Path) -> list[tuple[str, str]]:
+    """Review categories that ended up with two headings, as ``(tag, message)``.
+
+    Not an error: a split file is structurally complete and every check above passes
+    on it. It is a *reading* hazard, and a bad one — the earlier section reads
+    "- 현재 없음." while the queue accumulates under the later one, so the operator
+    who skims the top concludes the review queue is empty (#495).
+
+    Warning rather than repair because the fix moves bullets a human wrote and filed,
+    which is theirs to do. Warning rather than silence because until this line there
+    was no channel that said so at all.
+    """
+    decisions = root / "decisions" / "open-questions.md"
+    if not decisions.is_file():
+        return []
+    warnings: list[tuple[str, str]] = []
+    for keyword, headings in split_review_sections(read(decisions)):
+        warnings.append((
+            "split_review_section",
+            f"decisions/open-questions.md has {len(headings)} {keyword!r} sections "
+            f"({', '.join(repr(h.strip()) for h in headings)}); new bullets go to the "
+            f"first, so the others keep whatever they already hold — merge them by hand",
+        ))
+    return warnings
 
 
 def front_matter_warnings(root: Path) -> list[tuple[str, str]]:
@@ -418,11 +451,13 @@ def main() -> int:
     # Printed on both outcomes and ahead of the verdict, so a failing run does not
     # swallow them and a passing one does not bury them under its own last line.
     # They never move the exit code: see front_matter_warnings for why.
-    for tag, warning in front_matter_warnings(root):
+    for tag, warning in front_matter_warnings(root) + review_section_warnings(root):
         # The tag is what a script greps for, and each is chosen not to assert more
         # than the reader knows. ``no_closing_fence`` holds for both closing-fence
         # reasons (unclosed and search-stopped), and ``no_opening_fence`` names the
         # deleted-opening-fence shape without calling it a verdict on the file's owner.
+        # ``split_review_section`` names a shape, not a mistake: two headings for one
+        # category is a state a human can have arrived at deliberately.
         print(f"warning: {tag}: {warning}")
     if errors:
         print("Fact sync validation failed:")
