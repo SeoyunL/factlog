@@ -2275,9 +2275,10 @@ def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str
     It does not, and the difference is measurable: _scan_policy requires a literal
     to close on the line it opens, while pyrewire accepts a literal that spans
     lines. `relation("a<newline>b", "r", "o").` truncates the skeleton and COMPILES.
-    The truncation set is strictly wider than the engine's reject set, so a claim
-    resting on that overlap is false, and this is the exact shape of error #516 was
-    filed about -- prose that argues in the opposite direction from measurement.
+    Neither set contains the other -- the engine also rejects things that do not
+    truncate at all (`/* */`, a digit-initial name, `.DECL`) -- so the two are not
+    comparable and any claim resting on their overlap is false. This is the exact
+    shape of error #516 was filed about: prose that does not survive measurement.
 
     The argument that does hold is about LINE-INITIALITY, and it establishes no
     regression rather than no blind spot. Every `.decl` this truncation can hide in
@@ -2308,13 +2309,20 @@ def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str
     strict=False, not strict=True: raising here would turn a targeted alias check
     into a new whole-program parse error for the caller.
 
-    The cost is honest and accepted, not a reason. Measured on a 1 MiB program, in
-    both a fact-heavy and a rule-heavy shape: the skeleton lex takes about 1.5s
-    against the regex's ~9ms (roughly 170x, linear in program size) and peaks at
-    about one program's worth of heap against the regex's nil. Real KBs are
-    kilobytes -- examples/sample-kb's accepted.dl is 465 bytes -- so this is
-    sub-millisecond in practice, once per `factlog check`. Performance is not an
-    argument in this module in either direction; it is recorded here as a price.
+    The cost is honest and accepted, not a reason. On a 1 MiB program the skeleton
+    lex takes 140-185ms depending on shape against the regex's ~9ms -- call it 20x,
+    linear in program size -- and peaks at 8-10x the program size in heap against
+    the regex's nil, because the lexer accumulates a per-character list before
+    joining. Real KBs are kilobytes (examples/sample-kb's accepted.dl is 465 bytes),
+    so this is sub-millisecond in practice, once per `factlog check`.
+
+    HOW those were measured, because the method changed the answer by an order of
+    magnitude and an earlier version of this paragraph reported the artifact as
+    fact: time with no profiler attached, best of three; heap separately, from
+    maxrss in its own process. Running tracemalloc to collect the heap figure
+    inflates this function's wall time about 9x, which is where a bogus "170x"
+    came from. Performance is not an argument in this module in either direction;
+    it is recorded here as a price.
 
     What this reading still cannot see -- and who can -- is listed in
     tests/unit/test_decl_whitespace_parity.py."""

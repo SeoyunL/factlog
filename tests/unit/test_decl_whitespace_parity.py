@@ -316,11 +316,14 @@ class TestTheLastRawTextSiteCannotStripComments:
     unterminated literal. It is NOT excused by "the engine rejects those programs",
     and the test below exists to stop anyone writing that down again. `_scan_policy`
     wants a literal closed on the line it opens; pyrewire accepts one spanning
-    lines; a program in that gap truncates the skeleton AND compiles. The truncation
-    set is strictly WIDER than the engine's reject set, so the two sets do not
-    line up and an argument resting on the overlap is false. #516 was filed because
-    this docstring's ancestor argued against measurement; the fix is not to argue
-    the other way from the same kind of evidence.
+    lines; a program in that gap truncates the skeleton AND compiles. Nor is it
+    containment the other way: the engine rejects plenty that does not truncate at
+    all (`/* */`, a digit-initial name, `.DECL`). NEITHER SET CONTAINS THE OTHER, so
+    an argument resting on their overlap is false. #516 was filed because this
+    docstring's ancestor argued against measurement; the fix is not to argue the
+    other way from the same kind of evidence — a paragraph whose subject is "do not
+    write claims that fail measurement" is the last place to round a relation off
+    to the word that reads better.
 
     What holds is narrower and is about no REGRESSION, not no blind spot: in the
     assembled program every `.decl` the truncation can hide is mid-line, and the
@@ -344,6 +347,16 @@ class TestTheLastRawTextSiteCannotStripComments:
     TRUNCATING = {
         "odd quote": ('q(X, "oops) :- relation(X, "a", _).\n', "rejects"),
         "literal spanning lines": ('relation("a\nb", "r", "o").\n', "compiles"),
+    }
+
+    # The other direction, so the relation is pinned as INCOMPARABLE rather than as
+    # containment. Prose kept rounding this off to "the truncation set is strictly
+    # wider", which is a different and false claim; these are rejected by the engine
+    # and do not truncate at all.
+    REJECTED_BUT_NOT_TRUNCATING = {
+        "block comment": "/* nope */\n",
+        "digit-initial name": f".decl 1bad({COLS})\n",
+        "uppercase .DECL": f".DECL bad({COLS})\n",
     }
 
     @pytest.mark.parametrize("label", sorted(TRUNCATING))
@@ -376,6 +389,24 @@ class TestTheLastRawTextSiteCannotStripComments:
                 fcommon.EasySession(text)
         else:
             fcommon.EasySession(text)  # truncates our lexer, compiles for the engine
+
+    @pytest.mark.parametrize("label", sorted(REJECTED_BUT_NOT_TRUNCATING))
+    def test_the_engine_also_rejects_things_that_do_not_truncate(self, label):
+        """The containment claim, refuted in the direction nobody checked.
+
+        With the test above, this makes the relation INCOMPARABLE: each set holds
+        something the other does not. That is weaker than "strictly wider" and it is
+        what is true, and the conclusion drawn from it — that an argument resting on
+        the overlap is worthless — needs only incomparability anyway. The stronger
+        wording bought nothing and was false.
+        """
+        text = self.REJECTED_BUT_NOT_TRUNCATING[label] + f".decl pub_year({COLS})\n"
+        skeleton, _ = fcommon._scan_policy(text, strict=False)
+        assert "pub_year" in skeleton, label  # no truncation
+        if fcommon.EasySession is None:
+            pytest.skip("the engine half of this claim needs pyrewire installed")
+        with pytest.raises(Exception):
+            fcommon.EasySession(text)
 
     def test_the_alias_net_does_not_raise_a_whole_program_parse_error(self):
         """strict=False, and why it may not be tightened to strict=True.
