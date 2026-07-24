@@ -366,10 +366,16 @@ def review_section_warnings(root: Path) -> list[tuple[str, str]]:
     Two shapes, both reading hazards the structural checks are blind to.
 
     ``unclosed_fence`` is the diagnosis for an otherwise baffling error. A file that
-    opens a code fence and never closes it has every heading below that line read as
-    code, so the errors above say a review section is missing while the operator is
-    looking straight at it. The errors are right and useless; this says which line to
-    fix. Nothing writes to such a file either — see merge_candidates.
+    opens a code fence and never closes it has every line below read as code, so the
+    errors above can say a review section is missing while the operator is looking
+    straight at it. Nothing writes to such a file either — see merge_candidates.
+
+    Whether the exit code moves depends on *where* the fence opens: below the four
+    headings it hides nothing any check requires, and the run passes with only this
+    warning to show for it. So the message says what the fence does, not what the
+    errors say — it used to claim it was "why sections you can see are reported
+    missing", which is false in exactly that case, the common one where someone
+    pasted a fragment onto the end of the file.
 
     ``split_review_section`` is not an error at all: a split file is structurally
     complete and every check above passes on it. The earlier section reads
@@ -387,8 +393,9 @@ def review_section_warnings(root: Path) -> list[tuple[str, str]]:
         warnings.append((
             "unclosed_fence",
             f"decisions/open-questions.md opens a code fence on line {fence_line} and "
-            f"never closes it — every heading below that line reads as code, which is "
-            f"why sections you can see are reported missing. Close the fence.",
+            f"never closes it — every line below reads as code, so headings there are "
+            f"not sections and bullets there are not filed, and nothing is written to "
+            f"this file while that holds. Close the fence.",
         ))
     for keyword, headings in split_review_sections(read(decisions)):
         warnings.append((

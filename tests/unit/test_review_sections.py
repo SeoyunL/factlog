@@ -266,6 +266,39 @@ class TestFenceScanning:
         assert ends_inside_fence(doc) is True
         assert unclosed_fence_line(doc) == 9
 
+    def test_a_tilde_block_may_quote_a_backtick_line(self):
+        """The document this module's own reference tells people to write.
+
+        Anyone spelling out the bullet format wraps the example in ``~~~`` precisely
+        so the backticks inside need no escaping. Toggling on any marker made the
+        quoted ``` "close" the tilde fence and the real ``~~~`` re-open it, so a
+        correct file read as permanently unclosed: both writers refused it forever,
+        pointing at the line that closes it and asking for it to be closed.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n형식 예시:\n\n"
+            "~~~\n- needs_review: X / r / Y\n```\n~~~\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        assert ends_inside_fence(doc) is False
+        assert unclosed_fence_line(doc) is None
+        assert missing_review_sections(doc) == []
+        assert review_bullets(doc) == []  # the example is still not a filed bullet
+
+    def test_a_backtick_block_may_quote_a_tilde_line(self):
+        doc = "# Open Questions\n\n```\n~~~\n```\n\n## 모호한 관계명\n"
+        assert ends_inside_fence(doc) is False
+        assert _headings(doc) == ["## 모호한 관계명"]
+
+    def test_a_longer_run_closes_but_a_shorter_one_does_not(self):
+        # CommonMark: the closing run is at least as long as the opening one.
+        assert ends_inside_fence("# Open Questions\n\n```\nx\n`````\n") is False
+        assert ends_inside_fence("# Open Questions\n\n`````\nx\n```\n") is True
+
+    def test_a_marker_carrying_an_info_string_cannot_close(self):
+        # ```python opens a block; it never ends one.
+        assert ends_inside_fence("# Open Questions\n\n```\nx\n```python\n") is True
+
 
 class TestReviewBullets:
     """What counts as a filed bullet — the reader both the producer and validator use.

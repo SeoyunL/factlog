@@ -310,6 +310,54 @@ class TestCodeFencesEndToEnd:
         assert "warning: unclosed_fence:" in out, out
         assert "line 5" in out, out
 
+    def test_a_fence_opened_after_the_headings_warns_without_failing(self, tmp_path):
+        """Where the fence opens decides the exit code; the warning does not.
+
+        A fragment pasted onto the end of a complete file hides nothing any check
+        requires, so the run passes with only the warning to show for it. The docs
+        and the issue comment both said "rc=1" flatly, which is false in exactly this
+        shape — the common one. Pinned here so the claim cannot drift back.
+        """
+        kb = _init(tmp_path / "kb", tmp_path)
+        _seed_needs_review(kb)
+        assert _merge(kb, tmp_path).returncode == 0
+        with (kb / "decisions" / "open-questions.md").open("a", encoding="utf-8") as f:
+            f.write("\n```\n붙여넣다 만 조각\n")
+        proc = _validate(kb, tmp_path)
+        out = proc.stdout + proc.stderr
+        assert "warning: unclosed_fence:" in out, out
+        assert proc.returncode == 0, out
+        # and the message does not blame errors that were never reported
+        assert "reported missing" not in out, out
+
+    def test_a_fence_opened_before_the_headings_does_fail(self, tmp_path):
+        """The other half of the same rule, so the pair states the whole contract."""
+        kb = self._fenced_kb(tmp_path, self.UNCLOSED)
+        proc = _validate(kb, tmp_path)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+
+    def test_a_tilde_block_quoting_backticks_is_written_to_normally(self, tmp_path):
+        """The shape the reference recommends must not hit the hard stop.
+
+        Wrapping a bullet-format example in `~~~` is how anyone avoids nesting
+        backticks — and this PR added both the recommendation and the hard stop, so a
+        file written the recommended way was refused forever, pointed at the line
+        that closes it and told to close it.
+        """
+        doc = (
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n형식 예시:\n\n"
+            "~~~\n- needs_review: X / r / Y\n```\n~~~\n\n"
+            "## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        )
+        kb = self._fenced_kb(tmp_path, doc)
+        proc = _merge(kb, tmp_path)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "opens a code fence" not in proc.stderr, proc.stderr
+        text = _open_questions(kb)
+        assert not _is_fenced(text, "- needs_review: Widget"), text
+        assert _heading_above(text, "- needs_review: Widget") == "## 모호한 관계명", text
+        assert _validate(kb, tmp_path).returncode == 0
+
     def test_merging_twice_leaves_the_file_byte_identical(self, tmp_path):
         # The #504 regression grew the file by three headings on every pass.
         kb = self._fenced_kb(tmp_path, self.UNCLOSED)

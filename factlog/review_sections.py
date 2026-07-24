@@ -74,9 +74,16 @@ there never render, and the next pass sees the same categories missing and appen
 again. The writers stop and say so instead, naming the line
 (:func:`unclosed_fence_line`), because closing the fence is a human's edit.
 
-**Anything added here has to be a claim about which sections the file keeps.**
-What a bullet says, when a row deserves review, and whether a human has decided
-are not that claim.
+**Anything added here has to be a claim about the structure of open-questions.md —
+what a reader will find in it and where.** Which sections it keeps, where each one
+runs, which of its lines are filed bullets, and which of its text is code rather
+than prose. That is wider than "which sections the file keeps", which is what this
+line used to say and what the four scans pulled in here have already outgrown.
+
+What a bullet *says*, when a row deserves review, and whether a human has decided
+are still not that claim. Nor is any of this a rendering library: it answers only
+the structural questions the producer and the validator have to agree on, and the
+fence rules exist for that reason rather than for their own sake.
 """
 from __future__ import annotations
 
@@ -115,6 +122,23 @@ OPEN_QUESTIONS_SCAFFOLD = (
 _MAX_FENCE_INDENT = 3
 
 
+def _fence_marker(line: str) -> tuple[str, int, str] | None:
+    """*line* as a fence marker — ``(char, run length, rest)`` — or None.
+
+    A run of three or more backticks or tildes, indented no more than
+    :data:`_MAX_FENCE_INDENT`. ``rest`` is what follows the run, which decides
+    whether the marker is allowed to close: an info string makes it an opener only.
+    """
+    body = line.lstrip(" ")
+    if len(line) - len(body) > _MAX_FENCE_INDENT:
+        return None
+    for char in ("`", "~"):
+        if body.startswith(char * 3):
+            run = len(body) - len(body.lstrip(char))
+            return char, run, body[run:]
+    return None
+
+
 def _scan_fences(text: str) -> tuple[list[bool], int | None]:
     """Per-line "is this inside a code fence", and where an unclosed fence opened.
 
@@ -123,24 +147,35 @@ def _scan_fences(text: str) -> tuple[list[bool], int | None]:
     two copies of the rule for what a section is are what #495 was about in the
     first place.
 
-    Opening and closing are a plain toggle. Matching the marker's character and
-    length the way CommonMark does would only ever *reduce* what counts as fenced,
-    and this scan errs toward "treat it as content" — the safe direction for a
-    writer deciding whether to write, since the cost of being wrong is a heading or
-    a bullet buried in a code block.
+    A fence closes only on **CommonMark's terms**: the same character, a run at
+    least as long as the opener's, and nothing after it but whitespace. Treating
+    every marker as a plain toggle broke the one document this module's own
+    reference recommends — a ``~~~`` block quoting a ```` ``` ```` line, which is
+    how anyone writes a bullet-format example without nesting backticks. The
+    backtick line "closed" the tilde fence and the real ``~~~`` re-opened it, so a
+    correct file read as permanently unclosed and both writers refused it forever,
+    pointing at the line that closes it and asking for it to be closed.
+
+    Matching is not uniformly more or less strict than the toggle was: a
+    non-matching marker no longer ends a fence (more of the file is code), and the
+    marker that does match now ends it (less). What it is instead is **the same
+    answer a renderer gives**, which is the only answer that matters — the whole
+    point of the flag is whether a human will see the line or a code block.
     """
     flags: list[bool] = []
     opened_at: int | None = None
+    open_marker: tuple[str, int] | None = None
     for index, line in enumerate(text.splitlines()):
-        body = line.lstrip(" ")
-        indent = len(line) - len(body)
-        if indent <= _MAX_FENCE_INDENT and (
-            body.startswith("```") or body.startswith("~~~")
-        ):
-            opened_at = None if opened_at is not None else index
-            flags.append(True)
+        marker = _fence_marker(line)
+        if marker is None:
+            flags.append(opened_at is not None)
             continue
-        flags.append(opened_at is not None)
+        char, run, rest = marker
+        if open_marker is None:
+            opened_at, open_marker = index, (char, run)
+        elif char == open_marker[0] and run >= open_marker[1] and not rest.strip():
+            opened_at, open_marker = None, None
+        flags.append(True)
     return flags, opened_at
 
 
