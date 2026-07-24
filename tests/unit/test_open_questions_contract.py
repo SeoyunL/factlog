@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from factlog.md_lines import fence_flags
-from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS
+from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS, section_for
 
 _REPO = Path(__file__).resolve().parents[2]
 _MERGE = _REPO / "tools" / "merge_candidates.py"
@@ -517,7 +517,7 @@ class TestCodeFencesEndToEnd:
             "```\n## 모호한 관계명\n```\n\n"
             "## 기존 내용과 충돌할 수 있는 항목\n"
         )
-        out = mc.insert_bullet(text, "## 출처 부족", "- b")
+        out = mc.insert_bullet(text, section_for(text, "출처"), "- b")
         assert not _is_fenced(out, "- b"), out
         assert _heading_above(out, "- b") == "## 출처 부족", out
 

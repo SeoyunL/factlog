@@ -43,6 +43,8 @@ Two things this deliberately does not claim:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # CommonMark lets a fence marker carry up to three leading spaces; at four it is an
 # indented code block, i.e. ordinary content that opens nothing. Counting those as
 # fences made a well-formed document read as permanently unclosed.
@@ -106,24 +108,79 @@ def fence_flags(text: str) -> tuple[list[bool], int | None]:
     return flags, opened_at
 
 
-def headings(text: str) -> list[str]:
-    """The ``## `` section headings of *text*, raw (trailing whitespace included).
+@dataclass(frozen=True)
+class Heading:
+    """A heading of the document, as a *place* rather than as a string.
 
-    Raw because callers feed the result back to :func:`section_line_index`, which
-    locates a section by exact line equality.
+    ``start`` is the index of its first line and ``end`` the index just past its
+    last, so ``lines[start:end]`` is the heading and nothing else. ``text`` is those
+    lines raw, joined by newlines, trailing whitespace and all: callers put it in
+    warnings a human reads, and re-spelling it there would make the message disagree
+    with the file.
 
-    ``## `` exactly, unindented, and outside any code fence. A ``## 출처 부족``
-    written as an example inside a fence was read as the section itself: the file
-    reported no missing sections while having no real 출처 section, and the bullet
-    routed there was inserted after the closing fence, in no section at all.
+    Why a place. Every caller that had a heading string went looking for it again
+    with line equality — ``lines.index(heading)`` — and line equality answers "which
+    line says this" rather than "where is the heading". The two differ whenever the
+    body of a document repeats its own title line, and the caller then filed content
+    against a line that is not a heading at all. Answering with the position once
+    removes the second lookup, and with it the chance of a different answer.
+    """
+
+    start: int
+    end: int
+    level: int
+    text: str
+
+
+# A heading level of 7 does not exist; ``####### x`` is a paragraph.
+_MAX_HEADING_LEVEL = 6
+
+
+def _atx_level(line: str) -> int | None:
+    """*line* as an unindented ATX heading — its level — or None.
+
+    Unindented on purpose, which is narrower than CommonMark (it allows up to three
+    leading spaces). This is the predicate the review-section scan has always used
+    and widening it would move section boundaries in existing KBs, which is not what
+    #500 is about; it is recorded here as a known narrowness rather than left to be
+    rediscovered.
+    """
+    if not line.startswith("#"):
+        return None
+    run = len(line) - len(line.lstrip("#"))
+    if run > _MAX_HEADING_LEVEL:
+        return None
+    # `#` and `## ` are headings; `###x` is not — the marker needs a space after it
+    # or nothing at all.
+    if len(line) > run and line[run] != " ":
+        return None
+    return run
+
+
+def headings(text: str) -> list[Heading]:
+    """Every heading of *text*, in document order, at **every** level.
+
+    All levels, because "which levels count as a section" is a caller's contract and
+    not a property of the document — :mod:`factlog.review_sections` keeps ``## ``
+    and says so with a ``level == 2`` test, where it can be read and mutated. It used
+    to be a ``startswith("## ")`` buried in the scan, where the contract was
+    invisible from the module that owns it.
+
+    Outside any code fence. A ``## 출처 부족`` written as an example inside a fence
+    was read as the section itself: the file reported no missing sections while
+    having no real 출처 section, and the bullet routed there was inserted after the
+    closing fence, in no section at all.
     """
     lines = text.splitlines()
     flags, _ = fence_flags(text)
-    return [
-        line
-        for line, fenced in zip(lines, flags)
-        if not fenced and line.startswith("## ")
-    ]
+    found: list[Heading] = []
+    for index, line in enumerate(lines):
+        if flags[index]:
+            continue
+        level = _atx_level(line)
+        if level is not None:
+            found.append(Heading(start=index, end=index + 1, level=level, text=line))
+    return found
 
 
 def bullets(text: str) -> list[str]:
@@ -168,32 +225,20 @@ def unclosed_fence_line(text: str) -> int | None:
     return None if opened_at is None else opened_at + 1
 
 
-def section_line_index(text: str, heading: str) -> int | None:
-    """Where the section titled *heading* starts, or None if *text* has no such one.
+def section_body_end(text: str, heading: Heading) -> int:
+    """The line index just past the body of *heading* — where a new line goes.
 
-    The lookup ``merge_candidates.insert_bullet`` uses. It used to be a plain
-    ``lines.index(heading)``, which found the heading *inside a code fence* and filed
-    the bullet against it — measured: the bullet landed just past the closing fence,
-    under no section at all, and the run still exited 0. A fenced line is not a
-    section here, so it must not be one there either.
-    """
-    flags, _ = fence_flags(text)
-    for index, (line, fenced) in enumerate(zip(text.splitlines(), flags)):
-        if not fenced and line == heading:
-            return index
-    return None
+    The body runs to the next heading at *heading*'s level or above, or to the end
+    of the file. Level-aware because a section is ended by its peers and its
+    parents, not by a subsection of its own: a ``### `` under a ``## `` is part of
+    that section, and a ``# `` after it is not.
 
-
-def section_end_index(text: str, start: int) -> int:
-    """The line index just past the section that starts at *start*.
-
-    Where a new bullet goes. Ends at the next ``## `` heading — the real ones only,
-    so a section that quotes a ``## `` example in a fence is not cut short at it —
-    or at the end of the file.
+    Fence-aware for the same reason everything here is. The scan this replaced was
+    ``startswith("## ")`` over the raw lines, which stopped at a ``## `` quoted as an
+    example inside a fence and inserted the new bullet into the code block.
     """
     lines = text.splitlines()
-    flags, _ = fence_flags(text)
-    end = start + 1
-    while end < len(lines) and not (not flags[end] and lines[end].startswith("## ")):
-        end += 1
-    return end
+    for other in headings(text):
+        if other.start >= heading.end and other.level <= heading.level:
+            return other.start
+    return len(lines)

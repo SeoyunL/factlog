@@ -46,9 +46,10 @@ and not a line in a fence: a ``## 출처 부족`` written as an example was take
 the section itself, and the bullet routed to it landed past the closing fence, in
 no section at all. A Setext heading (``출처`` over ``----``) is not recognised; the
 reference documents that, and nothing here improves it (#500). **Which lines are
-headings is not decided here** — :mod:`factlog.md_lines` answers that, the same way
-it answers which lines are code and where a section ends; this module's share of the
-definition is the four keywords below.
+headings, and at what level, is not decided here** — :mod:`factlog.md_lines` answers
+that, the same way it answers which lines are code and where a section ends; this
+module's whole share of the definition is the ``level == 2`` test in
+:func:`heading_for` and the four keywords below.
 
 The one file shape nothing writes to is one that **ends inside an unclosed fence**
 (:func:`factlog.md_lines.ends_inside_fence`). Appending happens at the end of the
@@ -74,7 +75,7 @@ are still not that claim.
 """
 from __future__ import annotations
 
-from factlog.md_lines import ends_inside_fence, headings as md_headings
+from factlog.md_lines import Heading, ends_inside_fence, headings
 
 # (keyword, canonical heading) in the order a scaffolded file lists them.
 #
@@ -105,15 +106,21 @@ OPEN_QUESTIONS_SCAFFOLD = (
 )
 
 
-def _heading_with(text: str, keyword: str) -> str | None:
+def heading_for(text: str, keyword: str) -> Heading | None:
     """The first heading of *text* carrying *keyword*, or None.
 
     First, not last: when a category ended up with two headings, the earlier one is
     the one a human reads, so that is where the queue belongs.
+
+    ``level == 2`` is where this module's share of "what is a section" lives, and it
+    is the whole of it. A ``# Open Questions`` is the file's title and not a 출처
+    section even when a human happens to have written the word into it; anything
+    deeper than ``## `` is inside a section rather than one of its own. Which lines
+    are headings at all, and at what level, is :mod:`factlog.md_lines`'.
     """
-    for line in md_headings(text):
-        if keyword in line:
-            return line
+    for heading in headings(text):
+        if heading.level == 2 and keyword in heading.text:
+            return heading
     return None
 
 
@@ -127,11 +134,11 @@ def missing_review_sections(text: str) -> list[str]:
     return [
         keyword
         for keyword, _ in REVIEW_CATEGORIES
-        if _heading_with(text, keyword) is None
+        if heading_for(text, keyword) is None
     ]
 
 
-def split_review_sections(text: str) -> list[tuple[str, list[str]]]:
+def split_review_sections(text: str) -> list[tuple[str, list[Heading]]]:
     """Categories of *text* carrying more than one heading, with those headings.
 
     A split is not an error and nothing here repairs it: joining two sections means
@@ -144,10 +151,10 @@ def split_review_sections(text: str) -> list[tuple[str, list[str]]]:
     So: say it, once, where an operator will read it. Repairing it is one edit and
     they are the only ones who can make it.
     """
-    split: list[tuple[str, list[str]]] = []
-    found = md_headings(text)
+    split: list[tuple[str, list[Heading]]] = []
+    found = [h for h in headings(text) if h.level == 2]
     for keyword, _ in REVIEW_CATEGORIES:
-        matches = [line for line in found if keyword in line]
+        matches = [h for h in found if keyword in h.text]
         if len(matches) > 1:
             split.append((keyword, matches))
     return split
@@ -186,14 +193,30 @@ def ensure_review_sections(text: str) -> str:
     return "\n\n".join([body] + [canonical[keyword] for keyword in missing]) + "\n"
 
 
-def section_for(text: str, keyword: str) -> str:
-    """The heading in *text* a *keyword* bullet belongs under.
+def section_for(text: str, keyword: str) -> Heading:
+    """Where in *text* a *keyword* bullet belongs — the heading it goes under.
 
-    The existing heading when there is one, so a bullet joins the section a reader
-    already has rather than opening a second one beside it; the canonical heading
-    otherwise.
+    The existing heading, so a bullet joins the section a reader already has rather
+    than opening a second one beside it. There is always one, and that is a
+    precondition rather than a hope: both writers call :func:`ensure_review_sections`
+    first, and it leaves a category headingless only for a file that ends inside an
+    unclosed fence — which both of them have already refused, before this, by the
+    same test. So ``missing_review_sections(text) == []`` holds here.
+
+    A place, not a string. This used to return the canonical heading when the file
+    had none, and the caller then looked that string up by line equality and fell
+    back to appending a section of its own when it was not found. The fallback wrote
+    into a document whose shape nobody had checked, quietly; a precondition that no
+    longer holds is worth a stack trace instead. ``raise`` and not ``assert``,
+    because ``python -O`` would drop the check and restore the silence.
     """
-    existing = _heading_with(text, keyword)
-    if existing is not None:
-        return existing
-    return dict(REVIEW_CATEGORIES)[keyword]
+    existing = heading_for(text, keyword)
+    if existing is None:
+        raise RuntimeError(
+            f"decisions/open-questions.md has no {keyword!r} review section. "
+            f"ensure_review_sections is called before this and adds one for every "
+            f"category, unless the file ends inside an unclosed code fence — which "
+            f"the writers refuse before reaching here. Missing: "
+            f"{missing_review_sections(text)}"
+        )
+    return existing

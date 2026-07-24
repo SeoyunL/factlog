@@ -98,10 +98,10 @@ from common import (  # noqa: E402
 )
 from factlog import literal_types  # noqa: E402
 from factlog.md_lines import (  # noqa: E402
+    Heading,
     bullets,
     ends_inside_fence,
-    section_end_index,
-    section_line_index,
+    section_body_end,
     unclosed_fence_line,
 )
 from factlog.review_sections import (  # noqa: E402
@@ -119,7 +119,7 @@ from factlog.review_sections import (  # noqa: E402
 # Checked at import because the failure is otherwise invisible where it matters. A
 # keyword that no longer exists in REVIEW_CATEGORIES raises KeyError from
 # `section_for` only when the file has no heading carrying it — that is, on a fresh
-# KB. On a populated one `_heading_with` finds the old heading and returns it, so the
+# KB. On a populated one `heading_for` finds the old heading and returns it, so the
 # drift routes bullets to a category the contract no longer names and says nothing.
 # Loud on every KB, at import, before a single row is classified.
 ROUTED_KEYWORDS = frozenset({"중복", "모호", "출처", "충돌"})
@@ -678,7 +678,7 @@ def decision_section(row: dict[str, str]) -> str:
     return "모호"
 
 
-def insert_bullet(text: str, section: str, bullet: str) -> str:
+def insert_bullet(text: str, section: Heading, bullet: str) -> str:
     lines = text.splitlines()
     # Idempotency by exact line, not substring: a plain `bullet in text` dropped a
     # new bullet whenever it was a prefix-substring of a longer existing bullet
@@ -691,19 +691,18 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
     # file complete. One reader, so the two cannot disagree about it.
     if bullet.rstrip() in {line.rstrip() for line in bullets(text)}:
         return text
-    # Where the section is, and where it ends, are md_lines' to answer — the
-    # same answer the scaffolder and the validator get. This was `lines.index(section)`
-    # and a `startswith("## ")` scan of its own, which found headings *inside code
-    # fences*: measured, a bullet was filed against a fenced heading and written just
-    # past the closing fence, under no section at all, and the run exited 0.
-    index = section_line_index(text, section)
-    if index is None:
-        if text and not text.endswith("\n"):
-            text += "\n"
-        return f"{text}\n{section}\n{bullet}\n"
-
-    insert_at = section_end_index(text, index)
-    if insert_at > index + 1 and lines[insert_at - 1].strip():
+    # Where the section ends is md_lines' to answer — the same answer the scaffolder
+    # and the validator get. This was a `startswith("## ")` scan of its own, which
+    # found headings *inside code fences*: measured, a bullet was filed against a
+    # fenced heading and written just past the closing fence, under no section at
+    # all, and the run exited 0.
+    #
+    # Where the section *starts* is no longer looked up at all: `section_for` already
+    # answered it, and asking again by line equality — `lines.index(section)` — was
+    # asking a different question, "which line says this", whose answer is the first
+    # line of the body that happens to repeat the heading's text.
+    insert_at = section_body_end(text, section)
+    if insert_at > section.end and lines[insert_at - 1].strip():
         lines.insert(insert_at, "")
         insert_at += 1
     lines.insert(insert_at, bullet)
