@@ -14,11 +14,13 @@ net had its own equally narrow regex, so a KB could ship a program declaring
 `pub_year` twice with different arities, compile rc=0, and quietly derive
 different rows.
 
-Six regexes read `.decl` three different ways in factlog/common.py. Five now
-share `_DECL_NAME`/`_DECL_RE`; the sixth (the reserved-head guard) is
-deliberately wider and stays that way. These tests pin both the agreement and
-the one intentional gap, because the failure mode of this module is not a crash
-— it is silence.
+Six regexes read `.decl` three different ways in factlog/common.py. They now
+share one name grammar and split along ONE axis: readers of a comment-stripped
+skeleton use `_DECL_RE` (and its column/strip variants), readers of raw text use
+the anchored `_DECL_LINE_RE`. The sixth, the reserved-head guard, is deliberately
+wider than both and stays that way. These tests pin the agreement, the intentional
+gap, and the residual one — because the failure mode of this module is not a
+crash, it is silence.
 
 Measured against pyrewire 1.0.3 (TestEngineAcceptsTheseForms below re-measures
 it, so the day the engine narrows, the reason for widening these parsers is
@@ -68,8 +70,12 @@ WHITESPACE_FORMS = {
 
 # Forms the engine also accepts, and that only a COMMENT-STRIPPING reader resolves.
 # The rule is ONE proposition, not a list of curiosities: the raw-text sites see a
-# `.decl` only when it is the FIRST TOKEN OF ITS LINE and its name and paren are
-# not split by a comment. Everything below violates one half or the other.
+# `.decl` only when it OPENS ITS LINE and NO COMMENT falls anywhere inside the
+# directive — not between `.decl` and the name, and not between the name and the
+# paren. Everything below violates one conjunct or the other. (An earlier wording
+# said only "name and paren not split", which its own third entry refutes: there
+# the `.decl` opens the line and the name touches its paren, and the raw readers
+# still miss it because the comment sits between `.decl` and the name.)
 #
 # "new" / "pre-existing" is measured against main, per form — #508 did not create
 # them all. Widening only the skeleton readers split the two comment-SPLIT forms,
@@ -259,8 +265,11 @@ class TestRawTextSitesCannotStripComments:
     """Where the four sites still disagree, stated as a rule and measured per form.
 
     Two sites read a _scan_policy SKELETON (comments removed, string literals
-    blanked); two read RAW text. The raw ones see a `.decl` only when it is the
-    FIRST TOKEN OF ITS LINE and its name and paren are not split by a comment.
+    blanked); two read RAW text. The raw ones see a `.decl` only when it OPENS ITS
+    LINE and NO COMMENT falls anywhere inside the directive — between `.decl` and
+    the name counts just as much as between the name and the paren. Both conjuncts
+    are needed: `.decl // why` + newline + `p(cols)` opens its line and has its
+    paren against its name, and the raw readers still do not see it.
 
     Two of the five forms in SKELETON_ONLY_FORMS are a divergence #508 CREATED:
     main's skeleton regex required the paren to touch the name, so both readers
@@ -367,14 +376,18 @@ class TestAnchorStillExcludesComments:
 
     @pytest.mark.parametrize("ws", ["\v", "\f"])
     def test_vertical_whitespace_is_not_a_line_start(self, ws):
-        """Why the anchor allows `[ \\t]*` and not `\\s*`.
+        """Why the anchor allows `[ \\t]*` and not `\\s*`: the anchor has to mean
+        "this line starts here", and `\\s` matches newlines, so `^\\s*` lets the run
+        cross lines and the anchor stops meaning anything. \\v/\\f are where the two
+        forms actually differ (\\r cannot reach here — Path.read_text translates it
+        to \\n before this text is assembled), so they are what pins the choice.
 
-        `\\s` also matches \\v/\\f/\\r, and the engine REJECTS a program with \\v or \\f
-        before a `.decl` (measured — see TestEngineAcceptsTheseForms). A parser wider
-        than the engine reports a declaration the engine never made, which is the
-        mirror image of the bug this issue is about. `[ \\t]*` keeps "line start"
-        meaning exactly that; \\r cannot reach here at all because Path.read_text
-        translates it to \\n before any of this text is assembled.
+        NOT justified as "our parser must never be wider than the engine". The
+        engine does ParseError on \\v/\\f (see TestEngineAcceptsTheseForms), but
+        policy_predicates counts `\\v.decl p(...)` all the same, so that is not a
+        rule this module keeps. It is harmless there — a program the engine rejects
+        never reaches a report — and stating a principle the neighbouring line
+        breaks would just be a new thing for someone to rely on wrongly.
         """
         program = f".decl relation(subject: symbol, rel: symbol, object: symbol)\n{ws}.decl pub_year(subject: symbol, v: int64)\n"
         fcommon._assert_no_alias_collision(self.SPECS, program)  # does not raise

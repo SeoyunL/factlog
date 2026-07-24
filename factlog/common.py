@@ -901,9 +901,16 @@ def _load_logic_policy_program_from(logic_policy_dl: Path) -> LogicPolicyProgram
         extra_text = extra.read_text(encoding="utf-8").strip()
         # Skip an empty or comment-only sibling so the program text stays
         # byte-identical to today. Both `//` (Datalog) and `#` (used in every
-        # other policy file) are treated as comments; a `#`-only stub must NOT
-        # leak bytes into the engine program — wirelog rejects `#` with a
-        # ParseError.
+        # other policy file) are treated as comments here.
+        #
+        # NOT because the engine cannot read `#`: pyrewire 1.0.3 accepts it on its
+        # own line, after a `.decl`, and even between a name and its paren, and a
+        # `#`-only program loads fine (measured — the older claim that wirelog
+        # ParseErrors on `#` was wrong, and building on it would be building on
+        # nothing). The reason is that a comment-only sibling contributes no rule,
+        # so appending it would change the program BYTES without changing what the
+        # engine derives, and #116 invariant 1 is precisely that a KB which adds
+        # nothing gets a byte-identical program.
         if extra_text and any(
             line.strip()
             and not line.strip().startswith("//")
@@ -954,11 +961,19 @@ def load_logic_policy_program() -> LogicPolicyProgram:
 # and only the WHITESPACE is free -- widening the character class would accept
 # names the engine does not.
 #
-# The pattern is shared; the CALL SITES are not merged. They read genuinely
-# different inputs (a comment-stripped policy skeleton, the fully assembled
-# program text, WIRELOG_PROGRAM), and folding them into one helper would just be
-# the next drift -- see the `^`-anchor note on _assert_no_alias_collision and the
-# deliberately parenless scan in _assert_no_canonical_head.
+# The pattern is shared; the CALL SITES are not merged. There is ONE axis, not a
+# site-by-site zoo: a reader either gets a COMMENT-STRIPPED skeleton from
+# _scan_policy (policy_predicates and the two scans in _assert_no_canonical_head,
+# which use _DECL_RE and its column/strip variants) or it gets RAW text where no
+# comment has been removed (_assert_no_alias_collision and _engine_decl_predicates,
+# which use the anchored _DECL_LINE_RE). WIRELOG_PROGRAM and the assembled program
+# are the same kind of input, not two more kinds.
+#
+# Folding the two families into one helper is what would drift: the anchored form
+# is unsafe on a skeleton-free reading of a comment, and the unanchored form is
+# unsafe on raw text. A third scan, the reserved-head guard, stays wider than both
+# on purpose (it never looks for `(`). See _assert_no_alias_collision for why the
+# raw readers do not simply switch to the skeleton.
 _DECL_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
 # Name only. For text that is already comment-stripped, where a `.decl` anywhere
 # in the remaining structure is a real declaration.
@@ -966,11 +981,16 @@ _DECL_RE = re.compile(rf"\.decl\s+({_DECL_NAME})\s*\(")
 # Name, but only for a `.decl` that OPENS its line. For RAW text, where the
 # anchor is what keeps a commented-out `// .decl foo(...)` from counting.
 # `[ \t]*` rather than `\s*`: `\s` matches newlines, so `^\s*` would let the run
-# cross lines and the anchor would stop meaning "this line starts here". Measured,
-# the two differ only on \r/\v/\f before the `.decl`, and nothing reachable is
-# lost: Path.read_text translates \r to \n before any of this text is assembled,
-# and the engine ParseErrors on \v/\f -- which `\s*` would have us count as a
-# declaration the engine refuses to make.
+# cross lines and the anchor would stop meaning "this line starts here" -- that is
+# the whole reason, and it is the only one that holds. Measured, the two forms
+# differ only on \r/\v/\f before the `.decl`, and nothing reachable is lost:
+# Path.read_text translates \r to \n before any of this text is assembled.
+#
+# Do NOT restate this as "our parser must never be wider than the engine". The
+# engine ParseErrors on \v/\f, but _DECL_RE above counts `\v.decl p(...)` all the
+# same, so that principle is not what this module actually implements. It is
+# harmless there -- a program the engine rejects never reaches a report -- but a
+# rule stated here and contradicted one line up is worse than no rule.
 _DECL_LINE_RE = re.compile(rf"(?m)^[ \t]*\.decl\s+({_DECL_NAME})\s*\(")
 # Name + the column list, for the arity/column-type checks.
 _DECL_COLS_RE = re.compile(rf"\.decl\s+({_DECL_NAME})\s*\(([^)]*)\)")
