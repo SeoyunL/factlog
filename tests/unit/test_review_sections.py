@@ -190,7 +190,7 @@ class TestEnsureReviewSections:
         """A fenced heading is an example, so the category is genuinely absent.
 
         Writing the real section is the repair, and it is safe now that every lookup
-        skips fenced lines: section_line_index finds the one this adds, not the
+        skips fenced lines: `section_for` returns the one this adds, not the
         example. An earlier cut refused to write it — the copy in the fence looked
         like "already there" — and left the document permanently a section short with
         no way to earn it back.
@@ -400,3 +400,31 @@ class TestSetextSpelledSections:
     def test_the_first_of_two_spellings_still_wins(self):
         damaged = self.SETEXT + "\n## 모호한 관계명\n- new\n"
         assert section_for(damaged, "모호").text == "모호\n----"
+
+
+class TestOneRuleForWhatCountsAsASection:
+    """`level == 2` lives in one place, and these are what pin it there.
+
+    It used to live in two — `heading_for` and `split_review_sections` — and the
+    second copy was untested, so a mutant that widened it passed the whole suite
+    while making the validator warn about a file that has exactly one section per
+    category. Two copies of the rule for what a section is are what #495 was about,
+    so there is now one predicate and both callers ask it.
+    """
+
+    def test_a_level_one_heading_carrying_a_keyword_is_not_a_second_section(self):
+        text = "# 중복 요약\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        assert missing_review_sections(text) == []
+        assert split_review_sections(text) == [], "an h1 was counted as a section"
+
+    def test_an_equals_underlined_heading_is_not_a_second_section_either(self):
+        # Same rule, other spelling: `====` is level 1, so it is a title and not a
+        # 중복 section however the word is spelled into it.
+        text = "중복 요약\n====\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n## 출처 부족\n\n## 기존 내용과 충돌할 수 있는 항목\n"
+        assert missing_review_sections(text) == []
+        assert split_review_sections(text) == []
+
+    def test_two_real_sections_are_still_reported(self):
+        # The predicate must not have been narrowed into never matching.
+        text = "## 중복 개념 후보\n\n## 중복 (같은 개념의 다른 이름)\n"
+        assert [k for k, _ in split_review_sections(text)] == ["중복"]

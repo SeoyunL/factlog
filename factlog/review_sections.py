@@ -41,15 +41,25 @@ its direction changes. Merging them is a rewrite of a document a human wrote, wh
 is theirs to make, so this module says so out loud instead
 (:func:`split_review_sections`, surfaced as a validator warning) and leaves it.
 
-A section is an **ATX ``## `` heading outside any code fence**. Not any ``#`` line,
-and not a line in a fence: a ``## 출처 부족`` written as an example was taken for
-the section itself, and the bullet routed to it landed past the closing fence, in
-no section at all. A Setext heading (``출처`` over ``----``) is not recognised; the
-reference documents that, and nothing here improves it (#500). **Which lines are
-headings, and at what level, is not decided here** — :mod:`factlog.md_lines` answers
-that, the same way it answers which lines are code and where a section ends; this
-module's whole share of the definition is the ``level == 2`` test in
-:func:`heading_for` and the four keywords below.
+A section is a **level-2 heading outside any code fence**, in either spelling:
+``## 출처 부족``, or ``출처 부족`` with ``----`` under it. Not any ``#`` line —
+``# Open Questions`` is the file's title and ``출처`` over ``====`` is level 1 for
+the same reason — and not a line in a fence: a ``## 출처 부족`` written as an example
+was taken for the section itself, and the bullet routed to it landed past the closing
+fence, in no section at all.
+
+Underlined headings count since #500. They did not before, and the cost was the
+damage this module exists to prevent: a file whose four sections a human had written
+that way read as having none, so the producer appended four of its own below them and
+the queue went to the new ones while the old ones kept what they already held —
+each category in two places, and :func:`split_review_sections` unable to warn about
+it because only one of the two spellings was visible to it.
+
+**Which lines are headings, and at what level, is not decided here** —
+:mod:`factlog.md_lines` answers that, the same way it answers which lines are code
+and where a section ends. This module's whole share of the definition is
+:func:`_category_headings`: one ``level == 2`` test, one keyword test, and the four
+keywords below.
 
 The one file shape nothing writes to is one that **ends inside an unclosed fence**
 (:func:`factlog.md_lines.ends_inside_fence`). Appending happens at the end of the
@@ -106,22 +116,34 @@ OPEN_QUESTIONS_SCAFFOLD = (
 )
 
 
+def _category_headings(text: str, keyword: str) -> list[Heading]:
+    """Every section of *text* belonging to the *keyword* category, in file order.
+
+    **This module's entire share of "what is a section".** One ``level == 2`` test
+    and one keyword test, in one place, because there used to be two: this predicate
+    and a second copy inside :func:`split_review_sections`. Two copies of the rule
+    for what a section is are what #495 was about, and the copy here had already
+    drifted — it read every level-2 heading and let a ``# 중복 …`` title through as a
+    second 중복 section, so a file with one section per category was warned about as
+    split.
+
+    ``level == 2``: a ``# Open Questions`` is the file's title and not a 출처 section
+    even when a human happens to have written the word into it, and ``출처`` over
+    ``====`` is level 1 for exactly the same reason. Anything deeper than ``## `` is
+    inside a section rather than one of its own. Which lines are headings at all, and
+    at what level, is :mod:`factlog.md_lines`'.
+    """
+    return [h for h in headings(text) if h.level == 2 and keyword in h.text]
+
+
 def heading_for(text: str, keyword: str) -> Heading | None:
     """The first heading of *text* carrying *keyword*, or None.
 
     First, not last: when a category ended up with two headings, the earlier one is
     the one a human reads, so that is where the queue belongs.
-
-    ``level == 2`` is where this module's share of "what is a section" lives, and it
-    is the whole of it. A ``# Open Questions`` is the file's title and not a 출처
-    section even when a human happens to have written the word into it; anything
-    deeper than ``## `` is inside a section rather than one of its own. Which lines
-    are headings at all, and at what level, is :mod:`factlog.md_lines`'.
     """
-    for heading in headings(text):
-        if heading.level == 2 and keyword in heading.text:
-            return heading
-    return None
+    found = _category_headings(text, keyword)
+    return found[0] if found else None
 
 
 def missing_review_sections(text: str) -> list[str]:
@@ -152,9 +174,8 @@ def split_review_sections(text: str) -> list[tuple[str, list[Heading]]]:
     they are the only ones who can make it.
     """
     split: list[tuple[str, list[Heading]]] = []
-    found = [h for h in headings(text) if h.level == 2]
     for keyword, _ in REVIEW_CATEGORIES:
-        matches = [h for h in found if keyword in h.text]
+        matches = _category_headings(text, keyword)
         if len(matches) > 1:
             split.append((keyword, matches))
     return split
