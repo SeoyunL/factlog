@@ -1255,7 +1255,7 @@ def cmd_review(args: argparse.Namespace) -> int:
 
 
 def _apply_status_to_runs(
-    target, filt: dict, from_statuses: set, new_status: str, nfc
+    target, decided: set, from_statuses: set, new_status: str, nfc
 ) -> int:
     """Write a status decision into runs/*.json, so accept/reject are durable.
 
@@ -1264,6 +1264,13 @@ def _apply_status_to_runs(
     to candidate -- the decision was never in the source of truth. amend already writes
     to runs; accept/reject did not (#233). This is a status-only change (no value edit),
     so the matching run item is updated in place.
+
+    `decided` is the set of (subject, relation, object) triples the CSV gate ACTUALLY
+    changed -- not the caller's filter. Scoping by the filter instead let a `-` wildcard
+    reach triples the gate had reported as "non-pending skipped": with a KB predating
+    #233 (decision in candidates.csv, `candidate` still in runs/*.json), a wildcard
+    reject flipped those run rows too, and the next merge rebuilt candidates.csv from
+    them -- silently retiring a confirmed fact the command said it left alone (#477).
 
     Returns the number of run rows changed. Import-local like the callers.
     """
@@ -1294,21 +1301,22 @@ def _apply_status_to_runs(
         for item in data:
             if not isinstance(item, dict):
                 continue
-            fields = {
-                "subject": nfc(str(item.get("subject", "")).strip()),
-                "relation": nfc(str(item.get("relation", "")).strip()),
-                "object": nfc(str(item.get("object", "")).strip()),
-            }
-            if not all(fields.get(k) == v for k, v in filt.items()):
+            triple = (
+                nfc(str(item.get("subject", "")).strip()),
+                nfc(str(item.get("relation", "")).strip()),
+                nfc(str(item.get("object", "")).strip()),
+            )
+            if triple not in decided:
                 continue
             st = str(item.get("status", "")).strip()
-            # This runs only AFTER the CSV gate found a genuinely-pending match, so the
-            # decision is real. Mirror merge's normalization: a blank or unrecognized
-            # status is coerced to needs_review (PENDING) when candidates.csv is rebuilt,
-            # so the run item merge will treat as pending must be flipped here too --
-            # otherwise the decision vanishes on the next re-merge, the exact silent
-            # downgrade this fix is about, in a row the extractor mis-stamped or an edit
-            # left blank.
+            # The triple is one the CSV gate just changed, so the decision is real.
+            # Mirror merge's normalization: a blank or unrecognized status is coerced to
+            # needs_review (PENDING) when candidates.csv is rebuilt, so the run item
+            # merge will treat as pending must be flipped here too -- otherwise the
+            # decision vanishes on the next re-merge, the exact silent downgrade this
+            # fix is about, in a row the extractor mis-stamped or an edit left blank.
+            # A run row already carrying a decided status (confirmed/accepted/superseded)
+            # is left alone: same triple, a different source row, not this decision.
             if st not in from_statuses and st in KNOWN_STATUSES:
                 continue
             item["status"] = new_status
@@ -1399,16 +1407,19 @@ def _apply_review_status(args: argparse.Namespace, new_status: str, verb: str) -
     if "status" not in out_fields:
         out_fields = [*out_fields, "status"]
     changed = 0
+    decided: set[tuple[str, str, str]] = set()
     for r in rows:
         if all(fld(r, k) == v for k, v in filt.items()) and (r.get("status") or "").strip() in REVIEW_STATUSES:
             r["status"] = new_status
+            decided.add((fld(r, "subject"), fld(r, "relation"), fld(r, "object")))
             changed += 1
     _atomic_write_csv(csv_path, rows, out_fields)
 
     # Durability: write the decision into runs/*.json too, the source of truth merge
     # rebuilds candidates.csv from. Without this, deleting candidates.csv and re-merging
-    # silently downgraded the decision (#233).
-    runs_changed = _apply_status_to_runs(target, filt, set(REVIEW_STATUSES), new_status, nfc)
+    # silently downgraded the decision (#233). Scope it to the triples just changed, not
+    # to `filt` -- a `-` wildcard otherwise reaches rows reported as skipped (#477).
+    runs_changed = _apply_status_to_runs(target, decided, set(REVIEW_STATUSES), new_status, nfc)
 
     recompile_failed = not _recompile_accepted(target, verb)
     recompiled = "accepted.dl NOT recompiled" if recompile_failed else "accepted.dl recompiled"
