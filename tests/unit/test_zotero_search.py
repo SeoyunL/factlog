@@ -10,6 +10,8 @@ reached the API unchanged.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from factlog.integrations.zotero.api_client import (
@@ -41,12 +43,20 @@ class ConnectError(Exception):  # httpx.ConnectError name — _classify routes b
 
 
 class FakeBackend:
-    """Minimal pyzotero stand-in for search: records the items() kwargs, or raises."""
+    """Minimal pyzotero stand-in for search: records the items() kwargs, or raises.
 
-    def __init__(self, items=None, exc=None):
+    pyzotero exposes the last response on ``backend.request``; ``total`` sets its
+    ``Total-Results`` header so :func:`api_client._total_results` reads it. Left as
+    ``None``, there is no ``request`` — the header-absent path the client tolerates.
+    """
+
+    def __init__(self, items=None, exc=None, total=None):
         self._items = items or []
         self._exc = exc
         self.calls: list[dict] = []
+        self.request = None
+        if total is not None:
+            self.request = SimpleNamespace(headers={"Total-Results": str(total)})
 
     def items(self, **kwargs):
         self.calls.append(kwargs)
@@ -62,7 +72,7 @@ def _client(**kw):
 class TestSearchItems:
     def test_returns_bibliographic_items_only(self):
         client = _client(items=[PREPRINT, ATTACHMENT, NOTE, ARTICLE])
-        results = client.search_items("neurosymbolic")
+        results, _ = client.search_items("neurosymbolic")
         keys = [r["data"]["key"] for r in results]
         assert keys == ["KH78JUPE", "ABCD1234"]
 
@@ -88,7 +98,29 @@ class TestSearchItems:
     def test_empty_result_is_returned_not_an_error(self):
         # A successful search that matched nothing is an honest empty list, distinct
         # from a connection failure (which raises) — the CLI relies on this split.
-        assert _client(items=[]).search_items("no such thing") == []
+        items, _ = _client(items=[]).search_items("no such thing")
+        assert items == []
+
+    def test_total_results_reports_the_full_match_count(self):
+        # --limit truncates the returned rows, but the header carries the real total,
+        # so a caller can report "showing top N of M" instead of silently dropping M-N.
+        client = _client(items=[PREPRINT, ARTICLE], total=10)
+        items, total = client.search_items("neurosymbolic", limit=2)
+        assert len(items) == 2 and total == 10
+
+    def test_total_is_none_when_header_absent(self):
+        # No Total-Results header (older server, or a backend that does not expose the
+        # response) -> None, and the CLI falls back to the returned row count.
+        client = _client(items=[PREPRINT, ARTICLE])  # total unset -> no request
+        _, total = client.search_items("x")
+        assert total is None
+
+    def test_total_is_none_when_header_unparseable(self):
+        backend = FakeBackend(items=[PREPRINT])
+        backend.request = SimpleNamespace(headers={"Total-Results": "not-a-number"})
+        client = ZoteroClient(ZoteroConfig(), backend=backend)
+        _, total = client.search_items("x")
+        assert total is None
 
     @pytest.mark.parametrize("q", ["", "   ", "\t\n"])
     def test_blank_query_is_rejected_before_any_request(self, q):
@@ -122,18 +154,24 @@ def _kb(tmp_path):
 
 
 class FakeSearchClient:
-    """A client whose search_items returns a fixed list, records the args, or raises."""
+    """A client whose search_items returns ``(items, total)``, records args, or raises.
 
-    def __init__(self, items=None, raise_exc=None):
+    ``total`` defaults to ``None`` — the header-absent path, where the command falls
+    back to the shown row count — so a test that cares only about the row shape need
+    not set it; the truncation tests pass a ``total`` larger than ``items``.
+    """
+
+    def __init__(self, items=None, raise_exc=None, total=None):
         self._items = items or []
         self._raise = raise_exc
+        self._total = total
         self.calls: list[tuple] = []
 
     def search_items(self, q, qmode="titleCreatorYear", limit=None):
         self.calls.append((q, qmode, limit))
         if self._raise is not None:
             raise self._raise
-        return list(self._items)
+        return list(self._items), self._total
 
 
 def _run(monkeypatch, argv, client):
@@ -242,3 +280,33 @@ class TestRun:
                   FakeSearchClient([]))
         assert rc == 0
         assert capsys.readouterr().out.splitlines() == ["found\t0"]
+
+    def test_human_heading_reports_total_when_limit_truncates(self, tmp_path, monkeypatch, capsys):
+        # 2 rows shown of 10 matched: the heading must name the full total, not the
+        # shown count — a silent "Found 2" would hide that --limit dropped eight.
+        kb = _kb(tmp_path)
+        client = FakeSearchClient([PREPRINT, ARTICLE], total=10)
+        rc = _run(monkeypatch, ["zotero-search", "x", "--limit", "2", "--target", str(kb)], client)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Found 10 results, showing top 2:" in out
+
+    def test_porcelain_found_is_the_total_not_the_shown_rows(self, tmp_path, monkeypatch, capsys):
+        # The shared *-search contract: `found` is how many matched, so a consumer knows
+        # it did not receive them all. Two result rows, but found\t10.
+        kb = _kb(tmp_path)
+        client = FakeSearchClient([PREPRINT, ARTICLE], total=10)
+        rc = _run(monkeypatch, ["zotero-search", "x", "--limit", "2", "--porcelain",
+                                "--target", str(kb)], client)
+        lines = capsys.readouterr().out.splitlines()
+        assert rc == 0
+        assert len([ln for ln in lines if ln.startswith("result\t")]) == 2
+        assert lines[-1] == "found\t10"
+
+    def test_count_falls_back_to_shown_rows_when_total_is_none(self, tmp_path, monkeypatch, capsys):
+        # No Total-Results header -> count is the shown row count, never below it.
+        kb = _kb(tmp_path)
+        client = FakeSearchClient([PREPRINT, ARTICLE], total=None)
+        rc = _run(monkeypatch, ["zotero-search", "x", "--porcelain", "--target", str(kb)], client)
+        assert rc == 0
+        assert capsys.readouterr().out.splitlines()[-1] == "found\t2"

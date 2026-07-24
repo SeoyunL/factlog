@@ -123,13 +123,20 @@ factlog zotero-search <질의> [--qmode {titleCreatorYear,everything}]
 
 ```bash
 $ factlog zotero-search "neurosymbolic" --limit 3
-Found 2 results:
+Found 10 results, showing top 3:
 
   1. [preprint] KH78JUPE "Neurosymbolic Value-Inspired AI (Why, What, and How)"
   2. [journalArticle] ABCD1234 "..."
+  3. [preprint] UF6KEIZV "..."
 
 Import a result with: factlog zotero-import --items <key>[,<key>...]
 ```
+
+여기서 **`Found N`은 라이브러리 전체 매치 수**(Zotero의 `Total-Results`)이고
+`showing top M`은 `--limit`으로 실제 표시된 건수입니다 — `--limit`이 잘라내도 몇 건이
+매치됐는지 알 수 있습니다(다른 `*-search`와 같은 총계-표시 계약). 단, `Total-Results`는
+서지 필터 이전의 원시 매치 수라 첨부·노트가 섞이면 표시 건수보다 커 보일 수 있습니다
+("API 매치 총계, 상위 N 표시" 근사).
 
 **0건과 연결 실패는 구분됩니다.** 검색이 성공했지만 일치 항목이 없으면
 `Found 0 results.`(exit 0) — 정직한 빈 결과입니다. Zotero Local API에 닿지 못하면
@@ -138,8 +145,9 @@ Import a result with: factlog zotero-import --items <key>[,<key>...]
 구분할 수 있습니다.
 
 `--porcelain`은 다른 `*-search`와 같은 다섯 칸 행을 씁니다 —
-`result\t<index>\t<key>\t<itemType>\t<title>` 다음 `found\t<count>`. 모든 필드는
-탭·줄바꿈이 행을 쪼개지 못하도록 방어됩니다.
+`result\t<index>\t<key>\t<itemType>\t<title>` 다음 `found\t<count>`. `found`의 값은
+표시된 행 수가 아니라 **라이브러리 전체 매치 수**라, 소비자가 전부 받았는지 알 수
+있습니다. 모든 필드는 탭·줄바꿈이 행을 쪼개지 못하도록 방어됩니다.
 
 ## 출력
 

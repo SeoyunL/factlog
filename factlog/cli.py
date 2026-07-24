@@ -3459,6 +3459,11 @@ def _zotero_item_fields(item) -> tuple[str, str, str]:
 def _zotero_show_results(items, count: int, *, porcelain: bool) -> None:
     """Render zotero-search results. Mirrors the sibling ``_*_show_results`` printers.
 
+    ``count`` is the full match total (Zotero's ``Total-Results``), not the number
+    of rows shown — so ``found\\t<count>`` and the human heading report how many
+    matched even when ``--limit`` truncated the listing, the same total-vs-shown
+    contract the sibling ``*-search`` printers hold (test_search_porcelain_rows.py).
+
     The ``--porcelain`` row keeps the shared five-column shape, with the item's
     Zotero ``itemType`` in the slot the other searches use for a retraction flag:
     ``result\\t<index>\\t<key>\\t<itemType>\\t<title>`` then ``found\\t<count>``.
@@ -3483,7 +3488,7 @@ def _zotero_show_results(items, count: int, *, porcelain: bool) -> None:
         print("Found 0 results.")
         return
 
-    print(f"Found {count} results:\n")
+    print(f"Found {count} results, showing top {len(items)}:\n")
     for index, item in enumerate(items, 1):
         key, item_type, title = _zotero_item_fields(item)
         print(f'  {index}. [{item_type or "?"}] {key} "{title}"')
@@ -3541,7 +3546,7 @@ def cmd_zotero_search(args: argparse.Namespace) -> int:
     if not porcelain:
         print(f'Searching Zotero (Local API): "{args.query}"...')
     try:
-        items = _make_zotero_client(config).search_items(
+        items, total = _make_zotero_client(config).search_items(
             args.query, qmode=args.qmode, limit=limit
         )
     except ZoteroConnectionError as exc:
@@ -3551,7 +3556,10 @@ def cmd_zotero_search(args: argparse.Namespace) -> int:
         print(f"factlog zotero-search: {exc}", file=sys.stderr)
         return 1
 
-    _zotero_show_results(items, len(items), porcelain=porcelain)
+    # Report the full match total when Zotero gave one; fall back to the shown
+    # rows when the Total-Results header was absent (so count is never < shown).
+    count = total if total is not None else len(items)
+    _zotero_show_results(items, count, porcelain=porcelain)
     return 0
 
 
