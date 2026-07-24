@@ -19,6 +19,7 @@ diverge; these tests are what makes such a divergence loud.
 """
 from __future__ import annotations
 
+import csv as _csv
 import unicodedata
 
 import merge_candidates as mc
@@ -199,8 +200,6 @@ def test_merge_output_rekeys_to_the_same_fact(tmp_path):
 # ratchet saw a human-ruled fact as "destroyed" and REFUSED to rebuild. These pin that
 # the preservation key of a candidates.csv row is fact_key of that fact: exactly the key
 # a run row asserting the same fact normalises to.
-
-import csv as _csv
 
 _CSV_KEY_FUNCS = {
     "superseded": (mc.existing_superseded_keys, "superseded"),
