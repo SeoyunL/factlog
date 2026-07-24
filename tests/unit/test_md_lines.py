@@ -413,3 +413,49 @@ class TestNothingInsideABlockQuoteIsRead:
         # The one nesting that does count, and deliberately: a sub-bullet under a
         # filed row is part of the same queue entry.
         assert bullets("- outer\n  - inner\n") == ["- outer", "  - inner"]
+
+
+class TestTheGuardsThatOnlyThisShapeReaches:
+    """Documents that reach a guard nothing else in this file reaches.
+
+    Each of these was a mutant that survived the whole suite. They are collected
+    here rather than scattered because they share a reason: the obvious document for
+    a rule turns out to be decided by an *earlier* rule, so the guard under test is
+    never actually run. Every expectation below was checked against markdown-it-py,
+    and on all three the renderer agrees with this module.
+    """
+
+    def test_a_closing_fence_above_an_underline_is_a_boundary(self):
+        """Reaches the fence check inside the walk up from an underline.
+
+        A fenced *underline* never gets that far — it is refused before the walk
+        starts — so the check inside `_paragraph_start` was only reachable through a
+        fenced line sitting above an unfenced underline. Renderer: an empty code
+        block, then a horizontal rule.
+        """
+        assert headings("```\n```\n----\n") == []
+
+    def test_a_quoted_paragraph_above_a_plain_underline_is_not_a_title(self):
+        """Reaches the block-quote branch of `_container_content`.
+
+        `> 출처` over `> ----` does not: its underline is `> ----`, which is refused
+        by `_setext_underline` before any container is looked at. The branch is only
+        reached when the quote is above and the underline is plain — and then the
+        paragraph is a lazy continuation *inside* the quote, so the `----` below it is
+        a horizontal rule outside it. Renderer: a block quote reading "q 출처", then a
+        rule.
+        """
+        assert headings("> q\n출처\n----\n") == []
+
+    def test_an_indented_line_between_title_and_underline_is_continuation(self):
+        """Reaches the indentation ceiling in `_is_thematic_break`.
+
+        At four spaces `----` is neither a thematic break nor an underline; it is an
+        ordinary continuation line of the paragraph above, and the *next* `----`
+        underlines the whole thing. Drop the ceiling and the indented line becomes a
+        break, ending the paragraph and taking the heading with it. Renderer: one
+        level-2 heading spanning all three lines.
+        """
+        assert headings("출처\n    ----\n----\n") == [
+            Heading(start=0, end=3, level=2, text="출처\n    ----\n----")
+        ]

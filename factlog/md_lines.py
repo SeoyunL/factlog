@@ -53,15 +53,29 @@ Three things this deliberately does not claim:
   for that reason rather than for their own sake.
 
 Where the rules *are* claimed to match a renderer, the claim is exactly this and no
-wider: **for the headings at the top level of a document, this module gives the
-answer markdown-it-py gives.** Measured over every two- and three-line document from
-a 22-token alphabet — 11,132 of them — the two agree on all of them; nested headings
-are excluded from the comparison by the scoping above rather than by accident, and
-:class:`tests.unit.test_md_lines_renderer_parity` is that comparison, kept as a test
-so the sentence has to stay earned. What is still not modelled is a block **nested
-inside a list item**: over random four-to-six-line documents from the same alphabet
-the two disagree on roughly one in a thousand, and every one of those has an indented
-block under a list marker. Widening the rules to catch them costs far more real
+wider: **for the headings at the top level of a document built from the alphabet in
+``tests/unit/test_md_lines_renderer_parity.py``, this module gives the answer
+markdown-it-py gives.** Both qualifications are load-bearing and neither is
+rhetorical.
+
+*Top level*, because of the scoping above: nested headings are left out of the
+comparison deliberately, not by accident.
+
+*That alphabet*, because a claim of the form "agrees on N documents" is unreproducible
+without the tokens they were built from — so the tokens live in the test, the test is
+the comparison, and the numbers below are whatever it prints today rather than
+something remembered. Over every two- and three-line document from it, 11,132 of them,
+the two agree on all. **The alphabet contains no raw HTML**, and that is a gap and not
+a choice: ``출처`` / ``<div>`` / ``----`` is read here as a heading and by a renderer
+as an unterminated HTML block, because the ``<`` guard in
+:func:`_first_paragraph_line` looks only at a paragraph's first line. It is pinned as
+a known-wrong answer in the parity test rather than left to be rediscovered.
+
+What is knowingly not modelled is a block **nested inside a list item**: over random
+four-to-six-line documents from the same alphabet the two disagree on roughly one in
+a thousand, and every one of those has an indented block under a list marker — which
+the parity test asserts, using this module's own container predicate rather than a
+second copy of the rule. Widening the rules to catch them costs far more real
 headings than it saves (measured: false positives 130 → 47, false negatives 207 →
 5,901 over 211,132 documents), and a missed heading is the expensive direction — the
 file is then told it lacks a section it has, and a second one gets appended beside it.

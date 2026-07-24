@@ -159,3 +159,24 @@ def test_longer_documents_stay_within_the_recorded_disagreement_rate(render):
         assert any(
             _container_content(line) is not None for line in text.splitlines()
         ), text
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="known gap: the `<` guard reads only a paragraph's first line (#500 follow-up)",
+)
+def test_raw_html_above_an_underline_is_not_a_heading(render):
+    """Why ATOMS carries no raw HTML, said out loud instead of by omission.
+
+    An HTML block runs to the next blank line, so a renderer swallows the underline
+    into it and reports no heading; this module reads the paragraph as ordinary text
+    and calls it one. The guard that would catch it looks at the first line of the
+    paragraph only, and widening it to every line would refuse a real heading whose
+    body merely contains an inline tag.
+
+    ``strict`` on purpose: leaving the document out of the alphabet would hide the
+    gap, and asserting today's wrong answer would freeze it. This fails the day
+    someone fixes it, which is the only signal worth having.
+    """
+    document = "출처\n<div>\n----\n"
+    assert _top_level_headings(render, document) == _mine(document)
