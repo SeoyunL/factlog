@@ -2,11 +2,12 @@
 """accept/reject must key run rows by merge's fact identity, common.fact_key (#477).
 
 merge treats (subject, relation, object, source-file) as one fact -- with the amount
-object canonicalised and only the source Unicode-folded -- so the same triple asserted
-by two sources, or the same-looking triple stored in two Unicode forms, is two rows a
-human decides separately. When accept/reject keyed run rows their own way, deciding one
-row also flipped the other, and the next merge (which rebuilds candidates.csv FROM
-runs/*.json) retired a confirmed fact nothing had asked to retire.
+object canonicalised and subject/relation/object/source all NFC-folded (#482) -- so the
+same triple asserted by two DIFFERENT source files is two rows a human decides
+separately, while two Unicode spellings (NFC/NFD) of one fact are ONE row. When
+accept/reject keyed run rows their own way, deciding one source's row also flipped the
+other source's, and the next merge (which rebuilds candidates.csv FROM runs/*.json)
+retired a confirmed fact nothing had asked to retire.
 """
 from __future__ import annotations
 
@@ -219,23 +220,27 @@ class TestAmountObjectIsComparedCanonically:
         assert _reported(capsys.readouterr().out) == (1, 1)
 
 
-class TestUnicodeFormsStayDistinctFacts:
-    """merge folds only the SOURCE to NFC; content values it stores verbatim (#477 C2).
+class TestUnicodeFormsAreOneFact:
+    """subject/relation/object are NFC-folded in the ONE fact identity (#482).
 
-    So an NFC subject and an NFD subject are two facts on disk. If the CLI folds them
-    together, a decision on the pending one also flips the confirmed one's run row, and
-    the confirmed fact drops out of accepted.dl on the next merge -- the original #477
-    failure mode, reached without any wildcard trickery in the data.
+    An NFC subject and an NFD subject are the SAME fact: merge dedups AND stores on the
+    NFC form, and a review decision keyed on that fact reaches the run rows behind BOTH
+    spellings. This reverses #477 C2's "content stored verbatim" contract deliberately —
+    there is one definition folding on both sides, so no unfolded variant survives in
+    candidates.csv to be orphaned by a later CLI fold (the #477 mode needs such a
+    survivor). Fact identity now also matches the engine's NFC grouping axes.
     """
 
     NFC = unicodedata.normalize("NFC", "가나")
     NFD = unicodedata.normalize("NFD", "가나")
 
-    def test_wildcard_reject_leaves_the_other_unicode_form_alone(self, tmp_path):
+    def test_reject_reaches_both_unicode_forms(self, tmp_path):
+        # Two spellings of one fact, both pending. A single reject retires BOTH run rows
+        # because they are one fact -- the decision must not leave a stray spelling live.
         kb = _kb(
             tmp_path,
             [
-                _row(self.NFD, "R", "X", "sources/note1.md", "confirmed"),
+                _row(self.NFD, "R", "X", "sources/note1.md", "candidate"),
                 _row(self.NFC, "R", "X", "sources/note1.md", "candidate"),
             ],
             [
@@ -249,7 +254,7 @@ class TestUnicodeFormsStayDistinctFacts:
             "NFD" if not unicodedata.is_normalized("NFC", row["subject"]) else "NFC": row["status"]
             for _, row in _run_rows(kb)
         }
-        assert statuses == {"NFD": "candidate", "NFC": "superseded"}
+        assert statuses == {"NFD": "superseded", "NFC": "superseded"}
 
     def test_lookup_still_finds_a_row_typed_in_the_other_form(self, tmp_path):
         """Matching stays lenient on purpose: we do not control the IME's output."""
