@@ -255,7 +255,8 @@ def load_candidate_files(root: Path, pattern: str = "runs/*.json") -> list[dict[
 # ---------------------------------------------------------------------------
 
 def _flush_skipped_sources(skipped: dict[str, int], *, show_counts: bool = True) -> None:
-    """Print one 'skip row' line per missing source path, with its row count.
+    """Print one 'skip row' line per missing source path, with its row count
+    unless *show_counts* is False.
 
     A single missing source produces one byte-identical warning per row it
     carries, so a handful of stale paths can bury the merge summary (and the

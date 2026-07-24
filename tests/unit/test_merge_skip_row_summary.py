@@ -68,7 +68,13 @@ class TestSkipRowSummary:
 
     def test_singular_and_plural_counts_in_one_run(self, tmp_path, capsys):
         """One line must read '(1 row)' and the other '(2 rows)' in the SAME run,
-        so neither number can be hard-coded and 'row(s)' cannot stand in."""
+        so neither number can be hard-coded and 'row(s)' cannot stand in.
+
+        The expected tail includes the closing paren of the hint clause and the
+        ONE space before the suffix: that separator lives with the suffix so
+        strict can omit it without leaving trailing whitespace (#494), which
+        means a lost or doubled space here is exactly how this line would
+        silently drift from the byte-identical output #492 fixed."""
         root = _root_with_source(tmp_path)
         rows = [
             _row("A", "rel", "B", "sources/one.md"),
@@ -78,8 +84,8 @@ class TestSkipRowSummary:
         mc.normalize_rows(root, rows)
         lines = _skip_lines(capsys)
         assert len(lines) == 2
-        assert "sources/one.md" in lines[0] and lines[0].endswith("(1 row)")
-        assert "sources/two.md" in lines[1] and lines[1].endswith("(2 rows)")
+        assert "sources/one.md" in lines[0] and lines[0].endswith("') (1 row)")
+        assert "sources/two.md" in lines[1] and lines[1].endswith("') (2 rows)")
 
     def test_count_folds_across_nfc_and_nfd_spellings(self, tmp_path, capsys):
         """The aggregation key is the NFC-normalised path (#57/#482): macOS
@@ -157,6 +163,8 @@ class TestSkipRowSummary:
         assert re.search(r"\(\d+ rows?\)", lines[0]) is None
         # Dropping the suffix must not leave the space that preceded it.
         assert lines[0].rstrip() == lines[0]
-        # Everything that identifies the offending path stays.
+        # Dropping the suffix must not take the path or the diagnosis with it.
+        # Narrowly these two only: the hint clause that follows them is not
+        # pinned by any test (a pre-existing #492 gap, out of scope here).
         assert "sources/gone.md" in lines[0]
         assert "not found in sources/" in lines[0]
