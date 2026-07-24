@@ -939,6 +939,45 @@ def load_logic_policy_program() -> LogicPolicyProgram:
     return _load_logic_policy_program_from(LOGIC_POLICY_DL)
 
 
+# ONE `.decl` grammar for every parser in this module (#508). Six hand-written
+# regexes read the same directive three different ways, and the differences were
+# not decisions -- they were drift. A predicate declared `.decl p (a, b)` (ONE
+# space before the paren) runs normally in the engine while policy_predicates
+# could not see it, so the report said `policy findings: 0` for a policy that had
+# in fact fired: the false "I verified and found nothing" this KB exists to
+# prevent (#333/#506 are the same shape).
+#
+# Measured against pyrewire 1.0.3, not guessed. The engine accepts `p(`, `p (`,
+# `p\t(`, `p\n(`, `p // c\n(`, an INDENTED `.decl`, an upper/MixedCase name, and
+# two `.decl`s on one line; it rejects a non-ASCII name, a digit-initial name,
+# `.DECL`, and `. decl`. So the name grammar is exactly [A-Za-z_][A-Za-z0-9_]*
+# and only the WHITESPACE is free -- widening the character class would accept
+# names the engine does not.
+#
+# The pattern is shared; the CALL SITES are not merged. They read genuinely
+# different inputs (a comment-stripped policy skeleton, the fully assembled
+# program text, WIRELOG_PROGRAM), and folding them into one helper would just be
+# the next drift -- see the `^`-anchor note on _assert_no_alias_collision and the
+# deliberately parenless scan in _assert_no_canonical_head.
+_DECL_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+# Name only. For text that is already comment-stripped, where a `.decl` anywhere
+# in the remaining structure is a real declaration.
+_DECL_RE = re.compile(rf"\.decl\s+({_DECL_NAME})\s*\(")
+# Name, but only for a `.decl` that OPENS its line. For RAW text, where the
+# anchor is what keeps a commented-out `// .decl foo(...)` from counting.
+# `[ \t]*` rather than `\s*`: `\s` matches newlines, so `^\s*` would let the run
+# cross lines and the anchor would stop meaning "this line starts here". Measured,
+# the two differ only on \r/\v/\f before the `.decl`, and nothing reachable is
+# lost: Path.read_text translates \r to \n before any of this text is assembled,
+# and the engine ParseErrors on \v/\f -- which `\s*` would have us count as a
+# declaration the engine refuses to make.
+_DECL_LINE_RE = re.compile(rf"(?m)^[ \t]*\.decl\s+({_DECL_NAME})\s*\(")
+# Name + the column list, for the arity/column-type checks.
+_DECL_COLS_RE = re.compile(rf"\.decl\s+({_DECL_NAME})\s*\(([^)]*)\)")
+# The same declarations, for removal (what is left is rules and facts).
+_DECL_STRIP_RE = re.compile(rf"\.decl\s+{_DECL_NAME}\s*\([^)]*\)")
+
+
 def policy_predicates(policy_program: str | None = None) -> set[str]:
     text = policy_program if policy_program is not None else load_logic_policy()
     # The engine's own predicates are not policy findings the report iterates. Derived
@@ -955,12 +994,13 @@ def policy_predicates(policy_program: str | None = None) -> set[str]:
     # skeleton also means a `.decl` inside a comment or a string literal is not mistaken for
     # a declaration. strict=False: a read-only reporting query takes what closed rather than
     # raising on an unterminated string.
+    #
+    # _DECL_RE, not a private `\(`-immediately-after-the-name regex: requiring the paren to
+    # touch the name repeated #333 one level down. The indentation half was fixed, the
+    # whitespace half was not, so `.decl requires_review (entity: symbol, reason: symbol)`
+    # was a predicate the engine derived rows for and the report never listed (#508).
     skeleton, _ = _scan_policy(text, strict=False)
-    return {
-        name
-        for name in re.findall(r"\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\(", skeleton)
-        if name not in built_in
-    }
+    return {name for name in _DECL_RE.findall(skeleton) if name not in built_in}
 
 
 def load_questions() -> list[dict[str, str]]:
@@ -2169,13 +2209,29 @@ def _typed_decls(specs: dict[str, TypedRelSpec]) -> str:
 
 
 def _assert_no_alias_collision(specs: dict[str, TypedRelSpec], program_text: str) -> None:
-    """Raise FactlogError if a projectable alias duplicates a `.decl <name>(`
+    r"""Raise FactlogError if a projectable alias duplicates a `.decl <name>(`
     already present in the assembled program.
 
     The engine silently accepts a duplicate .decl, and #118's parse-time check
     uses a best-effort reserved set, so re-check here against the real, fully
-    assembled program (WIRELOG_PROGRAM + policy + accepted)."""
-    declared = set(re.findall(r"^\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\(", program_text, flags=re.MULTILINE))
+    assembled program (WIRELOG_PROGRAM + policy + accepted).
+
+    Two nets, and #508 tore both with one space. The parse-time net names the
+    policy's predicates via policy_predicates, which could not see
+    `.decl pub_year (...)`, so the alias passed there AND passed here -- the
+    program then carried `.decl pub_year (entity: symbol, reason: symbol)` and
+    `.decl pub_year(subject: symbol, v: int64)` at once, compile rc=0, and an
+    arity mismatch quietly changes what the engine derives. Widening only one of
+    the two nets would have left the other as the surviving hole.
+
+    _DECL_LINE_RE (anchored), NOT _DECL_RE: this is the one site that reads RAW
+    program text rather than a comment-stripped skeleton, and the anchor is what
+    keeps a commented-out `// .decl pub_year(...)` from raising a collision that
+    would block the KB over a line the engine never reads. The anchor's `[ \t]*`
+    is the #508 half: `^\.decl` also required COLUMN 0, so an indented `.decl`
+    slipped past here while policy_predicates saw it -- the same drift as #333,
+    pointing the other way."""
+    declared = set(_DECL_LINE_RE.findall(program_text))
     for spec in specs.values():
         if spec.type in _TYPED_COL and spec.alias in declared:
             raise FactlogError(
@@ -2312,7 +2368,16 @@ def _assert_no_canonical_head(policy_text: str) -> None:
     skeleton, _ = _scan_policy(policy_text)
     bare = "\n".join(line for line in skeleton.splitlines() if line.strip())
 
-    for name in re.findall(r"\.decl\s+([A-Za-z_][A-Za-z0-9_]*)", bare):
+    # DELIBERATELY the widest .decl scan in this module, and deliberately NOT _DECL_RE:
+    # it stops at the name and never looks for `(`. This guard is fail-closed -- a policy
+    # that re-declares an engine predicate must be rejected even when the declaration is
+    # malformed, unfinished, or paren-less, because the cost of a false negative here is a
+    # silently corrupted engine program with rc=0. Sharing the paren-requiring pattern for
+    # tidiness would NARROW it, turning `.decl canonical` (no paren yet) back into an
+    # accepted policy. #508 unified the whitespace of the other five sites precisely so
+    # this one could keep being wider on purpose; test_decl_whitespace_parity pins the gap
+    # so a future cleanup cannot close it by accident.
+    for name in re.findall(rf"\.decl\s+({_DECL_NAME})", bare):
         if name in _RESERVED_HEADS:
             raise FactlogError(
                 f"{name} is a reserved engine predicate (populated from "
@@ -2354,7 +2419,7 @@ def _assert_no_canonical_head(policy_text: str) -> None:
     # load_logic_policy has returned (see the EasySession call in run_wirelog), so they
     # never pass through here and typed projection is untouched.
     _RENDERABLE_COL = {"symbol", "string"}
-    for m in re.finditer(r"\.decl\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", bare):
+    for m in _DECL_COLS_RE.finditer(bare):
         name, columns = m.group(1), m.group(2)
         # The report unpacks every policy row as exactly (target, reason) — a two-column
         # head (run_logic_check.main). An arity-1/arity-3 .decl LOADS fine and then crashes
@@ -2397,7 +2462,7 @@ def _assert_no_canonical_head(policy_text: str) -> None:
                     f"this rule. See docs/typed-relations.md. Fix the .decl in "
                     f"logic-policy(.extra).dl."
                 )
-    bare = re.sub(r"\.decl\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)", "", bare)
+    bare = _DECL_STRIP_RE.sub("", bare)
 
     for statement in _split_policy_statements(bare):
         # Tokenize the HEAD; do not substring-search the statement. A substring search
@@ -3115,10 +3180,16 @@ def _engine_decl_predicates() -> frozenset[str]:
     Cached (maxsize=1): WIRELOG_PROGRAM is a module constant, so the parse is constant for
     the process — this spares a re-parse on every typed-relation line and every policy
     load. The frozenset return keeps the shared value immutable to callers.
+
+    Reads WIRELOG_PROGRAM with the shared _DECL_LINE_RE (#508). The old private regex
+    accepted only a lower-case name touching its paren at column 0. That matched today's
+    six lines exactly — the widening is result-preserving, measured — but it made every
+    consumer of this function hostage to how the next line is typed: indent a `.decl` in
+    WIRELOG_PROGRAM, or name it MixedCase, and all four reserved-predicate consumers lose
+    that predicate AT ONCE and silently, which is precisely the accident #332 and #334
+    each shipped once. The single-source-of-truth is only as good as its parser.
     """
-    return frozenset(
-        re.findall(r"^\.decl\s+([a-z_][a-z0-9_]*)\(", WIRELOG_PROGRAM, flags=re.MULTILINE)
-    )
+    return frozenset(_DECL_LINE_RE.findall(WIRELOG_PROGRAM))
 
 
 def attribute_relation_forms(
