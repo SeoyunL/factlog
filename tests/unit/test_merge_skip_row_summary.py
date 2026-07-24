@@ -109,6 +109,31 @@ class TestSkipRowSummary:
         # The reported path is the NFC form, matching what dedup/candidates.csv use.
         assert f"'{nfc}'" in lines[0]
 
+    def test_hint_example_is_the_basename_not_the_rejected_path(self, tmp_path, capsys):
+        """The hint tells the person where to PUT the file, so its example must
+        be 'sources/<basename>'.  Echoing the rejected path back would advise
+        'like sources/sub/deep/x.md' for a row that just failed on exactly that
+        path -- instructions that read as advice while pointing at the problem.
+
+        Top-level paths cannot see this: 'sources/gone.md' is its own basename.
+        The check is scoped to the hint clause because the leading diagnosis
+        legitimately quotes the full nested path -- that half names what was
+        rejected, this half names the fix."""
+        root = _root_with_source(tmp_path)
+        rows = [
+            _row("A", "rel", "B", "sources/sub/deep/x.md"),
+            _row("C", "rel", "D", "sources/sub/deep/x.md#sec1"),
+        ]
+        mc.normalize_rows(root, rows)
+        lines = _skip_lines(capsys)
+        assert len(lines) == 1
+        # What was rejected: the full path, anchor stripped by the fold.
+        assert "source 'sources/sub/deep/x.md' not found" in lines[0]
+        assert "(2 rows)" in lines[0]
+        # What to do about it: the basename under a top-level sources/.
+        assert "like 'sources/x.md')" in lines[0]
+        assert "like 'sources/sub" not in lines[0]
+
     def test_line_order_is_independent_of_input_order(self, tmp_path, capsys):
         root = _root_with_source(tmp_path)
         forward = _missing_rows()
