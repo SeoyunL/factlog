@@ -29,8 +29,19 @@ each heading starts and ends, which lines are list items. If a review category, 
 file name, or a factlog concept has to be named to state the question, it is not
 this module's: :mod:`factlog.review_sections` owns those.
 
-Two things this deliberately does not claim:
+Three things this deliberately does not claim:
 
+* **Only top-level blocks are read.** A renderer will happily report a heading
+  inside a block quote — ``> 출처`` over ``> ----`` renders as an ``<h2>`` — and
+  :func:`headings` will not. That is on purpose and it is not a narrowness to be
+  fixed later: quoted text is something the document *cites*, not something it is
+  organised into, and a section heading that only exists inside a quotation is not a
+  section anyone can file a bullet under. The same goes for a heading indented into
+  a list item. **A block quote is invisible to every reader here** — measured: no
+  headings, no bullets, and a fence opened after ``> `` neither opens nor is ever
+  reported unclosed. (Indented *bullets* are the one nesting that does count, and
+  deliberately: ``  - nested`` under a filed bullet is part of the same queue entry.
+  See :func:`bullets`.)
 * **Front matter is not read here.** A YAML block's closing ``---`` has exactly the
   shape of a Setext underline, and a naive scan calls every one of them a level-2
   heading — measured, 35 of them across one real KB's ``sources/*.md``. Nothing
@@ -39,15 +50,21 @@ Two things this deliberately does not claim:
   wants both has to strip the block before asking here.
 * **This is not a rendering library.** It answers the structural questions a
   producer and a validator have to agree on, and the fence and Setext rules exist
-  for that reason rather than for their own sake. Where they are checked they are
-  checked against a renderer: every two- and three-line document over a 22-atom
-  alphabet — 11,132 of them — gives markdown-it-py's answer exactly. What is not
-  modelled is a block **nested inside a list item**; over random four-to-six-line
-  documents from the same alphabet the two disagree on roughly one in a thousand,
-  and every one of those has an indented block under a list marker. Widening the
-  rules to catch them costs far more real headings than it saves (measured), and a
-  missed heading is the expensive direction: the file is then told it lacks a
-  section it has, and a second one gets appended beside it.
+  for that reason rather than for their own sake.
+
+Where the rules *are* claimed to match a renderer, the claim is exactly this and no
+wider: **for the headings at the top level of a document, this module gives the
+answer markdown-it-py gives.** Measured over every two- and three-line document from
+a 22-token alphabet — 11,132 of them — the two agree on all of them; nested headings
+are excluded from the comparison by the scoping above rather than by accident, and
+:class:`tests.unit.test_md_lines_renderer_parity` is that comparison, kept as a test
+so the sentence has to stay earned. What is still not modelled is a block **nested
+inside a list item**: over random four-to-six-line documents from the same alphabet
+the two disagree on roughly one in a thousand, and every one of those has an indented
+block under a list marker. Widening the rules to catch them costs far more real
+headings than it saves (measured: false positives 130 → 47, false negatives 207 →
+5,901 over 211,132 documents), and a missed heading is the expensive direction — the
+file is then told it lacks a section it has, and a second one gets appended beside it.
 """
 from __future__ import annotations
 
@@ -107,6 +124,10 @@ def fence_flags(text: str) -> tuple[list[bool], int | None]:
     marker that does match now ends it (less). What it is instead is **the same
     answer a renderer gives**, which is the only answer that matters — the whole
     point of the flag is whether a human will see the line or a code block.
+
+    "The same answer a renderer gives" is scoped, and the module docstring says how:
+    **at the top level of the document.** A marker written after ``> `` is inside a
+    quotation, and this neither opens a fence for it nor ever reports it unclosed.
     """
     flags: list[bool] = []
     opened_at: int | None = None
@@ -309,6 +330,13 @@ def headings(text: str) -> list[Heading]:
     was read as the section itself: the file reported no missing sections while
     having no real 출처 section, and the bullet routed there was inserted after the
     closing fence, in no section at all.
+
+    **At the top level, and only there.** A renderer reports ``> ## 출처 부족`` as a
+    heading inside a block quote; this does not report it at all, because a heading
+    that exists only inside a quotation is not a place a bullet can be filed. The
+    same holds for one indented into a list item. This is the one place the module
+    knowingly answers differently from a renderer, so it is named here, in the
+    module docstring, and in a test.
 
     Both spellings, ATX and Setext. A Setext heading is two lines or more — the
     paragraph and its underline — and it is the reason :class:`Heading` carries a

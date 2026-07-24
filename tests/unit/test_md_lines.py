@@ -367,3 +367,49 @@ class TestSetextHeadings:
     def test_an_html_block_is_not_a_heading(self):
         # It runs to the next blank line and takes the underline in with it.
         assert headings("<div>\nx\n</div>\n출처\n----\n") == []
+
+
+class TestNothingInsideABlockQuoteIsRead:
+    """The one place this module knowingly answers differently from a renderer.
+
+    markdown-it-py reports ``> 출처`` over ``> ----`` as an ``<h2>`` — inside a
+    ``<blockquote>``. This module reports no heading at all, and that is the
+    intended answer rather than a gap: quoted text is something the document cites,
+    and a section that exists only inside a quotation is not a place a bullet can be
+    filed. It is not a regression either — the ``## `` scan this replaced did not see
+    a quoted ATX heading either.
+
+    Pinned because nothing was pinning it. The behaviour fell out of the ``> `` check
+    in `_container_content` and out of `_atx_level` requiring column 0, so a change
+    to either would have moved it silently, in a module whose whole argument is that
+    it gives the answer a renderer gives.
+    """
+
+    def test_a_quoted_atx_heading_is_not_a_heading(self):
+        assert headings("> ## 출처 부족\n") == []
+
+    def test_a_quoted_setext_heading_is_not_a_heading(self):
+        assert headings("> 출처\n> ----\n") == []
+
+    def test_a_quoted_heading_does_not_hide_a_real_one(self):
+        doc = "> ## 인용된 것\n\n## 출처 부족\n"
+        assert [(h.start, h.text) for h in headings(doc)] == [(2, "## 출처 부족")]
+
+    def test_a_quoted_bullet_is_not_a_filed_bullet(self):
+        assert bullets("> - needs_review: X\n") == []
+
+    def test_a_quoted_fence_neither_opens_nor_is_reported_unclosed(self):
+        # Every reader here stops at `> `, and they have to agree about it: a fence
+        # that opened for one and not the others would make the rest of the document
+        # code to one reader and prose to the next.
+        assert ends_inside_fence("> ```\n> x\n") is False
+        assert unclosed_fence_line("> ```\n> x\n") is None
+        assert headings("> ```\n> x\n\n## 출처 부족\n")[0].text == "## 출처 부족"
+
+    def test_an_indented_heading_inside_a_list_item_is_not_a_heading(self):
+        assert headings("- item\n  ## 출처 부족\n") == []
+
+    def test_an_indented_bullet_is_still_a_filed_bullet(self):
+        # The one nesting that does count, and deliberately: a sub-bullet under a
+        # filed row is part of the same queue entry.
+        assert bullets("- outer\n  - inner\n") == ["- outer", "  - inner"]
