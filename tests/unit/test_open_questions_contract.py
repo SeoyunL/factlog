@@ -31,7 +31,8 @@ from pathlib import Path
 
 import pytest
 
-from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS, _scan_fences
+from factlog.md_lines import fence_flags
+from factlog.review_sections import REVIEW_CATEGORIES, REVIEW_KEYWORDS
 
 _REPO = Path(__file__).resolve().parents[2]
 _MERGE = _REPO / "tools" / "merge_candidates.py"
@@ -136,7 +137,7 @@ def _heading_above(text: str, prefix: str) -> str | None:
     that measures placement with a blinder the code no longer has proves nothing.
     """
     lines = text.splitlines()
-    flags, _ = _scan_fences(text)
+    flags, _ = fence_flags(text)
     at = next(i for i, line in enumerate(lines) if line.startswith(prefix))
     for i in range(at, -1, -1):
         if not flags[i] and lines[i].startswith("## "):
@@ -147,7 +148,7 @@ def _heading_above(text: str, prefix: str) -> str | None:
 def _is_fenced(text: str, prefix: str) -> bool:
     """Did the first *prefix* line end up inside a code fence?"""
     lines = text.splitlines()
-    flags, _ = _scan_fences(text)
+    flags, _ = fence_flags(text)
     return flags[next(i for i, line in enumerate(lines) if line.startswith(prefix))]
 
 
@@ -408,7 +409,7 @@ class TestCodeFencesEndToEnd:
         as proof review bullets existed. Measured: zero real bullets in the file a
         human reads, one needs_review row in candidates.csv, rc=0, no warning.
 
-        Both ends read review_sections.review_bullets now, so neither can count it.
+        Both ends read md_lines.bullets now, so neither can count it.
         """
         # Byte-identical to what _seed_needs_review makes the merge write — the
         # collision is the whole point, so this must not drift from it.
@@ -420,7 +421,7 @@ class TestCodeFencesEndToEnd:
         kb = self._fenced_kb(tmp_path, doc)
         assert _merge(kb, tmp_path).returncode == 0
         text = _open_questions(kb)
-        flags, _ = _scan_fences(text)
+        flags, _ = fence_flags(text)
         real = [
             line
             for line, fenced in zip(text.splitlines(), flags)

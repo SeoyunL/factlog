@@ -18,19 +18,21 @@ from __future__ import annotations
 
 import pytest
 
+from factlog.md_lines import (
+    bullets,
+    ends_inside_fence,
+    headings,
+    section_end_index,
+    section_line_index,
+    unclosed_fence_line,
+)
 from factlog.review_sections import (
     OPEN_QUESTIONS_SCAFFOLD,
     REVIEW_CATEGORIES,
-    _headings,
-    ends_inside_fence,
     ensure_review_sections,
     missing_review_sections,
-    review_bullets,
-    section_end_index,
     section_for,
-    section_line_index,
     split_review_sections,
-    unclosed_fence_line,
 )
 
 KEYWORDS = [keyword for keyword, _ in REVIEW_CATEGORIES]
@@ -199,7 +201,7 @@ class TestEnsureReviewSections:
         assert missing_review_sections(out) == []
         assert ensure_review_sections(out) == out
         # one real section, plus the example that is not one
-        assert _headings(out).count(canonical) == 1
+        assert headings(out).count(canonical) == 1
         lines = out.splitlines()
         fenced_at = lines.index(canonical)  # the example, first in raw line order
         assert section_line_index(out, canonical) > fenced_at
@@ -283,12 +285,12 @@ class TestFenceScanning:
         assert ends_inside_fence(doc) is False
         assert unclosed_fence_line(doc) is None
         assert missing_review_sections(doc) == []
-        assert review_bullets(doc) == []  # the example is still not a filed bullet
+        assert bullets(doc) == []  # the example is still not a filed bullet
 
     def test_a_backtick_block_may_quote_a_tilde_line(self):
         doc = "# Open Questions\n\n```\n~~~\n```\n\n## 모호한 관계명\n"
         assert ends_inside_fence(doc) is False
-        assert _headings(doc) == ["## 모호한 관계명"]
+        assert headings(doc) == ["## 모호한 관계명"]
 
     def test_a_longer_run_closes_but_a_shorter_one_does_not(self):
         # CommonMark: the closing run is at least as long as the opening one.
@@ -311,19 +313,19 @@ class TestReviewBullets:
 
     def test_a_bullet_in_a_fence_is_not_a_filed_bullet(self):
         text = "# Open Questions\n\n형식 예시:\n\n```\n- needs_review: X / r / Y\n```\n"
-        assert review_bullets(text) == []
+        assert bullets(text) == []
 
     def test_real_bullets_are_returned_raw(self):
         text = "# Open Questions\n\n## 출처 부족\n- needs_review: X / r / Y\n  - nested\n"
-        assert review_bullets(text) == ["- needs_review: X / r / Y", "  - nested"]
+        assert bullets(text) == ["- needs_review: X / r / Y", "  - nested"]
 
     def test_the_example_and_the_real_bullet_are_told_apart(self):
         bullet = "- needs_review: W / related_to / G"
         text = f"# Open Questions\n\n```\n{bullet}\n```\n\n## 모호한 관계명\n{bullet}\n"
-        assert review_bullets(text) == [bullet]
+        assert bullets(text) == [bullet]
 
     def test_a_dash_that_is_not_a_list_item_does_not_count(self):
-        assert review_bullets("# Open Questions\n\n---\n-notabullet\n") == []
+        assert bullets("# Open Questions\n\n---\n-notabullet\n") == []
 
 
 class TestSectionLookup:

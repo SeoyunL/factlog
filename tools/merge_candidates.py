@@ -97,16 +97,18 @@ from common import (  # noqa: E402
     sync_ignore_patterns,
 )
 from factlog import literal_types  # noqa: E402
+from factlog.md_lines import (  # noqa: E402
+    bullets,
+    ends_inside_fence,
+    section_end_index,
+    section_line_index,
+    unclosed_fence_line,
+)
 from factlog.review_sections import (  # noqa: E402
     OPEN_QUESTIONS_SCAFFOLD,
     REVIEW_KEYWORDS,
-    ends_inside_fence,
     ensure_review_sections,
-    review_bullets,
-    section_end_index,
     section_for,
-    section_line_index,
-    unclosed_fence_line,
 )
 
 # The category keywords this module routes bullets with — `decision_section`'s four
@@ -682,14 +684,14 @@ def insert_bullet(text: str, section: str, bullet: str) -> str:
     # new bullet whenever it was a prefix-substring of a longer existing bullet
     # (e.g. "...note" skipped because "...note extra" was already present).
     #
-    # Against the bullets review_sections counts, not every line in the file. Matching
+    # Against the bullets md_lines counts, not every line in the file. Matching
     # fenced lines too meant a KB that documents its own bullet format in a code fence
     # silently swallowed the first real bullet identical to that example — and
     # validate.py, counting the same fenced line as a review bullet, then reported the
     # file complete. One reader, so the two cannot disagree about it.
-    if bullet.rstrip() in {line.rstrip() for line in review_bullets(text)}:
+    if bullet.rstrip() in {line.rstrip() for line in bullets(text)}:
         return text
-    # Where the section is, and where it ends, are review_sections' to answer — the
+    # Where the section is, and where it ends, are md_lines' to answer — the
     # same answer the scaffolder and the validator get. This was `lines.index(section)`
     # and a `startswith("## ")` scan of its own, which found headings *inside code
     # fences*: measured, a bullet was filed against a fenced heading and written just
