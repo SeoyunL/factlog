@@ -30,6 +30,7 @@ from factlog.integrations.arxiv.client import (
     ArxivNotFoundError,
     ArxivResponseError,
     ArxivServiceError,
+    BACKOFF_BASE_SECONDS,
     MAX_RETRY_AFTER_SECONDS,
     _RateLimiter,
     _Response,
@@ -376,16 +377,44 @@ def test_retry_after_sets_the_wait_between_attempts():
     assert len(calls) == 3
 
 
-def test_a_fractional_retry_after_is_slept_and_rendered_without_noise():
+def test_a_fractional_retry_after_is_rendered_without_noise():
     # RFC 9110 says delta-seconds is an integer, but a server is free to be
-    # sloppy. The wait is used as sent, and the message renders it as `1.5s`
-    # rather than an artefact of float formatting — while a whole `30` stays
-    # `30s` and does not become `30.0s`.
+    # sloppy. The message renders 1.5 as `1.5s` rather than as an artefact of
+    # float formatting — while a whole `30` stays `30s`, not `30.0s`.
+    #
+    # The *wait* is 2.0, not 1.5. `Retry-After` is a minimum ("how long the user
+    # agent ought to wait before making a follow-up request"), so BACKOFF_BASE_
+    # SECONDS floors it and honouring the header never waits less than the
+    # backoff it replaced. The message still quotes arXiv's 1.5s because that
+    # figure is advice for the operator's next run, not a claim about what this
+    # client slept.
     slept = []
     api, calls = client([_Response(503, {"retry-after": "1.5"}, "")] * 3, sleeps=slept)
     with pytest.raises(ArxivServiceError, match="retry after 1.5s"):
         api.fetch_works(["1706.03762"])
-    assert slept == [1.5, 1.5]
+    assert slept == [BACKOFF_BASE_SECONDS, BACKOFF_BASE_SECONDS]
+    assert len(calls) == 3
+
+
+def test_a_tiny_retry_after_cannot_hammer_a_server_that_just_pushed_back():
+    # The regression the floor exists for. `request_delay=0.0` is reachable — the
+    # config accepts 0 and only warns — and this helper uses it, so the rate
+    # limiter contributes nothing. Without the floor, honouring the header
+    # outright sent three requests to a server that had just answered 503 inside
+    # three milliseconds. Measured with a real clock before the fix:
+    #
+    #   request_delay=0.0, Retry-After: 0.001 -> gaps=[0.001, 0.001] total=0.003s
+    #   request_delay=0.0, no header          -> gaps=[2.005, 4.002] total=6.008s
+    #
+    # Before the header was honoured, two independent floors sat under a retry:
+    # this backoff (a code constant) and the rate limiter (a configured
+    # interval). Honouring it must not remove one and leave the survivor
+    # switchable from a config file.
+    slept = []
+    api, calls = client([_Response(503, {"retry-after": "0.001"}, "")] * 3, sleeps=slept)
+    with pytest.raises(ArxivServiceError):
+        api.fetch_works(["1706.03762"])
+    assert slept == [BACKOFF_BASE_SECONDS, BACKOFF_BASE_SECONDS]
     assert len(calls) == 3
 
 

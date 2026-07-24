@@ -15,9 +15,12 @@ arXiv's recommended 3-second delay between requests on its own (a courtesy that
 is not enforced).
 
 When arXiv pushes back (HTTP 503/429) factlog honours `Retry-After`: it waits
-exactly as long as the server asked before retrying (one try plus up to two
-retries), and falls back to a 2s/4s exponential backoff when the header is
-absent or unreadable. **A requested wait longer than 60 seconds is not retried
+as long as the server asked before retrying (one try plus up to two retries),
+and falls back to a 2s/4s exponential backoff when the header is absent or
+unreadable. A requested wait shorter than 2 seconds still waits 2 seconds:
+`Retry-After` is a minimum, so waiting longer complies, and some floor has to
+remain under a retry even where `request_delay` has been set to 0. **A requested
+wait longer than 60 seconds is not retried
 at all** — the command stops immediately. Trimming such a wait down to 60s and
 knocking again would be requesting inside the window the server just named,
 while the screen quotes the server's own number back at you; the advice and the
