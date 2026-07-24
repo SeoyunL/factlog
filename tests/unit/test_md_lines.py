@@ -353,6 +353,17 @@ class TestSetextHeadings:
         # Four spaces after a paragraph has started is only a continuation line.
         assert [(h.start, h.end) for h in headings("abc\n    출처\n----\n")] == [(0, 3)]
 
+    def test_an_empty_list_marker_takes_no_continuation(self):
+        """``-`` on its own is a list item that a paragraph cannot lazily continue.
+
+        So ``출처`` below it really is top-level and the ``----`` really does
+        underline it — the renderer says so, and this is the one place where a
+        container marker above is *not* a reason to refuse. Anything indented under
+        the empty marker becomes its content instead, and then it is.
+        """
+        assert [(h.start, h.level) for h in headings("-\n출처\n----\n")] == [(1, 2)]
+        assert headings("-\n  ind\n----\n") == []
+
     def test_an_html_block_is_not_a_heading(self):
         # It runs to the next blank line and takes the underline in with it.
         assert headings("<div>\nx\n</div>\n출처\n----\n") == []

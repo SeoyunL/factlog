@@ -330,3 +330,73 @@ class TestSectionFor:
             assert missing_review_sections(out) == []
             for keyword, _ in REVIEW_CATEGORIES:
                 assert section_for(out, keyword) == heading_for(out, keyword)
+
+
+class TestSetextSpelledSections:
+    """The four categories underlined instead of prefixed (#500).
+
+    A human writing markdown by hand does this, and nothing in the KB's own
+    documentation told them not to. Every one of these headings used to be invisible:
+    the file read as missing all four, and scaffolding then appended four more.
+    """
+
+    SETEXT = (
+        "# Open Questions\n\n"
+        "중복\n----\n- a\n\n"
+        "모호\n----\n- b\n\n"
+        "출처\n----\n\n"
+        "충돌\n----\n"
+    )
+
+    def test_none_of_the_four_is_missing(self):
+        assert missing_review_sections(self.SETEXT) == []
+
+    def test_the_file_is_left_byte_for_byte_alone(self):
+        assert ensure_review_sections(self.SETEXT) == self.SETEXT
+        assert ensure_review_sections(ensure_review_sections(self.SETEXT)) == self.SETEXT
+
+    def test_a_section_is_found_as_a_place_not_a_line(self):
+        found = section_for(self.SETEXT, "모호")
+        assert (found.start, found.end, found.level) == (6, 8, 2)
+        assert found.text == "모호\n----"
+
+    def test_an_equals_underline_is_a_title_and_not_a_section(self):
+        # `====` is level 1, and level 1 is the file's title rather than a section —
+        # the same rule that keeps `# Open Questions` from being one.
+        text = "# Open Questions\n\n출처\n====\n"
+        assert "출처" in missing_review_sections(text)
+
+    def test_a_mixed_file_keeps_both_spellings(self):
+        text = "# Open Questions\n\n중복\n----\n\n## 모호한 관계명\n\n출처\n----\n\n충돌\n----\n"
+        assert missing_review_sections(text) == []
+        assert ensure_review_sections(text) == text
+
+    def test_the_damage_the_old_behaviour_did_is_now_reported(self):
+        """Two headings per category — and until now, no warning at all.
+
+        This is the file a merge produced from a Setext-spelled KB: the human's
+        sections on top holding the queue, the producer's ATX ones appended below.
+        The warning #495 added to make a split visible could not see it, because only
+        one of the two spellings was a heading. Saying it out loud is the change;
+        repairing it is still a human's edit, so `ensure_review_sections` leaves it.
+        """
+        damaged = (
+            self.SETEXT
+            + "\n"
+            + "\n\n".join(heading for _, heading in REVIEW_CATEGORIES)
+            + "\n"
+        )
+        assert [
+            (keyword, [h.text for h in found])
+            for keyword, found in split_review_sections(damaged)
+        ] == [
+            ("중복", ["중복\n----", "## 중복 개념 후보"]),
+            ("모호", ["모호\n----", "## 모호한 관계명"]),
+            ("출처", ["출처\n----", "## 출처 부족"]),
+            ("충돌", ["충돌\n----", "## 기존 내용과 충돌할 수 있는 항목"]),
+        ]
+        assert ensure_review_sections(damaged) == damaged
+
+    def test_the_first_of_two_spellings_still_wins(self):
+        damaged = self.SETEXT + "\n## 모호한 관계명\n- new\n"
+        assert section_for(damaged, "모호").text == "모호\n----"

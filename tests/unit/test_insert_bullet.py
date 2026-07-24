@@ -38,3 +38,25 @@ class TestInsertBullet:
         text = ensure_review_sections("# Open Questions\n")
         out = mc.insert_bullet(text, _at(text), "- bar")
         assert SECTION in out and "- bar" in out
+
+
+class TestInsertBulletIntoASetextSection:
+    """A Setext heading is two lines, and the blank-line guards have to know it.
+
+    `heading.start + 1` is the underline, not the end of the heading, so a guard
+    written against it sees a non-blank line where the heading itself is and inserts
+    a blank line that does not belong to the file.
+    """
+
+    ADJACENT = "출처\n----\n충돌\n----\n"
+
+    def test_an_empty_section_gets_the_bullet_flush_under_its_underline(self):
+        out = mc.insert_bullet(self.ADJACENT, _at(self.ADJACENT), "- b")
+        assert out.splitlines() == ["출처", "----", "- b", "", "충돌", "----"]
+
+    def test_a_section_with_content_keeps_one_blank_line_before_the_bullet(self):
+        text = "출처\n----\n문단\n\n충돌\n----\n"
+        out = mc.insert_bullet(text, _at(text), "- b")
+        assert out.splitlines() == [
+            "출처", "----", "문단", "", "- b", "", "충돌", "----",
+        ]
