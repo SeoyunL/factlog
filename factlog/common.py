@@ -781,7 +781,37 @@ def logic_policy_md_has_rejected_items(md_path: Path) -> bool:
     return logic_policy_text_has_rejected_items(md_path.read_text(encoding="utf-8"))
 
 
+@dataclass(frozen=True)
+class LogicPolicyProgram:
+    """The assembled policy text plus the files that actually contributed to it.
+
+    ``sources`` holds only files whose bytes reached ``text``, in the loader's own
+    merge order (base, then extra.dl) — never a set or a directory listing, so a
+    report rendering it is deterministic. ``base`` is named even when it did not
+    contribute, because "the compiled policy is absent" is the fact a reader needs.
+
+    This exists so ``tools/run_logic_check.py`` can state what it checked against
+    without re-deriving it: whether extra.dl contributed is the non-obvious rule in
+    the merge tail below (non-empty, and at least one line that is neither ``//`` nor
+    ``#``), and a second implementation of it in the reporter would be the fifth
+    drifting policy parser the #226/#250/#333 notes warn about.
+    """
+
+    text: str
+    sources: tuple[Path, ...]
+    base: Path
+
+    @property
+    def base_loaded(self) -> bool:
+        return self.base in self.sources
+
+
 def _load_logic_policy_from(logic_policy_dl: Path) -> str:
+    return _load_logic_policy_program_from(logic_policy_dl).text
+
+
+def _load_logic_policy_program_from(logic_policy_dl: Path) -> LogicPolicyProgram:
+    sources: list[Path] = []
     if not logic_policy_dl.is_file():
         # A fresh `init`ed KB has no compiled logic-policy.dl yet. Distinguish
         # the benign no-policy case (empty/prose logic-policy.md → treat as an
@@ -831,6 +861,10 @@ def _load_logic_policy_from(logic_policy_dl: Path) -> str:
         text = ""
     else:
         text = logic_policy_dl.read_text(encoding="utf-8").strip()
+        # Presence, not content: a stub .dl holding only "// no policy rules" is a
+        # compiled policy that happens to have no rules (#491), and the report must
+        # keep naming it exactly as it does today.
+        sources.append(logic_policy_dl)
     # Optional sibling for hand-authored rules (e.g. typed comparison predicates,
     # #120). Unlike logic-policy.dl this file is never regenerated or byte-compared
     # by generate_logic_policy.py --check, so authors may edit it directly. Absent
@@ -860,16 +894,30 @@ def _load_logic_policy_from(logic_policy_dl: Path) -> str:
             # Avoid a leading newline when the base is empty (no compiled
             # logic-policy.dl) so the engine program text stays clean.
             text = (text + "\n" + extra_text) if text else extra_text
+            # Credited only inside this branch: a comment-only sibling leaks no
+            # bytes into the program, so naming it as a loaded source would tell a
+            # reader a policy ran when the engine saw nothing.
+            sources.append(extra)
     # Guard: canonical is a reserved EDB predicate; a head occurrence in policy
     # text silently corrupts the engine program (pyrewire treats canonical as IDB
     # and drops all compile-emitted EDB atoms). Fail loud here, after the full
     # policy text (base + extra.dl) is assembled, so the check covers both files.
     _assert_no_canonical_head(text)
-    return text
+    return LogicPolicyProgram(text=text, sources=tuple(sources), base=logic_policy_dl)
 
 
 def load_logic_policy() -> str:
     return _load_logic_policy_from(LOGIC_POLICY_DL)
+
+
+def load_logic_policy_program() -> LogicPolicyProgram:
+    """``load_logic_policy()`` plus the provenance of what was loaded (#506).
+
+    Same text, same exceptions (#190's uncompiled-rules error and the canonical-head
+    guard still raise) — callers that only need the program keep using
+    ``load_logic_policy``.
+    """
+    return _load_logic_policy_program_from(LOGIC_POLICY_DL)
 
 
 def policy_predicates(policy_program: str | None = None) -> set[str]:
