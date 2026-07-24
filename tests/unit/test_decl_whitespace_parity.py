@@ -95,9 +95,9 @@ WHITESPACE_FORMS = {
 # comment-SPLIT forms, which were missed on both sides before; the not-line-initial
 # forms already diverged because their paren touches the name.
 #
-# This dict is a SINGLE POINT for three parametrized tests: deleting an entry drops
-# a case from
-# TestPolicyPredicatesSeesEveryWhitespaceForm::test_comment_stripped_forms_are_visible_too
+# This dict is a SINGLE POINT for four parametrized tests: deleting an entry drops
+# a case from TestEngineAcceptsTheseForms, from
+# TestPolicyPredicatesSeesEveryWhitespaceForm::test_comment_stripped_forms_are_visible_too,
 # and from both methods of TestTheLastRawTextSiteCannotStripComments at once, with
 # nothing turning red. Add here, do not narrow here.
 SKELETON_ONLY_FORMS = {
@@ -549,7 +549,12 @@ class TestEngineDeclPredicatesUnchanged:
 class TestEngineAcceptsTheseForms:
     """The justification, re-measured. Widening our parsers is only correct while
     the ENGINE accepts these forms; if a future pyrewire rejects `p (`, this test
-    fails and the reason for the widening is gone."""
+    fails and the reason for the widening is gone.
+
+    All three tables are measured here, not two. WHITESPACE_FORMS and NAME_FORMS
+    are the premise for what our parsers ACCEPT; SKELETON_ONLY_FORMS is the premise
+    for which gaps are worth calling gaps, and it went unmeasured until #517 — the
+    one table whose header made an engine claim was the one nothing re-checked."""
 
     BASE = ".decl src(x: symbol)\n"
     RULE = '\np(X, "r") :- src(X).\n'
@@ -597,6 +602,31 @@ class TestEngineAcceptsTheseForms:
         assert declared and undeclared  # true with and without the .decl
         assert declared[0][1][0] == "A"  # only true when the .decl was read
         assert undeclared[0][1][0] == 0
+
+    @pytest.mark.parametrize("label", sorted(SKELETON_ONLY_FORMS))
+    def test_engine_reads_a_skeleton_only_form_as_a_declaration(self, label):
+        """SKELETON_ONLY_FORMS calls itself a list of forms "the engine also
+        accepts". That claim was prose until #517; this measures it.
+
+        Read a failure the right way round. If one of these forms stops compiling,
+        or stops applying the column schema, it is NO LONGER A GAP — the engine and
+        the raw reader now agree about it, and it belongs OUT of
+        SKELETON_ONLY_FORMS. It is emphatically not a signal to widen a parser to
+        match: #508's whole direction is that our readers follow the engine, and a
+        list of "gaps" the engine no longer has is documentation that has started
+        lying about where the risk is.
+
+        ACCEPT alone would not measure it. pyrewire derives `p` rows whether or not
+        `p` is declared (see test_a_spaced_declaration_is_taken_AS_A_DECLARATION,
+        which keeps the undeclared control in its body), so "no ParseError, rows
+        came back" is true of a program with no `.decl` at all. What the
+        declaration buys is the column schema, so the interned "A" is the only
+        assertion here doing work.
+        """
+        decl = form(SKELETON_ONLY_FORMS[label], cols="x: symbol, r: symbol")
+        rows = self._rows(self.BASE + decl + self.RULE)  # no ParseError
+        assert rows, label
+        assert rows[0][1][0] == "A", label  # the .decl was read, not just tolerated
 
     @pytest.mark.parametrize("ws", ["\v", "\f"])
     def test_engine_rejects_vertical_whitespace_before_a_decl(self, ws):
