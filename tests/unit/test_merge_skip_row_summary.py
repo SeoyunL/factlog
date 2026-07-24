@@ -116,9 +116,12 @@ class TestSkipRowSummary:
         path -- instructions that read as advice while pointing at the problem.
 
         Top-level paths cannot see this: 'sources/gone.md' is its own basename.
-        The check is scoped to the hint clause because the leading diagnosis
-        legitimately quotes the full nested path -- that half names what was
-        rejected, this half names the fix."""
+        The assertion quotes the hint clause whole rather than just its example,
+        because this is the non-strict line and its only other guard is the
+        closing "')" that test_singular_and_plural_counts_in_one_run anchors the
+        count suffix to -- punctuation a gutted wording keeps.  Pinning the
+        clause on BOTH sides of `if show_counts:` is what stops the two branches
+        from drifting apart in either direction (#494)."""
         root = _root_with_source(tmp_path)
         rows = [
             _row("A", "rel", "B", "sources/sub/deep/x.md"),
@@ -130,9 +133,12 @@ class TestSkipRowSummary:
         # What was rejected: the full path, anchor stripped by the fold.
         assert "source 'sources/sub/deep/x.md' not found" in lines[0]
         assert "(2 rows)" in lines[0]
-        # What to do about it: the basename under a top-level sources/.
-        assert "like 'sources/x.md')" in lines[0]
-        assert "like 'sources/sub" not in lines[0]
+        # What to do about it: the basename under a top-level sources/, in a
+        # clause pinned verbatim from the space that separates it onwards.
+        assert (
+            "in sources/ (expected a sources/- or runs/sources/-prefixed path"
+            " like 'sources/x.md')"
+        ) in lines[0]
 
     def test_line_order_is_independent_of_input_order(self, tmp_path, capsys):
         root = _root_with_source(tmp_path)
@@ -190,12 +196,12 @@ class TestSkipRowSummary:
         assert lines[0].rstrip() == lines[0]
         # Dropping the suffix must not take the path or the diagnosis with it.
         # Narrowly these two only -- the hint clause that follows them is held
-        # elsewhere: test_strict_line_keeps_the_whole_correction_hint pins its
-        # wording verbatim on this same strict line,
-        # test_hint_example_is_the_basename_not_the_rejected_path pins the
-        # example path it builds, and on the non-strict line
-        # test_singular_and_plural_counts_in_one_run pins its closing "')"
-        # as the anchor the count suffix attaches to.
+        # elsewhere, verbatim on both sides of the show_counts branch:
+        # test_strict_line_keeps_the_whole_correction_hint on this strict line,
+        # test_hint_example_is_the_basename_not_the_rejected_path on the
+        # non-strict one (where a nested path also pins the example to the
+        # basename).  test_singular_and_plural_counts_in_one_run additionally
+        # pins the clause's closing "')" as the anchor the suffix attaches to.
         assert "sources/gone.md" in lines[0]
         assert "not found in sources/" in lines[0]
 
@@ -210,13 +216,19 @@ class TestSkipRowSummary:
         Pinned VERBATIM, not by shape: the clause is prose a human reads and
         acts on, so the wording IS the contract.  Asserting only that a paren
         or a closing "')" survives passes on a variant that guts the text and
-        keeps the punctuation."""
+        keeps the punctuation.
+
+        The expected text starts one character early, at the space after
+        'sources/', for the same reason the count suffix carries its own leading
+        space (see test_singular_and_plural_counts_in_one_run): a lost or
+        doubled separator here is how the line drifts from the byte-identical
+        output #492 fixed, and it is invisible in a clause-only match."""
         root = _root_with_source(tmp_path)
         with pytest.raises(SystemExit):
             mc.normalize_rows(root, _missing_rows(), strict=True)
         lines = _skip_lines(capsys)
         assert len(lines) == 1
         assert (
-            "(expected a sources/- or runs/sources/-prefixed path like 'sources/gone.md')"
-            in lines[0]
-        )
+            "in sources/ (expected a sources/- or runs/sources/-prefixed path"
+            " like 'sources/gone.md')"
+        ) in lines[0]
