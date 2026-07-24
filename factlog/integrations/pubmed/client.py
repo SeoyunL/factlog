@@ -54,6 +54,7 @@ inject a fake ``transport`` to stay deterministic and network-free.
 """
 from __future__ import annotations
 
+import math
 import sys
 import time
 from dataclasses import dataclass
@@ -81,6 +82,18 @@ KEY_MIN_INTERVAL = 0.10
 # absent. Total attempts = one try plus two retries.
 MAX_ATTEMPTS = 3
 DEFAULT_RETRY_AFTER_SECONDS = 2.0
+
+# The longest server-requested wait this client will sit through. A 429 body is
+# server-controlled and RFC 9110 permits any delta-seconds, so an unbounded
+# `Retry-After` (or a hostile/garbage one) could otherwise pin the CLI — the
+# spike only ever observed 2 s (spike §3), so a large value is out of policy.
+# arXiv (#478) *gives up* past its own 60 s ceiling because its retry loop
+# carries a `retriable` flag on the raised exception. PubMed's loop instead
+# sleeps the value inline (`_request`) and has no such flag, so here the wait is
+# **clamped down** to the ceiling rather than abandoned; either way MAX_ATTEMPTS
+# bounds how many waits can happen. 60 s matches arXiv's ceiling — NCBI publishes
+# no different figure, so the two clients keep one policy.
+MAX_RETRY_AFTER_SECONDS = 60.0
 
 # NCBI accepts at most 200 ids per efetch/esummary request; kept conservative to
 # stay well inside a single GET.
@@ -130,11 +143,26 @@ class PubMedServiceError(PubMedError):
 
 @dataclass(frozen=True)
 class _Response:
-    """The subset of an HTTP response this client depends on."""
+    """The subset of an HTTP response this client depends on.
+
+    Header names are case-insensitive on the wire, and httpx, a fake transport
+    and NCBI itself may each pick a different casing. They are folded to
+    lower-case once, here at construction, so :meth:`PubMedClient._retry_after`
+    reads a single spelling — the redundant ``Retry-After`` capitalised lookup it
+    once also tried is unreachable, because httpx lower-cases keys on ``dict()``
+    conversion (the second ``.get`` never fired in the live path).
+    """
 
     status_code: int
     headers: dict
     text: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "headers",
+            {str(key).lower(): value for key, value in self.headers.items()},
+        )
 
 
 def normalize_pmid(value: object) -> str:
@@ -311,11 +339,31 @@ class PubMedClient:
 
     @staticmethod
     def _retry_after(response: _Response) -> float:
-        raw = response.headers.get("retry-after") or response.headers.get("Retry-After")
+        """The ``Retry-After`` wait in seconds — always finite, positive, bounded.
+
+        A 429 body is server-controlled, so every unusable form folds to
+        :data:`DEFAULT_RETRY_AFTER_SECONDS`: a missing header, a value ``float()``
+        rejects, and — critically — a *non-finite* one. ``float("inf")`` and
+        ``float("nan")`` **parse successfully**, so a bare try/except would let
+        ``Retry-After: inf`` through as an infinite sleep, and ``nan`` slip past
+        any later ceiling (every comparison with ``nan`` is False); the explicit
+        :func:`math.isfinite` guard is what stops both. Zero or negative falls
+        back too, rather than sleeping for no time or a negative one. A finite,
+        positive wait beyond :data:`MAX_RETRY_AFTER_SECONDS` is clamped down to
+        the ceiling — see that constant for why PubMed clamps where arXiv gives
+        up.
+
+        The header key is read lower-case only: :class:`_Response` folds header
+        names at construction, so no read site has to try both spellings.
+        """
+        raw = response.headers.get("retry-after")
         try:
-            return float(raw)
+            seconds = float(str(raw).strip())
         except (TypeError, ValueError):
             return DEFAULT_RETRY_AFTER_SECONDS
+        if not math.isfinite(seconds) or seconds <= 0:
+            return DEFAULT_RETRY_AFTER_SECONDS
+        return min(seconds, MAX_RETRY_AFTER_SECONDS)
 
     def _request(self, endpoint: str, params: dict) -> str:
         """Send one E-utilities request, returning the raw 200 body.

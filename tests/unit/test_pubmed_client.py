@@ -26,13 +26,16 @@ and the serial cadence is enforced entirely by this client.
 """
 from __future__ import annotations
 
+import math
 from xml.etree import ElementTree as ET
 
 import pytest
 
 from factlog.integrations.pubmed.client import (
     API_BASE,
+    DEFAULT_RETRY_AFTER_SECONDS,
     KEY_MIN_INTERVAL,
+    MAX_RETRY_AFTER_SECONDS,
     NO_KEY_MIN_INTERVAL,
     NO_KEY_WARNING,
     PubMedClient,
@@ -395,6 +398,86 @@ def test_429_without_a_retry_after_header_uses_a_conservative_default():
     )
     api.esearch("q")
     assert 2.0 in slept  # DEFAULT_RETRY_AFTER_SECONDS
+
+
+# -- _retry_after: finite, positive, bounded (#485) ------------------------
+# A 429 body is server-controlled, so `Retry-After` is untrusted input. Each of
+# these asserts on the value `_retry_after` returns — the exact number the retry
+# loop would hand to `self._sleep` — without a real sleep. The inf/nan cases in
+# particular fail on the pre-#485 code, where `float("inf")`/`float("nan")` parse
+# straight through a bare try/except.
+
+def _retry_after(header_value):
+    headers = {} if header_value is None else {"retry-after": header_value}
+    return PubMedClient._retry_after(_Response(429, headers, ""))
+
+
+def test_retry_after_infinity_falls_back_not_a_permanent_stop():
+    # `float("inf")` parses; without the isfinite guard this would sleep forever.
+    wait = _retry_after("inf")
+    assert wait == DEFAULT_RETRY_AFTER_SECONDS
+    assert math.isfinite(wait)
+
+
+def test_retry_after_nan_falls_back_rather_than_slipping_past_the_ceiling():
+    # `float("nan")` parses too, and every comparison with nan is False — so a
+    # later `min(seconds, MAX)` would let it through. The isfinite guard catches it.
+    wait = _retry_after("nan")
+    assert wait == DEFAULT_RETRY_AFTER_SECONDS
+    assert not math.isnan(wait)
+
+
+def test_retry_after_beyond_the_ceiling_is_clamped_down():
+    # `Retry-After: 3600` (one hour) must not pin the CLI; clamp to the ceiling.
+    assert _retry_after("3600") == MAX_RETRY_AFTER_SECONDS
+
+
+def test_retry_after_zero_falls_back_to_the_default():
+    assert _retry_after("0") == DEFAULT_RETRY_AFTER_SECONDS
+
+
+def test_retry_after_negative_falls_back_to_the_default():
+    assert _retry_after("-5") == DEFAULT_RETRY_AFTER_SECONDS
+
+
+def test_retry_after_unparseable_keeps_the_existing_fallback():
+    assert _retry_after("soon") == DEFAULT_RETRY_AFTER_SECONDS
+
+
+def test_retry_after_absent_header_uses_the_default():
+    assert _retry_after(None) == DEFAULT_RETRY_AFTER_SECONDS
+
+
+def test_retry_after_finite_value_within_the_ceiling_is_honoured():
+    assert _retry_after("2") == 2.0
+    assert _retry_after("59.5") == 59.5
+
+
+def test_retry_after_header_key_casing_is_folded_at_construction():
+    # httpx lower-cases keys, but a fake transport or future code may send
+    # `Retry-After`; _Response folds it so the single lower-case read still finds it.
+    response = _Response(429, {"Retry-After": "2"}, "")
+    assert PubMedClient._retry_after(response) == 2.0
+
+
+def test_infinite_retry_after_does_not_hang_the_retry_loop():
+    # End to end: a 429 naming `inf` must still sleep only the bounded fallback.
+    slept = []
+    api = PubMedClient(
+        config=PubMedConfig(email="d@e.edu"),
+        transport=_replay([
+            _Response(429, {"retry-after": "inf"}, ""),
+            ok(esearch_xml(count=0)),
+        ]),
+        sleep=slept.append,
+        warn=lambda _m: None,
+    )
+    api.esearch("q")
+    # `slept` also carries the rate limiter's sub-second interval; the point is
+    # the retry wait itself is the bounded fallback, and nothing is infinite.
+    assert DEFAULT_RETRY_AFTER_SECONDS in slept
+    assert all(math.isfinite(s) for s in slept)
+    assert not any(s > MAX_RETRY_AFTER_SECONDS for s in slept)
 
 
 # -- no-key first-run warning (once, then proceed) -------------------------
