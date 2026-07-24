@@ -29,6 +29,7 @@ from factlog.integrations.common.source_writer import (  # noqa: E402
 from factlog.review_sections import (  # noqa: E402
     missing_review_sections,
     split_review_sections,
+    unclosed_fence_line,
 )
 
 # An unregistered status is an *error* here, not a warning — so this set drifting
@@ -348,21 +349,35 @@ def validate(root: Path) -> list[str]:
 
 
 def review_section_warnings(root: Path) -> list[tuple[str, str]]:
-    """Review categories that ended up with two headings, as ``(tag, message)``.
+    """What is wrong with open-questions.md that the errors do not say, as ``(tag, msg)``.
 
-    Not an error: a split file is structurally complete and every check above passes
-    on it. It is a *reading* hazard, and a bad one — the earlier section reads
-    "- 현재 없음." while the queue accumulates under the later one, so the operator
-    who skims the top concludes the review queue is empty (#495).
+    Two shapes, both reading hazards the structural checks are blind to.
 
-    Warning rather than repair because the fix moves bullets a human wrote and filed,
-    which is theirs to do. Warning rather than silence because until this line there
-    was no channel that said so at all.
+    ``unclosed_fence`` is the diagnosis for an otherwise baffling error. A file that
+    opens a code fence and never closes it has every heading below that line read as
+    code, so the errors above say a review section is missing while the operator is
+    looking straight at it. The errors are right and useless; this says which line to
+    fix. Nothing writes to such a file either — see merge_candidates.
+
+    ``split_review_section`` is not an error at all: a split file is structurally
+    complete and every check above passes on it. The earlier section reads
+    "- 현재 없음." while the queue accumulates under the later one, so the operator who
+    skims the top concludes the review queue is empty (#495). Warning rather than
+    repair because the fix moves bullets a human wrote and filed, which is theirs to
+    do; warning rather than silence because nothing said it at all before.
     """
     decisions = root / "decisions" / "open-questions.md"
     if not decisions.is_file():
         return []
     warnings: list[tuple[str, str]] = []
+    fence_line = unclosed_fence_line(read(decisions))
+    if fence_line is not None:
+        warnings.append((
+            "unclosed_fence",
+            f"decisions/open-questions.md opens a code fence on line {fence_line} and "
+            f"never closes it — every heading below that line reads as code, which is "
+            f"why sections you can see are reported missing. Close the fence.",
+        ))
     for keyword, headings in split_review_sections(read(decisions)):
         warnings.append((
             "split_review_section",
