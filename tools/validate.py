@@ -341,6 +341,12 @@ def validate(root: Path) -> list[str]:
         if rows and not referenced_subjects:
             errors.append("facts exist but pages/ does not appear to organize fact subjects or objects")
 
+    # What counts as "already recorded", read the way the writer writes it. This was a
+    # substring test over the whole document: neither line-based nor fence-aware, so a
+    # `- stale_source: …` line written as an example inside a code fence was
+    # indistinguishable from a real record and silenced the error for a KB that had
+    # recorded nothing. Same shape as the review-bullet miscount above, same reader.
+    recorded_bullets = review_bullets(decision_text)
     for page in pages:
         text = read(page)
         # md/txt/csv: pages may cite text sources or pdftotext/textutil .txt
@@ -348,7 +354,7 @@ def validate(root: Path) -> list[str]:
         for source_ref in re.findall(r"(?:runs/)?sources/[^\s`)>,]+?\.(?:md|txt|csv)(?:#[^\s`)>,]+)?", text):
             source_error = validate_source_ref(root, source_ref)
             stale_record = f"stale_source: {page.relative_to(root).as_posix()} references removed source {source_ref}"
-            if source_error and stale_record not in decision_text:
+            if source_error and not any(stale_record in line for line in recorded_bullets):
                 stale_pages.append(f"{page.relative_to(root)} {source_error}")
     errors.extend(stale_pages)
     return errors

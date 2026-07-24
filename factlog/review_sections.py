@@ -47,15 +47,25 @@ the section itself, and the bullet routed to it landed past the closing fence, i
 no section at all. A Setext heading (``출처`` over ``----``) is not recognised; the
 reference documents that, and nothing here improves it (#500).
 
-**Every reader and writer of the file takes those definitions from here** —
-:func:`section_line_index` and :func:`section_end_index` so that
-``merge_candidates.insert_bullet`` finds a section the way this module does, and
-:func:`review_bullets` so that the producer's "have I filed this already" and the
-validator's "is anything filed here" are one question. Each of those was once a
-scan of its own that had not heard of fences, and a second notion of where a
-section is, disagreeing with this one, is what #495 was about to begin with. The
-last pair cost the most: between them a needs_review row disappeared from the file
-a human reads while the KB reported completely valid.
+**Every reader and writer of the file takes those definitions from here.** Four
+questions used to be answered by scans of their own, none of them aware of fences.
+Each was found by measuring, one round after another, and each had let the file and
+the report about the file disagree:
+
+* *where does a section start* — ``insert_bullet``'s ``lines.index``, which matched
+  a heading inside a fence and filed the bullet under no section at all
+  (:func:`section_line_index`);
+* *where does it end* — its own ``startswith("## ")`` walk, which stopped at a
+  fenced example and inserted into the code block (:func:`section_end_index`);
+* *have I filed this bullet, and is anything filed here* — the producer's whole-file
+  line comparison and the validator's ``- `` count, which between them made a
+  needs_review row vanish from the file a human reads while the KB reported
+  completely valid (:func:`review_bullets`);
+* *is this stale-source record already written* — a substring test over the whole
+  document, answered just as well by an example in a fence (:func:`review_bullets`).
+
+A second notion of where a section is, disagreeing with this one, is what #495 was
+about to begin with.
 
 The one file shape nothing writes to is one that **ends inside an unclosed fence**
 (:func:`ends_inside_fence`). Appending happens at the end of the file, and there the

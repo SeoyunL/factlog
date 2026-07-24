@@ -401,11 +401,50 @@ class TestCodeFencesEndToEnd:
         assert proc.returncode == 1, out
         assert "no review bullets" in out, out
 
-    def test_both_writers_refuse_even_when_only_one_speaks(self, tmp_path):
-        """The refusal is decided per call; only the complaint is deduplicated.
+    @pytest.mark.parametrize(
+        "filed,expected_errors",
+        [
+            (None, 1),      # nothing recorded — the error stands
+            ("real", 0),    # recorded as a bullet — the error is answered
+            ("fenced", 1),  # recorded only as an example — answers nothing
+        ],
+        ids=["not-recorded", "recorded", "fenced-example-only"],
+    )
+    def test_only_a_real_bullet_answers_the_stale_source_error(
+        self, tmp_path, filed, expected_errors
+    ):
+        """A stale-source record inside a fence is an example, not a record.
 
-        Deciding it once and remembering the answer made the second writer's refusal
-        a cache hit rather than a reading of the file.
+        The check was a substring test over the whole document — neither line-based
+        nor fence-aware — so the fenced case was indistinguishable from the recorded
+        one and silenced the error for a KB that had recorded nothing. The writer
+        files these through a fence-aware insert_bullet; whatever reads back what it
+        filed has to agree with it.
+        """
+        record = "- stale_source: pages/p.md references removed source sources/gone.md"
+        body = {
+            None: "",
+            "real": f"{record}\n",
+            "fenced": f"예시:\n\n```\n{record}\n```\n",
+        }[filed]
+        kb = _init(tmp_path / "kb", tmp_path)
+        (kb / "pages" / "p.md").write_text("# p\n\n- see sources/gone.md\n", encoding="utf-8")
+        (kb / "decisions" / "open-questions.md").write_text(
+            "# Open Questions\n\n## 중복 개념 후보\n\n## 모호한 관계명\n\n## 출처 부족\n"
+            f"{body}\n## 기존 내용과 충돌할 수 있는 항목\n",
+            encoding="utf-8",
+        )
+        out = _validate(kb, tmp_path).stdout
+        assert out.count("source file does not exist") == expected_errors, out
+
+    def test_both_writers_refuse_even_when_only_one_speaks(self, tmp_path):
+        """Two calls, two refusals, one complaint — the observable behaviour.
+
+        This does not pin the *structure* that produces it: deciding once and
+        returning the remembered answer gives the same results here, since anything
+        reaching the cached path has already read True out of the file. What the
+        separation buys is mutation sensitivity — one break now propagates to both
+        writers instead of one — and that shows up in kill counts, not here.
         """
         mc = _merge_module()
         kb = _init(tmp_path / "kb", tmp_path)
