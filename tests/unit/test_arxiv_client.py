@@ -384,12 +384,20 @@ def test_a_fractional_retry_after_is_slept_and_rendered_without_noise():
     assert len(calls) == 3
 
 
-def test_a_retry_after_past_the_ceiling_is_reported_instead_of_retried():
+@pytest.mark.parametrize(
+    "over",
+    [
+        # Derived from the constant rather than hardcoded, so adjusting the
+        # ceiling keeps testing the policy instead of a stale number.
+        pytest.param(str(int(MAX_RETRY_AFTER_SECONDS) + 1), id="just-over"),
+        pytest.param("3600", id="an-hour"),
+    ],
+)
+def test_a_retry_after_past_the_ceiling_is_reported_instead_of_retried(over):
     # A server that says "wait an hour" is not asking to be tried again in two
     # seconds. Clamping the wait down to the ceiling and retrying would knock
     # inside the window the server named, so nothing is retried and no attempt
     # is spent — the operator gets the server's own number instead.
-    over = str(int(MAX_RETRY_AFTER_SECONDS) + 1)
     slept = []
     api, calls = client([_Response(503, {"retry-after": over}, "")] * 3, sleeps=slept)
     with pytest.raises(ArxivServiceError) as raised:
@@ -397,8 +405,10 @@ def test_a_retry_after_past_the_ceiling_is_reported_instead_of_retried():
     assert len(calls) == 1
     assert slept == []
     message = str(raised.value)
-    assert over in message                                 # what arXiv asked for
-    assert str(int(MAX_RETRY_AFTER_SECONDS)) in message    # what factlog will wait
+    assert f"wait {over}s" in message   # what arXiv asked for
+    # What factlog will wait. Matched with its article so it cannot be satisfied
+    # by the ceiling appearing inside the server's own number ("60" in "3600").
+    assert f"the {int(MAX_RETRY_AFTER_SECONDS)}s" in message
     assert "not retried" in message
 
 
