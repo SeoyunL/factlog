@@ -261,6 +261,17 @@ to the empty policy and the exit code is unchanged. A **partial** policy — som
 bullets compile, some are rejected — is also accepted: the good rules are
 applied and each rejected bullet is named on stderr.
 
+The same rule covers **every** way policy generation can fail to produce
+`logic-policy.dl` — a malformed `{canonical}` marker, an undecodable relation
+name, or a missing/empty `policy/logic-policy.md`. `finalize` never writes the
+empty-policy stub after a failed generation (that stub would mask the state from
+`/factlog check` and make the next run skip regeneration); it prints
+generation's own error and exits non-zero — `1` when the engine ran, `3` when it
+was skipped. Note that `/factlog check` still *completes* on a KB whose
+`logic-policy.md` is missing or empty: it is a read-side gate with no policy to
+apply, while `finalize` is the authoring pipeline reporting the failure it just
+watched.
+
 **Contradiction detection.** Relations you list in `policy/single-valued.md`
 (one relation name per line) are treated as *functional* — at most one object
 per subject. If two distinct objects are asserted for the same

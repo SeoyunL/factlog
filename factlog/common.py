@@ -641,6 +641,52 @@ def logic_policy_md_relations(sentence: str) -> list[str]:
     return re.findall(r"`([^`]+)`", sentence)
 
 
+CANONICAL_MARKER = "{canonical}"
+# The canonical marker is an ANCHORED, lowercase `{canonical}` followed by an ASCII
+# space. The separator was `\s+`, which also matches NBSP, so a `{canonical}\xa0` typo
+# still compiled as a canonical rule; it is narrowed to ASCII space/tab here.
+CANONICAL_PREFIX_RE = re.compile(r"^\{canonical\}[ \t]+")
+# Any `{...}` at the very START of a sentence is a marker ATTEMPT. If it is not exactly
+# the canonical marker above, we refuse rather than silently falling back to a relation
+# body (#335): a canonical head is blocked by RESERVED_PREDICATES anyway, so an
+# unrecognized marker has nowhere safe to go — a load failure beats a silent meaning flip.
+_LEADING_MARKER_RE = re.compile(r"^\{[^}]*\}")
+
+
+def _strip_canonical_prefix(sentence: str, lineno: int) -> tuple[bool, str]:
+    """Return (is_canonical, sentence_without_marker).
+
+    The canonical marker is an ANCHORED lowercase ``{canonical}`` followed by an ASCII
+    space; a mid-sentence or prose {canonical} does NOT count, so a documentation bullet
+    mentioning it never becomes a live rule. A sentence that STARTS with a ``{...}`` marker
+    shape that is NOT exactly that — a case variant like ``{Canonical}``, a space-less
+    ``{canonical}`x``, or an NBSP separator — is rejected LOUDLY (#335) instead of
+    compiling to a relation(...) body under a meaning the author did not intend.
+
+    Lives here rather than in ``tools/generate_logic_policy.py`` (which imports it, and
+    stays the only caller that compiles) because ``logic_policy_text_has_rejected_items``
+    must run the SAME pre-step before counting relations. Judging the raw sentence made
+    the two disagree on exactly the bullets this raises for: a ``{Canonical}`` typo has no
+    backtick relation, so the raw view called it "rejected for missing backticks" and told
+    the author to add backticks that were never the problem (#496 review).
+    """
+    stripped = sentence.strip()
+    m = CANONICAL_PREFIX_RE.match(stripped)
+    if m:
+        return True, stripped[m.end():].strip()
+    marker = _LEADING_MARKER_RE.match(stripped)
+    if marker:
+        raise FactlogError(
+            f"policy/logic-policy.md line {lineno}: unrecognized leading marker "
+            f"{marker.group(0)!r}. The only supported marker is '{CANONICAL_MARKER}' "
+            f"followed by an ASCII space; a case variant, a missing space, or a "
+            f"non-ASCII separator would silently compile to a relation(...) rule body "
+            f"instead of canonical(...). Fix the marker, or if the '{{...}}' is prose, "
+            f"do not place it at the start of the sentence."
+        )
+    return False, sentence
+
+
 def logic_policy_text_has_rules(md_text: str) -> bool:
     """``logic_policy_md_has_rules`` on policy text already in hand.
 
@@ -675,31 +721,62 @@ def logic_policy_md_has_rules(md_path: Path) -> bool:
 def logic_policy_text_has_rejected_items(md_text: str) -> bool:
     """``logic_policy_md_has_rejected_items`` on policy text already in hand.
 
-    True iff at least one bullet TRIED to be a rule — it carries an ``[id]`` tag, so
-    ``markdown_policy_items`` admits it — but names no backtick relation, which is
-    exactly the ``rejected`` list ``generate_logic_policy.fixture_policy_json`` builds
-    (same two parsers, negated on the same condition, #190). Prose that is not a tagged
-    bullet is invisible here, so a rules-free logic-policy.md stays False: this
-    distinguishes an authoring defect from a legitimately empty policy (#491) and never
-    conflates the two.
+    True iff at least one bullet is on ``fixture_policy_json``'s ``rejected`` list: it
+    carries an ``[id]`` tag (so ``markdown_policy_items`` admits it), it survives
+    ``_strip_canonical_prefix``, and the surviving body names no backtick relation. Those
+    are the compiler's own three steps in the compiler's own order — the point being that
+    the ONE diagnosis this predicate licenses ("you forgot the backticks") is the one
+    generation would actually have made.
+
+    The middle step is load-bearing. A bullet whose leading marker is malformed
+    (``{Canonical}``, ``{canonical}`` with no space) never reaches the relation count in
+    generation at all: ``_strip_canonical_prefix`` raises first, and generation dies on
+    the MARKER. Judging the raw sentence counted it here as "rejected for missing
+    backticks", so finalize told the author to quote a relation name when the backticks
+    were never the problem (#496 review). Excluding it hands the case to finalize's
+    general "generation failed" path, which prints generation's own stderr — the marker
+    error, which is the correct remediation.
+
+    Prose that is not a tagged bullet is invisible to ``markdown_policy_items``, so a
+    rules-free logic-policy.md stays False and #491's "zero rules is normal" is untouched.
     """
-    return any(
-        not logic_policy_md_relations(sentence)
-        for _lineno, _reason, sentence in markdown_policy_items(md_text)
-    )
+    rejected = False
+    for lineno, _reason, sentence in markdown_policy_items(md_text):
+        try:
+            _is_canonical, body_sentence = _strip_canonical_prefix(sentence, lineno)
+        except FactlogError:
+            # Not a rejected item: generation raises here rather than adding it to
+            # `rejected`, so claiming it would assert a verdict generation never reached.
+            continue
+        if not logic_policy_md_relations(body_sentence):
+            rejected = True
+    return rejected
 
 
 def logic_policy_md_has_rejected_items(md_path: Path) -> bool:
-    """Deterministic 'does this policy .md contain a bullet that failed to compile?'.
+    """Deterministic 'does this policy .md contain a bullet rejected for naming no
+    relation?'.
 
-    The companion of ``logic_policy_md_has_rules``: together they partition the tagged
-    bullets, so ``not has_rules and has_rejected_items`` is byte-for-byte the fatal
-    ``not rules and rejected`` verdict ``fixture_policy_json`` raises SystemExit on.
-    ``tools/finalize.py`` and ``_load_logic_policy_from`` key on that pair so a policy
-    whose every bullet was rejected can never be mistaken for an empty policy and
-    papered over with the empty-policy stub (#496).
+    Read as a one-way license, not as the other half of ``logic_policy_md_has_rules``:
+    True here means generation exits with "no compilable policies" naming those lines, so
+    the "quote the relation name in backticks" remediation is correct. False means only
+    that generation would not say THAT — it may still fail for another reason
+    (a malformed marker, a missing or empty .md, an undecodable relation name), which is
+    why ``tools/finalize.py`` keeps a general failure path behind this one and never
+    treats False as "the policy is fine".
+
+    Callers pair it with ``logic_policy_md_has_rules`` for readability, but the branch
+    ORDER is what separates a partial policy from a fully rejected one: a mixed .md is
+    claimed by the has-rules branch before this predicate is consulted, so the extra
+    ``not has_rules`` conjunct at each call site is a redundant guard rather than the
+    thing doing the work.
     """
     if not md_path.is_file():
+        # An absent .md is not a rejected-bullet policy — it is a KB whose policy source
+        # is gone, which the general failure path owns. Callers reach this with the .md
+        # missing on real KBs (finalize runs before validate), so removing this guard
+        # turns that shape into a FileNotFoundError crash rather than a diagnosis;
+        # tests/test_finalize.sh pins the shape end to end.
         return False
     return logic_policy_text_has_rejected_items(md_path.read_text(encoding="utf-8"))
 
@@ -735,6 +812,17 @@ def _load_logic_policy_from(logic_policy_dl: Path) -> str:
                 "quote the relation name in backticks, then run "
                 "tools/generate_logic_policy.py (or /factlog add) to compile it"
             )
+        # A missing or EMPTY logic-policy.md deliberately stays graceful here, even though
+        # generate_logic_policy and tools/validate.py both call it invalid and
+        # tools/finalize.py exits non-zero on it (#496 review, WARNING 1). That asymmetry
+        # is #190's own: `check` is a read-side gate that must COMPLETE on a KB with no
+        # policy to apply, while finalize is the authoring pipeline that just watched
+        # generation fail and reports what it saw. tests/unit/test_kb_context.py pins both
+        # shapes as the empty policy by name (test_absent_dl_no_md_is_empty_policy,
+        # test_absent_dl_empty_md_is_empty_policy), so making the loader loud here is a
+        # reversal of #190 rather than a fix to #496 — measured: it fails those two plus
+        # three in test_canonical_query.py. If the divergence is to be closed, it is a
+        # #190 decision with its own issue, not a side effect of this one.
         # No compiled logic-policy.dl, but a hand-authored logic-policy.extra.dl
         # may still exist (#120). Fall through to the extra.dl merge tail with an
         # empty base rather than short-circuiting here — otherwise those rules

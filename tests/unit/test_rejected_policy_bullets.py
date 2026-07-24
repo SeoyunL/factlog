@@ -59,6 +59,24 @@ MIXED_MD = (
     "- [c2] Facts with the deployed_on relation require review.\n"
 )
 
+# A malformed leading marker. Generation dies on the MARKER (_strip_canonical_prefix
+# raises) before relations are ever counted, so this bullet is NOT on the `rejected` list.
+# The raw-sentence predicate called it rejected-for-missing-backticks and produced the
+# wrong remediation (#496 review, WARNING 4).
+BAD_MARKER_MD = "# Logic policy\n\n## Rules\n\n- [c1] {Canonical} facts require review.\n"
+
+# The same marker error alongside a bullet that DOES compile: generation still dies on the
+# marker, so "has rejected items" must not claim it either.
+MIXED_WITH_BAD_MARKER_MD = (
+    "# Logic policy\n\n## Rules\n\n"
+    "- [c1] Facts with the `uses` relation require review.\n"
+    "- [c2] {Canonical} facts require review.\n"
+)
+
+# No policy source at all. Generation refuses it ("missing or empty
+# policy/logic-policy.md") but says nothing about rejected bullets.
+EMPTY_MD = "   \n\n"
+
 
 def _write_policy(tmp_path: Path, md_text: str) -> Path:
     """Return the (absent) logic-policy.dl path next to a written logic-policy.md."""
@@ -76,6 +94,15 @@ def _write_policy(tmp_path: Path, md_text: str) -> Path:
         (REJECTED_ONLY_MD, False, True),
         (MIXED_MD, True, True),
         ("", False, False),
+        (EMPTY_MD, False, False),
+        # A bullet generation never reaches the relation count for is not "rejected for
+        # missing backticks", however backtick-free the raw sentence looks.
+        (BAD_MARKER_MD, False, False),
+        (MIXED_WITH_BAD_MARKER_MD, True, False),
+        # The well-formed marker IS stripped, and what is left decides: a relation after
+        # the marker is a rule, none is a genuine rejection.
+        ("- [c1] {canonical} facts with `uses` are the same entity.\n", True, False),
+        ("- [c1] {canonical} facts are the same entity.\n", False, True),
         # Numbered list markers and wrapped continuation lines are part of the bullet
         # grammar, so a rejected bullet written either way is still seen. A regex
         # look-alike that only knew "- [id]" would miss both.
@@ -97,15 +124,30 @@ def test_has_rules_and_has_rejected_items_partition_the_tagged_bullets(
 
 
 @pytest.mark.parametrize(
-    "md_text", [RULES_MD, PROSE_ONLY_MD, REJECTED_ONLY_MD, MIXED_MD]
+    "md_text",
+    [
+        RULES_MD,
+        PROSE_ONLY_MD,
+        REJECTED_ONLY_MD,
+        MIXED_MD,
+        EMPTY_MD,
+        BAD_MARKER_MD,
+        MIXED_WITH_BAD_MARKER_MD,
+    ],
 )
-def test_the_fatal_verdict_matches_what_generation_actually_does(tmp_path, md_text):
-    """``not has_rules and has_rejected`` == generate_logic_policy exiting non-zero.
+def test_the_predicate_licenses_exactly_generations_rejected_diagnosis(tmp_path, md_text):
+    """``not has_rules and has_rejected`` == generation says "no compilable policies".
 
-    The whole fix rests on this equality, so it is measured against a real generation run
-    instead of asserted from the same reasoning that wrote the helper. If the compiler's
-    accept/reject rule ever moves, this fails here rather than silently letting finalize
-    stub over a policy the compiler refused.
+    Stated as a diagnosis match, not as ``rc != 0``. The two are NOT the same: generation
+    also exits non-zero for a malformed marker and for a missing/empty .md, and an earlier
+    cut of this test asserted the rc equivalence on four hand-picked shapes where they
+    happened to coincide. Adding the shapes the review measured (BAD_MARKER_MD,
+    MIXED_WITH_BAD_MARKER_MD, EMPTY_MD) breaks that equivalence immediately — which is the
+    point: what finalize needs to know is not "did generation fail" but "would generation
+    have blamed the backticks", because that is the remediation it prints.
+
+    Measured against a real generation run rather than restated from the reasoning that
+    wrote the helper, so a move in the compiler's accept/reject rule fails here.
     """
     kb = tmp_path / "kb"
     subprocess.run(
@@ -125,8 +167,13 @@ def test_the_fatal_verdict_matches_what_generation_actually_does(tmp_path, md_te
     fatal = not fcommon.logic_policy_text_has_rules(
         md_text
     ) and fcommon.logic_policy_text_has_rejected_items(md_text)
-    assert (proc.returncode != 0) is fatal, proc.stdout + proc.stderr
-    assert (kb / "policy" / "logic-policy.dl").is_file() is not fatal
+    blames_backticks = "no compilable policies" in (proc.stdout + proc.stderr)
+    assert blames_backticks is fatal, proc.stdout + proc.stderr
+    # The predicate is a one-way license: when it fires, generation really did refuse and
+    # leave no .dl. The converse is not claimed — generation can refuse for other reasons.
+    if fatal:
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        assert not (kb / "policy" / "logic-policy.dl").is_file()
 
 
 def test_absent_dl_over_a_rejected_only_policy_fails_loud(tmp_path):

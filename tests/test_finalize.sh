@@ -432,6 +432,66 @@ _496_kb "$KB18" "$(printf "$REJECTED_MD")"
 rc18=0; PYTHONPATH="$SHADOW:$PYTHONPATH" "$PYTHON" "$FINALIZE" --target "$KB18" --allow-unverified >/dev/null 2>&1 || rc18=$?
 [ "$rc18" -eq 3 ] && ok "#496(G): --allow-unverified does NOT swallow a rejected-only policy (rc 3)" || bad "#496(G): --allow-unverified swallowed the defect (rc=$rc18, want 3)"
 
+# --- #496 review (WARNING 1): the GENERAL "generation failed" path. Without these the
+# whole branch could be deleted with the suite still green, and it changes main's behaviour
+# (main wrote the stub and exited 0 on both shapes below). Writing "// no policy rules"
+# because generation FAILED is the same masking this issue removes, and generate itself
+# refuses these KBs ("missing or empty policy/logic-policy.md"), so finalize is non-zero.
+#
+# rc must be 1, not 3: #336 reserves 3 for "compiled but the engine did not verify", and
+# here the engine RAN (the loader is graceful about a missing .md by #190's design, so
+# run_logic_check passes). Reporting 3 would be a false claim about verification. Without
+# pyrewire the same KB is 3, which is what this expression encodes.
+if [ "$SKIP_RC" -eq 0 ]; then GENERIC_RC=1; else GENERIC_RC=3; fi
+
+# (H) logic-policy.md deleted from an otherwise valid KB
+KB19="$(mktemp -d)/wiki"
+_496_kb "$KB19" ""
+rm -f "$KB19/policy/logic-policy.md"
+rc19=0; out19="$("$PYTHON" "$FINALIZE" --target "$KB19" 2>&1)" || rc19=$?
+[ "$rc19" -eq "$GENERIC_RC" ] && ok "#496(H): a missing logic-policy.md exits $GENERIC_RC (main wrote a stub and exited 0)" || bad "#496(H): missing .md exited $rc19 (want $GENERIC_RC)"
+[ ! -f "$KB19/policy/logic-policy.dl" ] && ok "#496(H): no stub written when generation failed on a missing .md" || bad "#496(H): stub written over a failed generation"
+printf '%s' "$out19" | grep -qF "NOT applied" && ok "#496(H): missing .md is reported, not silent" || bad "#496(H): missing .md went unreported"
+
+# (I) logic-policy.md present but whitespace-only
+KB20="$(mktemp -d)/wiki"
+_496_kb "$KB20" ""
+printf '   \n\n' > "$KB20/policy/logic-policy.md"
+rc20=0; out20="$("$PYTHON" "$FINALIZE" --target "$KB20" 2>&1)" || rc20=$?
+[ "$rc20" -eq "$GENERIC_RC" ] && ok "#496(I): an empty logic-policy.md exits $GENERIC_RC" || bad "#496(I): empty .md exited $rc20 (want $GENERIC_RC)"
+[ ! -f "$KB20/policy/logic-policy.dl" ] && ok "#496(I): no stub written for an empty .md" || bad "#496(I): stub written for an empty .md"
+
+# #496 review (WARNING 2): the closing summary must not claim the engine ran AND tell the
+# operator to install the engine. With pyrewire present the remedy names the real gap (the
+# check ran without the policy); without it, the install line is the correct one.
+if [ "$SKIP_RC" -eq 0 ]; then
+  if printf '%s' "$out19" | grep -qF "logic-checked" && printf '%s' "$out19" | grep -qF "ran WITHOUT the policy" && ! printf '%s' "$out19" | grep -qF "Install pyrewire and run"; then
+    ok "#496(W2): engine-present summary drops the 'Install pyrewire' remedy"
+  else
+    bad "#496(W2): summary still claims 'logic-checked' and 'Install pyrewire' together"
+  fi
+else
+  printf '%s' "$out19" | grep -qF "Install pyrewire and run" && ok "#496(W2): engine-absent summary keeps the install remedy" || bad "#496(W2): engine-absent summary lost the install remedy"
+fi
+
+# #496 review (WARNING 3): common.logic_policy_md_has_rejected_items' is_file() guard is
+# load-bearing — finalize calls it on a KB whose .md is gone. Dropping the guard turns
+# case (H) into a FileNotFoundError crash, which no test caught before this one.
+printf '%s' "$out19" | grep -qF "FileNotFoundError" && bad "#496(W3): finalize crashed on a missing .md instead of diagnosing it" || ok "#496(W3): a missing .md is diagnosed, never a traceback"
+
+# --- #496 review (WARNING 4): the rejected-bullet diagnosis must only be given when
+# generation would actually have made it. A malformed `{...}` marker fails generation on
+# the MARKER — `_strip_canonical_prefix` raises before relations are counted — so the
+# bullet is not on generate's `rejected` list at all. Judging the raw sentence called it
+# "rejected for missing backticks" and told the author to add backticks that were never
+# the problem. The general path must own it and print generation's own error.
+KB21="$(mktemp -d)/wiki"
+_496_kb "$KB21" "$(printf '# Logic policy\n\n## Rules\n\n- [c1] {Canonical} facts require review.\n')"
+rc21=0; out21="$("$PYTHON" "$FINALIZE" --target "$KB21" 2>&1)" || rc21=$?
+[ "$rc21" -ne 0 ] && ok "#496(W4): a malformed canonical marker still exits non-zero (rc=$rc21)" || bad "#496(W4): malformed marker exited 0"
+printf '%s' "$out21" | grep -qF "unrecognized leading marker" && ok "#496(W4): the marker error itself is surfaced (correct remediation)" || bad "#496(W4): the real error was hidden"
+printf '%s' "$out21" | grep -qF "quote the relation name in backticks" && bad "#496(W4): still gives the WRONG fix (backticks) for a marker error" || ok "#496(W4): no false 'add backticks' advice for a marker error"
+
 echo ""
 echo "========================================"
 echo "test_finalize: $pass passed, $fail failed"

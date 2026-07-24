@@ -106,9 +106,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exit 0 even when the engine logic check is skipped (pyrewire>=1.0.3 absent). "
         "By default that skip exits 3 so automation can distinguish an unverified compile "
-        "from an engine-verified pass (#336). A broken policy (logic-policy.md has rules "
-        "that did not compile) is NOT accepted by this flag — it always exits non-zero "
-        "(#356), because the flag tolerates engine absence, not a KB policy defect.",
+        "from an engine-verified pass (#336). A policy that did not compile is NOT accepted "
+        "by this flag — it always exits non-zero (#356/#496), because the flag tolerates "
+        "engine absence, not a KB policy defect. That covers every way generation can fail "
+        "to produce logic-policy.dl: rules that would not compile, bullets naming no "
+        "backtick relation, and a missing or empty logic-policy.md.",
     )
     args = parser.parse_args(argv)
 
@@ -141,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     # the empty-policy stub — silently, with rc 0, and (worst) destroying a real compiled
     # .dl the moment an author dropped the backticks from a working rule (#496). The .md is
     # never written by finalize, so one read-time verdict is used throughout.
+    #
+    # The `not has_rules` conjunct is a redundant guard, not the thing that protects a
+    # MIXED policy: every site below is already inside a has-rules branch or ordered after
+    # one, so dropping it leaves the whole suite green (a true equivalent mutant, measured).
+    # It is kept because it makes the name honest — "rejected_only" should not be True for
+    # a .md that also compiled a rule — and reads as the same verdict generation reaches.
     rejected_only = not logic_policy_md_has_rules(policy_md) and logic_policy_md_has_rejected_items(
         policy_md
     )
@@ -257,6 +265,16 @@ def main(argv: list[str] | None = None) -> int:
                 # present, so nothing regenerates). It is the SAME defect #194 named for
                 # the has-rules half, just reached with the tag typed and the backticks
                 # missing, so it gets the same treatment: no stub, warn, exit non-zero.
+                #
+                # What this branch actually OWNS is the wording. Its rc and stub effects
+                # are identical to the general failure branch below, which would catch the
+                # same .md (generation exits non-zero on it), so deleting this branch
+                # changes nothing an operator can measure EXCEPT the diagnosis — from
+                # "quote the relation name in backticks" to generation's raw stderr. The
+                # message is therefore the branch's only observable contract, which is why
+                # tests/test_finalize.sh pins its exact phrasing rather than just rc and
+                # the absent .dl (#496 review). Keep the predicate honest for the same
+                # reason: it is what licenses this remediation.
                 policy_uncompiled = True
                 sys.stderr.write(gen.stderr)
                 print(
@@ -270,10 +288,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif gen.returncode != 0:
                 # generate failed for a reason that is neither of the two policy shapes
-                # above (an OS-level failure, a rejected canonical marker, an undecodable
-                # relation name...). Whatever it was, no .dl exists and the .md is not a
-                # benign ruleless one we can honestly stub — say so instead of writing
-                # bytes that claim the KB has no policy.
+                # above: a malformed `{...}` marker, an undecodable relation name, a
+                # missing or empty logic-policy.md, an OS-level failure. Whatever it was,
+                # no .dl exists and the .md is not a benign ruleless one we can honestly
+                # stub — say so instead of writing bytes that claim the KB has no policy.
+                #
+                # This widens finalize beyond #496's literal report (main wrote the stub
+                # and exited 0 for a missing/empty .md; this exits non-zero), which is
+                # deliberate: writing "// no policy rules" because generation FAILED is
+                # the exact masking this issue removes, and both generate
+                # ("missing or empty policy/logic-policy.md") and tools/validate.py
+                # already treat that KB as invalid. The read-side loader stays graceful on
+                # it by #190's design, so finalize and /factlog check answer differently
+                # here on purpose — authoring pipeline vs. read gate. tests/test_finalize.sh
+                # pins the absent- and empty-.md shapes; without them this branch was
+                # deletable with the whole suite still green (#496 review, WARNING 1).
                 policy_uncompiled = True
                 sys.stderr.write(gen.stderr)
                 print(
@@ -393,10 +422,18 @@ def main(argv: list[str] | None = None) -> int:
     # independent of pyrewire's
     # presence. Keep it non-zero regardless of the flag; otherwise CI running finalize
     # with --allow-unverified for no-pyrewire tolerance would also wave through a broken
-    # policy (warning on stderr only). The engine-present path fails loud earlier in
-    # run_logic_check, so this only bites the no-pyrewire path.
+    # policy (warning on stderr only).
+    #
+    # Which non-zero code depends on whether the ENGINE RAN, because that is the only
+    # thing rc 3 claims (#336: "compiled but not engine-verified"). The rejected-only and
+    # has-rules shapes leave no .dl, so with pyrewire present run_logic_check already
+    # failed loud and returned 1 far above; what reaches here with the engine running is a
+    # generation failure the loader stays graceful about (a missing or empty
+    # logic-policy.md, #190). Reporting 3 for that would tell automation the engine was
+    # skipped when it ran and passed — a false claim about verification, not about the
+    # policy. So: engine skipped → 3 (unverified), engine ran → 1 (a real failure).
     if policy_uncompiled:
-        exit_code = 3
+        exit_code = 3 if logic_skipped else 1
     # Keep the closing claim honest: when the engine ran, "no contradictions" is
     # engine-backed; when it was skipped, only the single-valued check_conflicts ran, so
     # say exactly that rather than "no contradictions" (which reads as engine-verified).
@@ -406,13 +443,21 @@ def main(argv: list[str] | None = None) -> int:
         else "no contradictions"
     )
     if policy_uncompiled:
-        # Reached only when the logic check was skipped (no pyrewire); with the
-        # engine present, run_logic_check above already failed loud on the absent
-        # .dl. Keep the summary honest — facts are compiled but the policy is not.
+        # Reachable with the engine either skipped OR running: the shapes that leave no
+        # .dl fail loud in run_logic_check above, but a generation failure the loader
+        # treats as an empty policy (missing/empty logic-policy.md) gets all the way here
+        # with the check having run and passed. The remedy line has to follow that, or the
+        # summary claims "logic-checked" and "Install pyrewire" in the same breath — which
+        # it did until #496's review caught it.
+        remedy = (
+            "Install pyrewire and run /factlog check to gate on the policy."
+            if logic_skipped
+            else "The logic check ran WITHOUT the policy, so its pass says nothing about "
+            "policy findings. Fix the policy and re-run."
+        )
         print(
             f"\nfinalize: done — merged, {checked}, {contradiction_clause}, "
-            "but the policy is NOT applied (see the WARNING above). Install "
-            "pyrewire and run /factlog check to gate on the policy."
+            f"but the policy is NOT applied (see the WARNING above). {remedy}"
         )
         return exit_code
     print(f"\nfinalize: done — merged, {checked}, {contradiction_clause}.")

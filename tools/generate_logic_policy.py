@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    CANONICAL_MARKER,
+    CANONICAL_PREFIX_RE,
     EMPTY_POLICY_DL,
     POLICY_DIR,
     PROMPTS_DIR,
@@ -21,6 +23,8 @@ from common import (
     WIRELOG_PROGRAM,
     FactlogError,
     _engine_decl_predicates,
+    _LEADING_MARKER_RE,
+    _strip_canonical_prefix,
     dl_string,
     ensure_dirs,
     logic_policy_md_relations,
@@ -57,43 +61,12 @@ RELATION_RE = re.compile(r"^[^\s\"`(),.]+$")
 # relation_alive is exactly what this replaces. This is one of four consumers of
 # common._engine_decl_predicates; test_reserved_predicate_parity pins them together.
 RESERVED_PREDICATES = _engine_decl_predicates()
-CANONICAL_MARKER = "{canonical}"
-# The canonical marker is an ANCHORED, lowercase `{canonical}` followed by an ASCII
-# space. The separator was `\s+`, which also matches NBSP, so a `{canonical}\xa0` typo
-# still compiled as a canonical rule; it is narrowed to ASCII space/tab here.
-CANONICAL_PREFIX_RE = re.compile(r"^\{canonical\}[ \t]+")
-# Any `{...}` at the very START of a sentence is a marker ATTEMPT. If it is not exactly
-# the canonical marker above, we refuse rather than silently falling back to a relation
-# body (#335): a canonical head is blocked by RESERVED_PREDICATES anyway, so an
-# unrecognized marker has nowhere safe to go — a load failure beats a silent meaning flip.
-_LEADING_MARKER_RE = re.compile(r"^\{[^}]*\}")
-
-
-def _strip_canonical_prefix(sentence: str, lineno: int) -> tuple[bool, str]:
-    """Return (is_canonical, sentence_without_marker).
-
-    The canonical marker is an ANCHORED lowercase ``{canonical}`` followed by an ASCII
-    space; a mid-sentence or prose {canonical} does NOT count, so a documentation bullet
-    mentioning it never becomes a live rule. A sentence that STARTS with a ``{...}`` marker
-    shape that is NOT exactly that — a case variant like ``{Canonical}``, a space-less
-    ``{canonical}`x``, or an NBSP separator — is rejected LOUDLY (#335) instead of
-    compiling to a relation(...) body under a meaning the author did not intend.
-    """
-    stripped = sentence.strip()
-    m = CANONICAL_PREFIX_RE.match(stripped)
-    if m:
-        return True, stripped[m.end():].strip()
-    marker = _LEADING_MARKER_RE.match(stripped)
-    if marker:
-        raise FactlogError(
-            f"policy/logic-policy.md line {lineno}: unrecognized leading marker "
-            f"{marker.group(0)!r}. The only supported marker is '{CANONICAL_MARKER}' "
-            f"followed by an ASCII space; a case variant, a missing space, or a "
-            f"non-ASCII separator would silently compile to a relation(...) rule body "
-            f"instead of canonical(...). Fix the marker, or if the '{{...}}' is prose, "
-            f"do not place it at the start of the sentence."
-        )
-    return False, sentence
+# CANONICAL_MARKER / CANONICAL_PREFIX_RE / _LEADING_MARKER_RE / _strip_canonical_prefix
+# moved to factlog/common.py and are imported above. They are the FIRST step of
+# fixture_policy_json's per-bullet loop, and common.logic_policy_text_has_rejected_items
+# has to run the same step before counting relations or the two disagree about which
+# bullets were "rejected for missing backticks" (#496). Re-exported here so this module
+# stays the place the compiler's grammar reads from end to end.
 
 
 def read_required(path: Path) -> str:
