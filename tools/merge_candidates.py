@@ -702,29 +702,33 @@ def insert_bullet(text: str, section: Heading, bullet: str) -> str:
     # answered it, and asking again by line equality — `lines.index(section)` — was
     # asking a different question, "which line says this", whose answer is the first
     # line of the body that happens to repeat the heading's text.
-    insert_at = section_body_end(text, section)
-    if insert_at > section.end and lines[insert_at - 1].strip():
-        lines.insert(insert_at, "")
-        insert_at += 1
-    lines.insert(insert_at, bullet)
-    # Keep a blank line between the bullet and the heading that follows it. The
-    # bullet is placed at the section's end, which for a section whose content ends
-    # in a blank line is the next heading's own index — so the bullet landed flush
-    # against that heading, reading as its lead-in rather than as the previous
-    # section's last item. Routing bullets to a file's *existing* sections (#495)
-    # made that the common case rather than a corner one.
+    boundary = section_body_end(text, section)
+    # The bullet needs a blank line on either side of it, and both questions are
+    # about the document as it is *now* — before anything moves. So both are asked in
+    # `text`'s coordinates, answered here, and applied as one splice at `boundary`.
     #
-    # Asked of md_lines, and asked of the text *before* the insert. This was the
-    # fifth scan of its own — a `## ` prefix test on the following line — and a
-    # Setext heading has no `## ` on it: measured, the blank line was dropped and
-    # the heading below it stopped being a heading at all; the bullet's list swallowed
-    # its title line as a lazy continuation and the `----` under it became a
-    # horizontal rule. The scan said the section was there and a renderer showed no
-    # section, which is the disagreement this module pair exists to prevent. Before
-    # the insert, because after it the damage is already done and the scan agrees
-    # with the damage.
-    if any(found.start == insert_at for found in headings(text)):
-        lines.insert(insert_at + 1, "")
+    # One splice on purpose. This used to be two inserts, and the first of them
+    # shifted the index the second was still comparing against: whenever a blank line
+    # was opened *above* the bullet, the blank line *below* it was silently skipped.
+    # Measured — and not only on Setext. On an ordinary ATX file the bullet ended up
+    # flush against the next `## `, which is a regression against main; on a Setext
+    # one the blank line is what makes the following heading a heading at all, so the
+    # next section stopped existing, `missing_review_sections` reported it, and the
+    # following merge appended a second section for a category that already had one.
+    # That last step is the exact damage #500 is about, re-created by the fix for it.
+    #
+    # Leading blank: the bullet goes at the end of the section's body, and if that
+    # body ends in a content line the bullet would otherwise abut it.
+    lead = boundary > section.end and bool(lines[boundary - 1].strip())
+    # Trailing blank: is the line the bullet will be pushed in front of the start of
+    # a heading? Asked of md_lines rather than of a `## ` prefix — a Setext heading
+    # has no `## ` on it, so the prefix test let the bullet's list swallow the title
+    # line below it as a lazy continuation and turn its `----` into a horizontal
+    # rule. The scan said the section was there and a renderer showed none, which is
+    # the disagreement this module pair exists to prevent. Asked of `text`, because
+    # after the insert the damage is already done and the scan agrees with it.
+    trail = any(found.start == boundary for found in headings(text))
+    lines[boundary:boundary] = ([""] if lead else []) + [bullet] + ([""] if trail else [])
     return "\n".join(lines).rstrip() + "\n"
 
 
