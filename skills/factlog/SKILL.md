@@ -246,8 +246,8 @@ run `/factlog check` to verify, or pass `--allow-unverified` to accept the
 unverified compile and keep the exit code `0`. That flag tolerates the **engine
 being absent, not a policy defect**: if `policy/logic-policy.md` defines rules
 that did not compile, the policy is silently not applied, so `finalize` exits
-non-zero (`3`) regardless of `--allow-unverified` — fix the policy rather than
-suppress the signal.
+non-zero (`1` when the engine ran, `3` when it was skipped) regardless of
+`--allow-unverified` — fix the policy rather than suppress the signal.
 
 A **policy defect includes a bullet that names no relation**: an `[id]`-tagged
 bullet whose relation name is not wrapped in backticks compiles to nothing, and
